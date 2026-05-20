@@ -26,7 +26,7 @@ tr:hover td { background:#f8fafc; }
 .badge { display:inline-flex; align-items:center; border-radius:999px; padding:3px 9px; font-size:11px; font-weight:900; border:1px solid transparent; }
 .modal-backdrop { position:fixed; inset:0; z-index:70; display:flex; align-items:center; justify-content:center; background:rgba(15,23,42,.62); padding:16px; backdrop-filter: blur(4px); }
 .modal { max-height:92vh; overflow:auto; width:100%; border-radius:22px; background:white; padding:24px; box-shadow:0 24px 60px rgba(15,23,42,.28); }
-.timeline-grid { background-image: linear-gradient(to bottom, #f1f5f9 1px, transparent 1px); background-size: 100% 48px; }
+.timeline-grid { background-image: linear-gradient(to bottom, #f1f5f9 1px, transparent 1px); background-size: 100% 93px; }
 .timeline-block { position:absolute; left:8px; right:8px; border-radius:12px; border:1px solid; overflow:hidden; box-shadow:0 4px 10px rgba(15,23,42,.1); transition:.15s ease; }
 .timeline-block:hover { transform: scale(1.015); z-index:20; }
 @media (max-width: 640px) {

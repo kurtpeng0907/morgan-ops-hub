@@ -337,19 +337,38 @@ function parseShiftSegments(shift = "") {
   }).filter(Boolean);
 }
 
+const SCHEDULE_WINDOW_START = 11 * 60;
+const SCHEDULE_WINDOW_END = 26 * 60;
+const AFTER_MIDNIGHT_CUTOFF = 5 * 60;
+
+function normalizedTimelineMinute(mins) {
+  if (mins < AFTER_MIDNIGHT_CUTOFF) return mins + 24 * 60;
+  return mins;
+}
+
+function currentTimelinePercent() {
+  const now = new Date();
+  const current = normalizedTimelineMinute(now.getHours() * 60 + now.getMinutes());
+  const total = SCHEDULE_WINDOW_END - SCHEDULE_WINDOW_START;
+  if (current < SCHEDULE_WINDOW_START || current > SCHEDULE_WINDOW_END) return null;
+  return ((current - SCHEDULE_WINDOW_START) / total) * 100;
+}
+
 function scheduleBarHtml(shift = "") {
   const segments = parseShiftSegments(shift);
-  if (!segments.length) return `<div class="h-3 rounded-full bg-slate-100"></div>`;
-  const windowStart = 9 * 60;
-  const windowEnd = 27 * 60;
-  const total = windowEnd - windowStart;
+  const nowPercent = currentTimelinePercent();
+  if (!segments.length) return `<div class="relative h-3 rounded-full bg-slate-100">${nowPercent === null ? "" : `<span class="schedule-now-line absolute -top-1 h-5 w-px bg-rose-500" style="left:${nowPercent}%"></span>`}</div>`;
+  const total = SCHEDULE_WINDOW_END - SCHEDULE_WINDOW_START;
   const blocks = segments.map((seg) => {
-    const left = Math.max(0, Math.min(total, seg.start - windowStart));
-    const right = Math.max(0, Math.min(total, seg.end - windowStart));
+    const start = normalizedTimelineMinute(seg.start);
+    const end = normalizedTimelineMinute(seg.end);
+    const left = Math.max(0, Math.min(total, start - SCHEDULE_WINDOW_START));
+    const right = Math.max(0, Math.min(total, end - SCHEDULE_WINDOW_START));
+    if (right <= 0 || left >= total) return "";
     const width = Math.max(3, right - left);
     return `<span class="absolute top-0 h-3 rounded-full bg-teal-500" title="${esc(seg.label)}" style="left:${(left / total) * 100}%;width:${(width / total) * 100}%"></span>`;
   }).join("");
-  return `<div class="relative h-3 rounded-full bg-slate-100">${blocks}</div>`;
+  return `<div class="relative h-3 rounded-full bg-slate-100">${blocks}${nowPercent === null ? "" : `<span class="schedule-now-line absolute -top-1 h-5 w-px bg-rose-500" title="目前時間" style="left:${nowPercent}%"></span>`}</div>`;
 }
 
 function dailyScheduleBoardHtml(dateKey) {
@@ -360,8 +379,13 @@ function dailyScheduleBoardHtml(dateKey) {
   })).filter((row) => isWorking(row.shift)).sort((a, b) => a.shift.localeCompare(b.shift));
   if (!working.length) return `<div class="rounded-xl bg-slate-50 p-6 text-center text-sm font-bold text-slate-400">今日尚無按摩師排班</div>`;
   return `<div class="space-y-3">
-    <div class="grid grid-cols-[80px_1fr] gap-3 px-1 text-[10px] font-black text-slate-400"><span>按摩師</span><div class="grid grid-cols-4"><span>09</span><span>15</span><span>21</span><span>03</span></div></div>
-    ${working.map((row) => `<div class="grid grid-cols-[80px_1fr] items-center gap-3"><div><p class="truncate text-sm font-black">${esc(row.name)}</p><p class="text-[10px] font-bold text-teal-700">${esc(row.shift)}</p></div>${scheduleBarHtml(row.shift)}</div>`).join("")}
+    <div class="grid grid-cols-[92px_1fr] gap-3 px-1 text-[10px] font-black text-slate-400">
+      <span>按摩師</span>
+      <div class="relative h-5">
+        ${["11:00", "14:00", "17:00", "20:00", "23:00", "02:00"].map((label, index) => `<span class="absolute -translate-x-1/2" style="left:${(index / 5) * 100}%">${label}</span>`).join("")}
+      </div>
+    </div>
+    ${working.map((row) => `<div class="grid grid-cols-[92px_1fr] items-center gap-3"><div><p class="truncate text-sm font-black">${esc(row.name)}</p><p class="text-[10px] font-bold text-teal-700">${esc(row.shift)}</p></div>${scheduleBarHtml(row.shift)}</div>`).join("")}
   </div>`;
 }
 
@@ -410,7 +434,6 @@ function renderOverview() {
   const today = todayKey();
   const appts = Object.values(db.appointments);
   const todayAppts = appts.filter((a) => a.date === today).sort(sortByTime);
-  const activeCustomers = Object.keys(db.customers).filter((k) => !isSystemCustomerKey(k));
   const thisWeekKeys = weekKeys(today, 0);
   const nextWeekScheduleKeys = weekKeys(today, 1);
   const thisWeekScheduled = Object.keys(db.therapists).filter((id) => thisWeekKeys.some((key) => isWorking((db.schedules[id] || {})[key]))).length;
@@ -430,13 +453,6 @@ function renderOverview() {
     const record = appointmentRecord(a);
     return String(a.isCompleted) === "true" && !String(record?.notes || "").trim();
   }).slice(0, 5);
-  const next7Keys = Array.from({ length: 7 }, (_, i) => addDaysKey(today, i));
-  const next7Appts = appts.filter((a) => next7Keys.includes(a.date));
-  const next7Revenue = next7Appts.reduce((s, a) => s + Number(a.price || 0), 0);
-  const next7Staff = new Set();
-  Object.entries(db.schedules).forEach(([id, sched]) => {
-    if (next7Keys.some((key) => isWorking(sched[key]))) next7Staff.add(id);
-  });
   const todayTimeline = todayAppts.length ? todayAppts.map((a) => {
     const start = timeToMinutes(a.time);
     const end = start + Number(a.duration || 60);
@@ -480,14 +496,20 @@ function renderOverview() {
         </div>
       </div>
       <div class="grid gap-5">
-        <div class="grid grid-cols-2 gap-3">
-          <div class="rounded-2xl border bg-white p-4"><p class="text-xs font-black text-slate-500">本週排班</p><p class="mt-1 text-2xl font-black">${thisWeekScheduled}</p></div>
-          <div class="rounded-2xl border bg-white p-4"><p class="text-xs font-black text-slate-500">下週排班</p><p class="mt-1 text-2xl font-black">${nextWeekScheduled}</p></div>
+        <div class="card p-5">
+          <div class="mb-4 flex items-center justify-between gap-3">
+            <div><h3 class="font-black">排班概況</h3><p class="text-xs font-bold text-slate-500">以有填班表的人員計算</p></div>
+            <button class="btn-light px-3 py-2 text-xs" data-jump-tab="schedule">班表</button>
+          </div>
+          <div class="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border bg-slate-200">
+            <div class="bg-white p-4"><p class="text-xs font-black text-slate-500">本週</p><p class="mt-1 text-3xl font-black text-slate-900">${thisWeekScheduled}</p></div>
+            <div class="bg-white p-4"><p class="text-xs font-black text-slate-500">下週</p><p class="mt-1 text-3xl font-black text-slate-900">${nextWeekScheduled}</p></div>
+          </div>
         </div>
       </div>
     </div>
     <div class="card p-5">
-      <div class="mb-4 flex items-center justify-between"><div><h3 class="font-black">當日排班按摩師</h3><p class="text-xs font-bold text-slate-500">09:00 到隔日 03:00 時段長條圖</p></div><span class="badge bg-teal-50 text-teal-700">${Object.keys(db.therapists).filter((id) => isWorking((db.schedules[id] || {})[today])).length} 人</span></div>
+      <div class="mb-4 flex items-center justify-between"><div><h3 class="font-black">當日排班按摩師</h3><p class="text-xs font-bold text-slate-500">11:00 到隔日 02:00，紅線為目前時間</p></div><span class="badge bg-teal-50 text-teal-700">${Object.keys(db.therapists).filter((id) => isWorking((db.schedules[id] || {})[today])).length} 人</span></div>
       ${dailyScheduleBoardHtml(today)}
     </div>
     <div class="grid gap-5 xl:grid-cols-[1.15fr_.85fr]">
@@ -497,13 +519,7 @@ function renderOverview() {
       </div>
       <div class="space-y-5">${taskCards}</div>
     </div>
-    <div class="card overflow-hidden">
-      <div class="flex items-center justify-between border-b bg-slate-50 px-5 py-4">
-        <div><h3 class="font-black">當日營運戰情版</h3><p class="text-xs font-bold text-slate-500">顯示今日全部預約與即時狀態</p></div>
-        <span class="rounded-lg bg-slate-200 px-3 py-1 text-xs font-black text-slate-700">${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}</span>
-      </div>
-      <div class="table-wrap rounded-none border-0"><table><thead><tr><th>時間 / 空間</th><th>師傅</th><th>顧客與服務</th><th>結束時間</th><th class="text-right">當日狀態</th></tr></thead><tbody id="liveStatusRows"></tbody></table></div>
-    </div>`;
+    `;
   $("saveDoorBtn").onclick = () => {
     const previous = db.customers.SYS_DOOR_PWD || { name: "設定", notes: "", records: [] };
     const nextValue = $("doorPassword").value.trim();
@@ -536,10 +552,16 @@ function renderOverview() {
 function renderLiveStatus() {
   const rows = $("liveStatusRows");
   const clock = $("liveClock");
-  if (!rows || !clock) return;
+  if (!rows && !clock) return;
   const now = new Date();
   const current = now.getHours() * 60 + now.getMinutes();
-  clock.textContent = `目前時間 ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  if (clock) clock.textContent = `目前時間 ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  const nowPercent = currentTimelinePercent();
+  document.querySelectorAll(".schedule-now-line").forEach((line) => {
+    line.classList.toggle("hidden", nowPercent === null);
+    if (nowPercent !== null) line.style.left = `${nowPercent}%`;
+  });
+  if (!rows) return;
   const visible = Object.values(db.appointments).filter((a) => a.date === todayKey()).sort(sortByTime);
   rows.innerHTML = visible.length ? visible.map((a) => {
     const start = timeToMinutes(a.time);
@@ -621,20 +643,24 @@ function apptCard(a) {
 function renderTimeline(date, appts) {
   const container = $("appointmentTimeline");
   const rooms = ["R", "T", "OUT"];
-  const startHour = 9;
-  const endHour = 27;
+  const startHour = SCHEDULE_WINDOW_START / 60;
+  const endHour = SCHEDULE_WINDOW_END / 60;
   const pxPerMinute = 1.55;
   const height = (endHour - startHour) * 60 * pxPerMinute;
+  const nowPercent = currentTimelinePercent();
+  const nowTop = nowPercent === null ? null : 48 + (nowPercent / 100) * height;
   let html = `<div class="card flex min-w-[900px] overflow-hidden"><div class="relative w-20 shrink-0 border-r bg-slate-50" style="height:${height + 48}px"><div class="sticky top-0 z-10 h-12 border-b bg-slate-100 p-3 text-center text-xs font-black">時間</div>`;
   for (let h = startHour; h <= endHour; h++) {
     const top = 48 + (h - startHour) * 60 * pxPerMinute;
     html += `<div class="absolute left-0 right-0 border-t text-right text-xs font-black text-slate-500" style="top:${top}px"><span class="mr-2 -translate-y-2 inline-block">${String(h % 24).padStart(2, "0")}:00</span></div>`;
   }
+  if (nowTop !== null) html += `<div class="absolute left-0 right-0 z-20 border-t-2 border-rose-500" style="top:${nowTop}px"><span class="ml-1 -translate-y-1/2 rounded bg-rose-500 px-1.5 py-0.5 text-[10px] font-black text-white">現在</span></div>`;
   html += `</div>`;
   rooms.forEach((room) => {
     html += `<div class="timeline-grid relative min-w-[260px] flex-1 border-r" style="height:${height + 48}px"><div class="sticky top-0 z-10 h-12 border-b bg-white p-3 text-center text-sm font-black">${room === "OUT" ? "外出" : `${room}房`}</div>`;
+    if (nowTop !== null) html += `<div class="absolute left-0 right-0 z-10 border-t-2 border-rose-500/70" style="top:${nowTop}px"></div>`;
     appts.filter((a) => a.room === room).forEach((a) => {
-      const top = 48 + (timeToMinutes(a.time) - startHour * 60) * pxPerMinute;
+      const top = 48 + (normalizedTimelineMinute(timeToMinutes(a.time)) - startHour * 60) * pxPerMinute;
       const blockHeight = Math.max(Number(a.duration || 60) * pxPerMinute - 3, 44);
       if (top < 48 || top > height + 48) return;
       html += `<button class="timeline-block block text-left ${room === "R" ? "border-amber-300 bg-amber-50" : room === "T" ? "border-cyan-300 bg-cyan-50" : "border-rose-300 bg-rose-50"}" data-open-appt="${esc(a.id)}" style="top:${top}px;height:${blockHeight}px">
