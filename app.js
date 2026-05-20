@@ -204,15 +204,28 @@ function persist() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
 }
 
+function mergeCloudWithLocal(cloudData, localData) {
+  const cloud = normalizeDb(cloudData || {});
+  const local = normalizeDb(localData || {});
+  return normalizeDb({
+    ...cloud,
+    therapists: { ...cloud.therapists, ...local.therapists },
+    schedules: { ...cloud.schedules, ...local.schedules },
+    admins: { ...cloud.admins, ...local.admins },
+    appointments: { ...cloud.appointments, ...local.appointments },
+    customers: { ...cloud.customers, ...local.customers }
+  });
+}
+
 async function tryCloudSync() {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5500);
   try {
     const res = await fetch(`${API_URL}?t=${Date.now()}`, { signal: controller.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    db = normalizeDb(await res.json());
+    db = mergeCloudWithLocal(await res.json(), db);
     persist();
-    $("sysStatus").textContent = "已連線雲端資料";
+    $("sysStatus").textContent = "已連線雲端資料，本機異動已保留";
   } catch {
     $("sysStatus").textContent = "雲端未連線，使用本機測試資料";
   } finally {
@@ -223,9 +236,12 @@ async function tryCloudSync() {
 async function postCloud(action, data) {
   persist();
   try {
-    await fetch(API_URL, { method: "POST", body: JSON.stringify({ action, data }) });
+    const res = await fetch(API_URL, { method: "POST", body: JSON.stringify({ action, data }) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return true;
   } catch {
-    // Local-first behavior keeps the dashboard usable when Apps Script/CORS is unavailable.
+    showSnackbar("已先存於此瀏覽器；雲端寫入失敗，請檢查 Apps Script 權限");
+    return false;
   }
 }
 
