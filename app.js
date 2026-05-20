@@ -466,20 +466,20 @@ function renderOverview() {
             <div class="flex flex-wrap gap-2"><button class="btn-teal" data-jump-tab="appointment">派班看板</button><button class="rounded-xl bg-white/10 px-4 py-2 font-black text-white" data-jump-tab="appointmentDetail">預約資料</button></div>
           </div>
         </div>
-        <div class="grid grid-cols-2 gap-px bg-slate-200 xl:grid-cols-5">
+        <div class="grid grid-cols-2 gap-px bg-slate-200 xl:grid-cols-6">
           <div class="bg-white p-5"><p class="text-xs font-black text-slate-500">今日預約</p><p class="mt-1 text-3xl font-black text-teal-700">${todayAppts.length}</p><p class="mt-1 text-xs font-bold text-slate-400">完成 ${finishedToday} 筆</p></div>
           <div class="bg-white p-5"><p class="text-xs font-black text-slate-500">現場進行中</p><p class="mt-1 text-3xl font-black text-indigo-700">${ongoing.length}</p><p class="mt-1 text-xs font-bold text-slate-400">${ongoing[0] ? customerDisplay(ongoing[0].phone, ongoing[0].customerName) : "目前空檔"}</p></div>
           <div class="bg-white p-5"><p class="text-xs font-black text-slate-500">即將到來</p><p class="mt-1 text-3xl font-black text-amber-700">${upcomingAll.length}</p><p class="mt-1 text-xs font-bold text-slate-400">${nextAppt ? `${nextAppt.time} ${customerDisplay(nextAppt.phone, nextAppt.customerName)}` : "今日無後續"}</p></div>
           <div class="bg-white p-5"><p class="text-xs font-black text-slate-500">今日預估營收</p><p class="mt-1 text-3xl font-black text-rose-700">${money(todayRevenue)}</p><p class="mt-1 text-xs font-bold text-slate-400">平均 ${money(todayAppts.length ? Math.round(todayRevenue / todayAppts.length) : 0)}</p></div>
           <div class="bg-white p-5"><p class="text-xs font-black text-slate-500">今日預估店抽</p><p class="mt-1 text-3xl font-black text-slate-900">${money(todayCompanyCut)}</p><p class="mt-1 text-xs font-bold text-slate-400">師傅抽成 ${money(todayRevenue - todayCompanyCut)}</p></div>
+          <div class="bg-white p-5">
+            <div class="mb-2 flex items-center justify-between gap-2"><p class="text-xs font-black text-slate-500">大門密碼</p><span id="liveClock" class="rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-black text-slate-700"></span></div>
+            <input id="doorPassword" class="input py-2 text-2xl" value="${esc(db.customers.SYS_DOOR_PWD?.notes || "")}">
+            <div class="mt-2 grid grid-cols-3 gap-1.5"><button id="randomDoorBtn" class="btn-light px-2 py-2 text-[11px]">隨機</button><button id="doorHistoryBtn" class="btn-light px-2 py-2 text-[11px]">紀錄</button><button id="saveDoorBtn" class="btn-teal px-2 py-2 text-[11px]">儲存</button></div>
+          </div>
         </div>
       </div>
       <div class="grid gap-5">
-        <div class="card p-5">
-          <div class="mb-3 flex items-center justify-between"><h3 class="font-black">門店快速設定</h3><span id="liveClock" class="rounded-lg bg-slate-100 px-3 py-1 text-xs font-black text-slate-700"></span></div>
-          <label class="label">大門密碼</label>
-          <div class="flex flex-col gap-2 sm:flex-row"><input id="doorPassword" class="input py-2 text-xl" value="${esc(db.customers.SYS_DOOR_PWD?.notes || "")}"><button id="randomDoorBtn" class="btn-light whitespace-nowrap">隨機四碼</button><button id="doorHistoryBtn" class="btn-light whitespace-nowrap">查看紀錄</button><button id="saveDoorBtn" class="btn-teal px-4">儲存</button></div>
-        </div>
         <div class="grid grid-cols-2 gap-3">
           <div class="rounded-2xl border bg-white p-4"><p class="text-xs font-black text-slate-500">本週排班</p><p class="mt-1 text-2xl font-black">${thisWeekScheduled}</p></div>
           <div class="rounded-2xl border bg-white p-4"><p class="text-xs font-black text-slate-500">下週排班</p><p class="mt-1 text-2xl font-black">${nextWeekScheduled}</p></div>
