@@ -412,7 +412,7 @@ function switchTab(tab) {
   document.querySelectorAll(".view").forEach((el) => el.classList.add("hidden"));
   $(`view-${tab}`)?.classList.remove("hidden");
   document.querySelectorAll(".nav-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === tab));
-  const titles = { overview: "總覽儀表板", appointment: "顧客預約派班", appointmentDetail: "預約資料管理", customer: "顧客關係管理", schedule: "全月班表矩陣", filter: "時段可用人力查詢", personnel: "人事與權限管理", report: "財務業績報表", portal: "個人中樞" };
+  const titles = { overview: "總覽", appointment: "預約派班", appointmentDetail: "預約資料", customer: "顧客 CRM", schedule: "班表矩陣", filter: "可用人力", personnel: "人事權限", report: "財務報表", portal: "個人中樞" };
   $("pageTitle").textContent = titles[tab] || "管理中樞";
   hideSidebar();
   renderAll();
@@ -581,21 +581,19 @@ function renderAppointment() {
   section.innerHTML = `
     <div class="card p-5">
       <div class="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
-        <div><h3 class="text-lg font-black">當日顧客預約總表</h3><p class="text-sm font-bold text-slate-500">掌握全店時段流量與空間調度</p></div>
+        <div><h3 class="text-lg font-black">預約派班</h3><p class="text-sm font-bold text-slate-500">以師傅或房型時程檢視當日預約。</p></div>
         <div class="flex flex-col gap-3 sm:flex-row">
           <div class="flex rounded-xl bg-slate-100 p-1">
             <button id="apptCardBtn" class="rounded-lg px-4 py-2 text-sm font-black">師傅視角</button>
             <button id="apptTimelineBtn" class="rounded-lg px-4 py-2 text-sm font-black">房型時程</button>
           </div>
           <input id="appointmentDate" type="date" class="input py-2" value="${selectedDate}">
-          <button id="refreshAppointments" class="btn-light">刷新</button>
         </div>
       </div>
     </div>
     <div id="appointmentBoard" class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3"></div>
     <div id="appointmentTimeline" class="hidden overflow-x-auto"></div>`;
   $("appointmentDate").onchange = renderAppointment;
-  $("refreshAppointments").onclick = () => { renderAppointment(); showSnackbar("預約看板已刷新"); };
   $("apptCardBtn").onclick = () => { activeAppointmentView = "card"; renderAppointmentBoard(selectedDate); };
   $("apptTimelineBtn").onclick = () => { activeAppointmentView = "timeline"; renderAppointmentBoard(selectedDate); };
   renderAppointmentBoard(selectedDate);
@@ -993,10 +991,9 @@ function drawCustomerRows() {
   const q = ($("customerSearchInput")?.value || "").trim().toLowerCase();
   const html = Object.entries(db.customers).filter(([phone, c]) => !isSystemCustomerKey(phone) && (!q || phone.toLowerCase().includes(q) || String(c.code || "").toLowerCase().includes(q) || String(c.name || "").toLowerCase().includes(q))).map(([phone, c]) => {
     const count = Object.values(db.appointments).filter((a) => a.phone === phone).length;
-    return `<tr><td class="font-mono font-black text-teal-700">${esc(c.code || "")}</td><td class="font-mono font-black text-indigo-700">${esc(phone)}</td><td class="font-black">${esc(c.name || "未填寫")}</td><td>${count <= 1 ? `<span class="badge border-emerald-200 bg-emerald-50 text-emerald-700">新客 (${count})</span>` : `<span class="badge border-amber-200 bg-amber-50 text-amber-800">熟客 (${count})</span>`}</td><td class="max-w-[280px] truncate">${esc(c.notes || "無")}</td><td class="text-right"><button class="btn-light px-3 py-1 text-xs" data-record="${esc(phone)}">紀錄</button> <button class="btn-light px-3 py-1 text-xs" data-edit-customer="${esc(phone)}">編輯</button> <button class="rounded-lg bg-rose-50 px-3 py-1 text-xs font-black text-rose-700" data-delete-customer="${esc(phone)}">刪除</button></td></tr>`;
+    return `<tr><td class="font-mono font-black text-teal-700">${esc(c.code || "")}</td><td class="font-mono font-black text-indigo-700">${esc(phone)}</td><td class="font-black">${esc(c.name || "未填寫")}</td><td>${count <= 1 ? `<span class="badge border-emerald-200 bg-emerald-50 text-emerald-700">新客 (${count})</span>` : `<span class="badge border-amber-200 bg-amber-50 text-amber-800">熟客 (${count})</span>`}</td><td class="max-w-[280px] truncate">${esc(c.notes || "無")}</td><td class="text-right"><button class="btn-light px-3 py-1 text-xs" data-record="${esc(phone)}">檔案</button> <button class="rounded-lg bg-rose-50 px-3 py-1 text-xs font-black text-rose-700" data-delete-customer="${esc(phone)}">刪除</button></td></tr>`;
   }).join("");
   rows.innerHTML = html || `<tr><td colspan="6" class="py-8 text-center font-bold text-slate-400">無符合顧客</td></tr>`;
-  rows.querySelectorAll("[data-edit-customer]").forEach((btn) => btn.onclick = () => openCustomerModal(btn.dataset.editCustomer));
   rows.querySelectorAll("[data-record]").forEach((btn) => btn.onclick = () => openCustomerModal(btn.dataset.record, true));
   rows.querySelectorAll("[data-delete-customer]").forEach((btn) => btn.onclick = () => confirmAction("刪除 CRM 檔案", "顧客基本資料與服務紀錄將移除。", () => {
     delete db.customers[btn.dataset.deleteCustomer];
@@ -1142,8 +1139,17 @@ function exportScheduleCSV() {
 
 function renderFilter() {
   $("view-filter").innerHTML = `
-    <div class="card p-5"><h3 class="mb-4 font-black">篩選可用人力</h3><div class="grid gap-4 md:grid-cols-[1fr_1fr_auto] md:items-end"><div><label class="label">選擇日期</label><select id="searchDateSelect" class="input">${monthDates.map((d) => `<option value="${d.key}">${esc(d.displayFull)}</option>`).join("")}</select></div><div><label class="label">時段關鍵字</label><input id="searchTimeKeyword" class="input" placeholder="如 14:00，留空顯示該日上班者"></div><button id="executeFilterBtn" class="btn-primary px-6 py-3">篩選</button></div></div>
-    <div class="card p-5"><h3 class="mb-4 border-b pb-3 font-black">檢索結果</h3><div id="filterResultContainer" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3"></div></div>`;
+    <div class="card p-5">
+      <div class="mb-5 flex flex-col justify-between gap-4 border-b pb-5 xl:flex-row xl:items-end">
+        <div><h3 class="text-lg font-black">可用人力</h3><p class="text-sm font-bold text-slate-500">依日期與時段快速查詢可排師傅。</p></div>
+        <div class="grid gap-3 md:grid-cols-[220px_220px_auto] md:items-end">
+          <div><label class="label">日期</label><select id="searchDateSelect" class="input py-2">${monthDates.map((d) => `<option value="${d.key}">${esc(d.displayFull)}</option>`).join("")}</select></div>
+          <div><label class="label">時段</label><input id="searchTimeKeyword" class="input py-2" placeholder="例：14:00"></div>
+          <button id="executeFilterBtn" class="btn-primary px-6 py-3">查詢</button>
+        </div>
+      </div>
+      <div id="filterResultContainer" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"></div>
+    </div>`;
   $("executeFilterBtn").onclick = executeFilter;
   executeFilter();
 }
@@ -1163,7 +1169,7 @@ function executeFilter() {
   }).map(([id, t]) => {
     const shift = (db.schedules[id] || {})[date];
     const busy = target == null ? null : Object.values(db.appointments).find((a) => a.therapistId === id && a.date === date && target >= timeToMinutes(a.time) && target < timeToMinutes(a.time) + Number(a.duration || 60));
-    return `<div class="rounded-xl border-l-4 border-l-teal-500 bg-white p-4 shadow-sm"><h4 class="font-black">${esc(therapistName(id))}</h4><p class="text-sm font-black text-teal-700">${esc(shift)}</p>${busy ? `<button class="mt-2 rounded-lg bg-rose-50 px-2 py-1 text-left text-xs font-black text-rose-700 hover:bg-rose-100" data-open-appt="${esc(busy.id)}">預約：${esc(busy.time)} ${esc(courseName(busy.service))}</button>` : ""}</div>`;
+    return `<div class="rounded-xl border bg-white p-4"><div class="flex items-start justify-between gap-3"><div><h4 class="font-black">${esc(therapistName(id))}</h4><p class="mt-1 text-xs font-black text-teal-700">${esc(shift)}</p></div><span class="badge bg-teal-50 text-teal-700">可用</span></div>${busy ? `<button class="mt-3 rounded-lg bg-rose-50 px-2 py-1 text-left text-xs font-black text-rose-700 hover:bg-rose-100" data-open-appt="${esc(busy.id)}">預約：${esc(busy.time)} ${esc(courseName(busy.service))}</button>` : ""}</div>`;
   });
   $("filterResultContainer").innerHTML = cards.join("") || `<p class="font-bold text-slate-400">查無可用人員。</p>`;
   $("filterResultContainer").querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => openAppointmentDetailPage(btn.dataset.openAppt));
@@ -1260,8 +1266,11 @@ function renderPersonnel() {
         </table>
       </div>
     </div>
-    <div class="card p-5"><h3 class="mb-4 font-black">新增管理員權限</h3><form id="adminForm" class="grid gap-4 md:grid-cols-[1fr_1fr_1fr_1fr_auto] md:items-end"><input name="id" class="input" placeholder="帳號"><input name="name" class="input" placeholder="姓名"><input name="email" class="input" placeholder="Email"><input name="pin" class="input" inputmode="numeric" autocomplete="off" placeholder="密碼 PIN"><button class="btn-primary px-5 py-3">建立權限</button></form></div>
-    <div class="card overflow-hidden"><div class="border-b bg-slate-50 p-5"><h3 class="font-black">系統管理員名單</h3></div><div class="table-wrap rounded-none border-0"><table><thead><tr><th>帳號</th><th>姓名</th><th>密碼</th><th>Email</th><th>操作</th></tr></thead><tbody>${Object.entries(db.admins).map(([id, a]) => `<tr><td class="font-black">${esc(id)}</td><td>${esc(a.name)}</td><td><span class="badge bg-slate-100 text-slate-700">${esc(cleanPin(a.pin))}</span></td><td>${esc(a.email || "無")}</td><td class="space-x-2"><button data-edit-admin="${esc(id)}" class="btn-light px-3 py-1 text-xs">編輯</button>${id === "admin" ? `<span class="text-xs font-bold text-slate-400">預設不可刪</span>` : `<button data-delete-admin="${esc(id)}" class="rounded-lg bg-rose-50 px-3 py-1 text-xs font-black text-rose-700">刪除</button>`}</td></tr>`).join("")}</tbody></table></div></div>`;
+    <div class="card overflow-hidden">
+      <div class="border-b bg-slate-50 p-5"><h3 class="font-black">系統管理員</h3><p class="mt-1 text-sm font-bold text-slate-500">新增權限與名單管理整併於同一區塊。</p></div>
+      <div class="border-b p-5"><form id="adminForm" class="grid gap-4 md:grid-cols-[1fr_1fr_1fr_1fr_auto] md:items-end"><input name="id" class="input" placeholder="帳號"><input name="name" class="input" placeholder="姓名"><input name="email" class="input" placeholder="Email"><input name="pin" class="input" inputmode="numeric" autocomplete="off" placeholder="密碼 PIN"><button class="btn-primary px-5 py-3">建立</button></form></div>
+      <div class="table-wrap rounded-none border-0"><table><thead><tr><th>帳號</th><th>姓名</th><th>密碼</th><th>Email</th><th>操作</th></tr></thead><tbody>${Object.entries(db.admins).map(([id, a]) => `<tr><td class="font-black">${esc(id)}</td><td>${esc(a.name)}</td><td><span class="badge bg-slate-100 text-slate-700">${esc(cleanPin(a.pin))}</span></td><td>${esc(a.email || "無")}</td><td class="space-x-2"><button data-edit-admin="${esc(id)}" class="btn-light px-3 py-1 text-xs">編輯</button>${id === "admin" ? `<span class="text-xs font-bold text-slate-400">預設不可刪</span>` : `<button data-delete-admin="${esc(id)}" class="rounded-lg bg-rose-50 px-3 py-1 text-xs font-black text-rose-700">刪除</button>`}</td></tr>`).join("")}</tbody></table></div>
+    </div>`;
   $("therapistForm").onsubmit = (e) => {
     e.preventDefault();
     const data = collectTherapistProfile(e.currentTarget);
@@ -1390,7 +1399,26 @@ function renderPortal() {
   }
   const monthKeys = new Set(monthDates.map((d) => d.key));
   const appts = Object.values(db.appointments).filter((a) => a.therapistId === currentUser.id && monthKeys.has(a.date)).sort((a, b) => a.date === b.date ? sortByTime(a, b) : a.date.localeCompare(b.date));
-  section.innerHTML = `<div class="card p-5"><div class="mb-5 flex flex-col justify-between gap-4 border-b pb-5 sm:flex-row sm:items-center"><div><p class="text-xs font-black uppercase tracking-widest text-slate-500">按摩師個人中樞</p><h3 class="text-2xl font-black">${esc(currentUser.name)}</h3></div><button id="savePortalScheduleBtn" class="btn-teal">儲存本週班表</button></div><div class="grid gap-4 lg:grid-cols-[1fr_380px]"><div><h4 class="mb-3 font-black">當月派單與回報</h4><div class="grid gap-4">${appts.length ? appts.map((a) => `<div class="rounded-xl border p-4"><div class="flex justify-between"><button data-open-appt="${esc(a.id)}" class="font-black hover:text-teal-700">${esc(a.date)} ${esc(a.time)}</button>${roomBadge(a.room)}</div><p class="mt-2 font-black">${esc(customerDisplay(a.phone, a.customerName))} / ${esc(courseName(a.service))}</p><div class="mt-3 flex gap-2"><button class="btn-light px-3 py-1 text-xs" data-open-appt="${esc(a.id)}">詳細資訊</button><button class="btn-light px-3 py-1 text-xs" data-complete="${esc(a.id)}">填寫回報</button></div></div>`).join("") : `<p class="rounded-xl bg-slate-50 p-8 text-center font-bold text-slate-400">本月無排程</p>`}</div></div><div><h4 class="mb-3 font-black">本週排班設定</h4><div id="portalScheduleInputs" class="space-y-3">${(monthWeeks[0] || []).map((d) => `<label class="block rounded-xl border bg-slate-50 p-3"><span class="label">${esc(d.displayFull)}</span><input class="input" data-portal-shift="${d.key}" value="${esc((db.schedules[currentUser.id] || {})[d.key] || "")}"></label>`).join("")}</div></div></div></div>`;
+  section.innerHTML = `
+    <div class="grid gap-5 xl:grid-cols-[1fr_380px]">
+      <div class="card overflow-hidden">
+        <div class="flex flex-col justify-between gap-4 border-b bg-white px-5 py-4 sm:flex-row sm:items-center">
+          <div><p class="text-xs font-black uppercase tracking-widest text-slate-500">個人中樞</p><h3 class="text-2xl font-black">${esc(currentUser.nickname || currentUser.name)}</h3></div>
+          <span class="badge bg-teal-50 text-teal-700">${appts.length} 筆本月派單</span>
+        </div>
+        <div class="divide-y divide-slate-100">
+          ${appts.length ? appts.map((a) => `<div class="grid gap-3 p-4 md:grid-cols-[120px_1fr_auto] md:items-center">
+            <button data-open-appt="${esc(a.id)}" class="text-left font-mono text-sm font-black text-teal-700 hover:text-teal-900">${esc(a.date)}<br><span class="text-slate-900">${esc(a.time)}</span></button>
+            <div><button data-open-appt="${esc(a.id)}" class="text-left font-black hover:text-teal-700">${esc(customerDisplay(a.phone, a.customerName))}</button><p class="mt-1 text-sm font-bold text-slate-500">${esc(courseName(a.service))} · ${roomBadge(a.room)}</p></div>
+            <button class="btn-light px-3 py-2 text-xs" data-complete="${esc(a.id)}">回報</button>
+          </div>`).join("") : `<p class="p-8 text-center font-bold text-slate-400">本月無排程</p>`}
+        </div>
+      </div>
+      <div class="card p-5">
+        <div class="mb-4 flex items-center justify-between gap-3"><div><h4 class="font-black">本週排班</h4><p class="text-xs font-bold text-slate-500">填寫後同步後台班表</p></div><button id="savePortalScheduleBtn" class="btn-teal px-3 py-2 text-xs">儲存</button></div>
+        <div id="portalScheduleInputs" class="space-y-3">${(monthWeeks[0] || []).map((d) => `<label class="block rounded-xl border bg-slate-50 p-3"><span class="label">${esc(d.displayFull)}</span><input class="input py-2" data-portal-shift="${d.key}" value="${esc((db.schedules[currentUser.id] || {})[d.key] || "")}"></label>`).join("")}</div>
+      </div>
+    </div>`;
   $("savePortalScheduleBtn").onclick = () => {
     db.schedules[currentUser.id] ||= {};
     document.querySelectorAll("[data-portal-shift]").forEach((input) => db.schedules[currentUser.id][input.dataset.portalShift] = normalizeShift(input.value));

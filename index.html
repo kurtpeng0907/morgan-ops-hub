@@ -36,21 +36,21 @@
         <div class="flex items-center gap-3">
           <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-500 font-black text-white">M</div>
           <div>
-            <h2 class="font-black text-white">管理中樞</h2>
-            <p id="roleLabel" class="text-xs font-bold text-slate-500">雲端正式版</p>
+            <h2 class="font-black text-white">管理營運系統</h2>
+            <p id="roleLabel" class="text-xs font-bold text-slate-500">營運後台</p>
           </div>
         </div>
         <button id="closeSidebarBtn" class="rounded-lg p-2 text-slate-400 hover:bg-slate-800 lg:hidden">✕</button>
       </div>
       <nav id="adminNav" class="flex-1 space-y-2 overflow-y-auto p-3">
-        <button data-tab="overview" class="nav-btn active">總覽儀表板</button>
-        <button data-tab="appointment" class="nav-btn text-teal-300">顧客預約派班</button>
-        <button data-tab="appointmentDetail" class="nav-btn text-teal-200">預約資料管理</button>
-        <button data-tab="customer" class="nav-btn text-indigo-300">顧客關係管理</button>
-        <button data-tab="schedule" class="nav-btn">全月班表矩陣</button>
-        <button data-tab="filter" class="nav-btn">時段可用人力查詢</button>
-        <button data-tab="personnel" class="nav-btn">人事與權限管理</button>
-        <button data-tab="report" class="nav-btn text-amber-300">財務業績報表</button>
+        <button data-tab="overview" class="nav-btn active">總覽</button>
+        <button data-tab="appointment" class="nav-btn text-teal-300">預約派班</button>
+        <button data-tab="appointmentDetail" class="nav-btn text-teal-200">預約資料</button>
+        <button data-tab="customer" class="nav-btn text-indigo-300">顧客 CRM</button>
+        <button data-tab="schedule" class="nav-btn">班表矩陣</button>
+        <button data-tab="filter" class="nav-btn">可用人力</button>
+        <button data-tab="personnel" class="nav-btn">人事權限</button>
+        <button data-tab="report" class="nav-btn text-amber-300">財務報表</button>
       </nav>
       <nav id="therapistNav" class="hidden flex-1 space-y-2 overflow-y-auto p-3">
         <p class="px-2 py-2 text-xs font-black uppercase tracking-widest text-slate-500">師傅專屬中樞</p>
@@ -99,6 +99,6 @@
       el.classList.remove("hidden");
     });
   </script>
-  <script src="./app.js?v=20260520-0803"></script>
+  <script src="./app.js?v=20260520-0901"></script>
 </body>
 </html>
