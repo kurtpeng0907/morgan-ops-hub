@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>內部營運管理中樞</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body class="h-screen overflow-hidden bg-slate-100 text-slate-800">
+  <section id="loginView" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
+    <div class="w-full max-w-md rounded-2xl bg-white p-7 shadow-2xl">
+      <div class="mb-7 text-center">
+        <div class="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-slate-900 text-white">
+          <span class="text-2xl font-black">M</span>
+        </div>
+        <h1 class="text-2xl font-black">營運管理中樞</h1>
+        <p id="sysStatus" class="mt-2 text-sm font-bold text-slate-500">可使用 admin / admin123 測試</p>
+      </div>
+      <div class="space-y-4">
+        <input id="adminId" autocomplete="username" class="input" placeholder="帳號">
+        <input id="adminPin" autocomplete="current-password" type="password" class="input" placeholder="密碼" onkeydown="if(event.key==='Enter') window.handleLogin && window.handleLogin()">
+        <button id="loginBtn" class="btn-primary w-full py-3 text-lg" onclick="window.handleLogin && window.handleLogin()">
+          <span id="loginBtnText">授權登入</span>
+          <span id="loginLoader" class="loader hidden"></span>
+        </button>
+        <p id="loginErrorMsg" class="hidden text-center text-sm font-bold text-rose-600"></p>
+      </div>
+    </div>
+  </section>
+
+  <section id="adminDashboard" class="hidden h-full w-full flex">
+    <div id="sidebarOverlay" class="fixed inset-0 z-40 hidden bg-slate-950/50 lg:hidden"></div>
+    <aside id="adminSidebar" class="fixed inset-y-0 left-0 z-50 flex w-64 -translate-x-full flex-col bg-slate-950 text-slate-300 shadow-2xl transition-transform lg:relative lg:translate-x-0">
+      <div class="flex items-center justify-between border-b border-slate-800 p-5">
+        <div class="flex items-center gap-3">
+          <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-500 font-black text-white">M</div>
+          <div>
+            <h2 class="font-black text-white">管理中樞</h2>
+            <p id="roleLabel" class="text-xs font-bold text-slate-500">雲端正式版</p>
+          </div>
+        </div>
+        <button id="closeSidebarBtn" class="rounded-lg p-2 text-slate-400 hover:bg-slate-800 lg:hidden">✕</button>
+      </div>
+      <nav id="adminNav" class="flex-1 space-y-2 overflow-y-auto p-3">
+        <button data-tab="overview" class="nav-btn active">總覽儀表板</button>
+        <button data-tab="appointment" class="nav-btn text-teal-300">顧客預約派班</button>
+        <button data-tab="appointmentDetail" class="nav-btn text-teal-200">預約資料管理</button>
+        <button data-tab="customer" class="nav-btn text-indigo-300">顧客關係管理</button>
+        <button data-tab="schedule" class="nav-btn">全月班表矩陣</button>
+        <button data-tab="filter" class="nav-btn">時段可用人力查詢</button>
+        <button data-tab="personnel" class="nav-btn">人事與權限管理</button>
+        <button data-tab="report" class="nav-btn text-amber-300">財務業績報表</button>
+      </nav>
+      <nav id="therapistNav" class="hidden flex-1 space-y-2 overflow-y-auto p-3">
+        <p class="px-2 py-2 text-xs font-black uppercase tracking-widest text-slate-500">師傅專屬中樞</p>
+        <button data-tab="portal" class="nav-btn active">我的派單與班表</button>
+      </nav>
+      <div class="border-t border-slate-800 p-4">
+        <button id="logoutBtn" class="w-full rounded-xl px-4 py-2 text-sm font-bold text-slate-400 hover:bg-slate-800 hover:text-white">登出系統</button>
+      </div>
+    </aside>
+
+    <main class="flex h-full min-w-0 flex-1 flex-col">
+      <header class="glass-panel z-10 flex h-16 items-center justify-between border-b border-slate-200 px-4 md:px-8">
+        <div class="flex min-w-0 items-center gap-3">
+          <button id="openSidebarBtn" class="rounded-lg p-2 text-slate-600 hover:bg-slate-200 lg:hidden">☰</button>
+          <h2 id="pageTitle" class="truncate text-lg font-black md:text-xl">總覽儀表板</h2>
+        </div>
+        <div class="flex items-center rounded-xl bg-slate-100 p-1">
+          <button id="prevMonthBtn" class="month-btn">◀</button>
+          <span id="currentDateRange" class="min-w-28 px-3 text-center text-sm font-black md:text-base">--</span>
+          <button id="nextMonthBtn" class="month-btn">▶</button>
+        </div>
+      </header>
+
+      <div class="flex-1 overflow-y-auto p-4 md:p-8">
+        <section id="view-overview" class="view space-y-6"></section>
+        <section id="view-appointment" class="view hidden space-y-6"></section>
+        <section id="view-appointmentDetail" class="view hidden space-y-6"></section>
+        <section id="view-customer" class="view hidden space-y-6"></section>
+        <section id="view-schedule" class="view hidden space-y-6"></section>
+        <section id="view-filter" class="view hidden space-y-6"></section>
+        <section id="view-personnel" class="view hidden space-y-6"></section>
+        <section id="view-report" class="view hidden space-y-6"></section>
+        <section id="view-portal" class="view hidden space-y-6"></section>
+      </div>
+    </main>
+  </section>
+
+  <div id="modalRoot"></div>
+  <div id="snackbar" class="pointer-events-none fixed bottom-8 left-1/2 z-[90] w-[92%] -translate-x-1/2 translate-y-4 rounded-full bg-slate-900 px-6 py-3 text-center text-sm font-bold text-white opacity-0 shadow-xl transition-all md:w-auto"></div>
+
+  <script>
+    window.addEventListener("error", function (event) {
+      var el = document.getElementById("loginErrorMsg");
+      if (!el) return;
+      el.textContent = "系統腳本載入失敗：" + event.message;
+      el.classList.remove("hidden");
+    });
+  </script>
+  <script src="./app.js?v=20260520-0701"></script>
+</body>
+</html>
