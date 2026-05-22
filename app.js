@@ -20,7 +20,8 @@ let monthWeeks = [];
 let currentUser = null;
 let activeTab = "overview";
 let activeAppointmentView = "card";
-let activePersonnelPanel = "staff";
+let activePersonnelPanel = "schedule";
+let activeReportPanel = "revenue";
 let currentScheduleViewDates = [];
 let editingAppointmentId = null;
 let activeAppointmentId = null;
@@ -585,42 +586,30 @@ function renderLiveStatus() {
 function renderAppointment() {
   const section = $("view-appointment");
   const selectedDate = $("appointmentDate")?.value || todayKey();
+  const selectedTime = $("searchTimeKeyword")?.value || "";
   section.innerHTML = `
     <div class="card p-5">
-      <div class="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
-        <div><h3 class="text-lg font-black">預約派班</h3><p class="text-sm font-bold text-slate-500">以師傅或房型時程檢視當日預約。</p></div>
-        <div class="flex flex-col gap-3 sm:flex-row">
+      <div class="mb-5 flex flex-col justify-between gap-4 border-b pb-5 xl:flex-row xl:items-center">
+        <div><h3 class="text-lg font-black">預約派班</h3><p class="text-sm font-bold text-slate-500">選日期與時段，查可用師傅後直接新增預約。</p></div>
+        <div class="flex flex-col gap-3 md:flex-row md:items-end">
+          <div><label class="label">日期</label><input id="appointmentDate" type="date" class="input py-2" value="${selectedDate}"></div>
+          <div><label class="label">時段</label><input id="searchTimeKeyword" class="input py-2" value="${esc(selectedTime)}" placeholder="例：14:00"></div>
+          <button id="executeFilterBtn" class="btn-primary px-6 py-3">查詢可用師傅</button>
           <div class="flex rounded-xl bg-slate-100 p-1">
             <button id="apptCardBtn" class="rounded-lg px-4 py-2 text-sm font-black">師傅視角</button>
             <button id="apptTimelineBtn" class="rounded-lg px-4 py-2 text-sm font-black">房型時程</button>
           </div>
-          <input id="appointmentDate" type="date" class="input py-2" value="${selectedDate}">
         </div>
       </div>
+      <div id="filterResultContainer" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"></div>
     </div>
-    <div class="grid gap-5 xl:grid-cols-[1fr_340px]">
-      <div class="min-w-0">
-        <div id="appointmentBoard" class="grid grid-cols-1 gap-5 md:grid-cols-2 2xl:grid-cols-3"></div>
-        <div id="appointmentTimeline" class="hidden overflow-x-auto"></div>
-      </div>
-      <aside class="card p-5 xl:sticky xl:top-4 xl:self-start">
-        <div class="mb-4 border-b pb-4"><h3 class="font-black">可用人力</h3><p class="mt-1 text-xs font-bold text-slate-500">查到可用師傅後可直接新增預約。</p></div>
-        <div class="space-y-3">
-          <div><label class="label">日期</label><select id="searchDateSelect" class="input py-2">${monthDates.map((d) => `<option value="${d.key}" ${d.key === selectedDate ? "selected" : ""}>${esc(d.displayFull)}</option>`).join("")}</select></div>
-          <div><label class="label">時段</label><input id="searchTimeKeyword" class="input py-2" placeholder="例：14:00"></div>
-          <button id="executeFilterBtn" class="btn-primary w-full px-6 py-3">查詢人力</button>
-        </div>
-        <div id="filterResultContainer" class="mt-4 grid gap-3"></div>
-      </aside>
-    </div>`;
+    <div id="appointmentBoard" class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3"></div>
+    <div id="appointmentTimeline" class="hidden overflow-x-auto"></div>`;
   $("appointmentDate").onchange = renderAppointment;
   $("apptCardBtn").onclick = () => { activeAppointmentView = "card"; renderAppointmentBoard(selectedDate); };
   $("apptTimelineBtn").onclick = () => { activeAppointmentView = "timeline"; renderAppointmentBoard(selectedDate); };
-  $("searchDateSelect").onchange = () => {
-    $("appointmentDate").value = $("searchDateSelect").value;
-    renderAppointment();
-  };
   $("executeFilterBtn").onclick = executeFilter;
+  $("searchTimeKeyword").onkeydown = (event) => { if (event.key === "Enter") executeFilter(); };
   renderAppointmentBoard(selectedDate);
   executeFilter();
 }
@@ -1143,18 +1132,25 @@ function exportScheduleCSV() {
 }
 
 function executeFilter() {
-  const date = $("searchDateSelect").value;
+  const date = $("appointmentDate")?.value || todayKey();
   const kw = normalizeShift($("searchTimeKeyword").value).replace("休假", "");
   const target = kw ? timeToMinutes(kw) : null;
+  const inTimeRange = (time, start, end) => {
+    let t = time;
+    let e = end;
+    if (e <= start) e += 24 * 60;
+    if (t < start && e > 24 * 60) t += 24 * 60;
+    return t >= start && t <= e;
+  };
   const cards = Object.entries(db.therapists).filter(([id]) => {
     const shift = (db.schedules[id] || {})[date] || "休假";
     if (!isWorking(shift)) return false;
     if (!kw) return true;
     const inShift = shift.split(/[,\s]+/).some((part) => {
       const [s, e] = part.split("-");
-      return s && e && target >= timeToMinutes(s) && target <= timeToMinutes(e);
+      return s && e && inTimeRange(target, timeToMinutes(s), timeToMinutes(e));
     });
-    const busy = Object.values(db.appointments).some((a) => a.therapistId === id && a.date === date && target >= timeToMinutes(a.time) && target < timeToMinutes(a.time) + Number(a.duration || 60));
+    const busy = Object.values(db.appointments).some((a) => a.therapistId === id && a.date === date && inTimeRange(target, timeToMinutes(a.time), timeToMinutes(a.time) + Number(a.duration || 60)));
     return inShift && !busy;
   }).map(([id, t]) => {
     const shift = (db.schedules[id] || {})[date];
@@ -1283,7 +1279,7 @@ function renderPersonnel() {
     <div class="card p-5">
       <div class="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
         <div><h3 class="text-lg font-black">人事權限</h3><p class="text-sm font-bold text-slate-500">人員資料、班表與登入權限集中管理。</p></div>
-        <div class="flex rounded-xl bg-slate-100 p-1">${panelBtn("staff", "人事資料")}${panelBtn("schedule", "班表矩陣")}${panelBtn("admins", "管理員")}</div>
+        <div class="flex rounded-xl bg-slate-100 p-1">${panelBtn("schedule", "班表矩陣")}${panelBtn("staff", "人事資料")}${panelBtn("admins", "管理員")}</div>
       </div>
     </div>
     ${activePersonnelPanel === "schedule" ? schedulePanel : activePersonnelPanel === "admins" ? adminPanel : staffPanel}`;
@@ -1393,20 +1389,67 @@ function renderReport() {
   const rows = Object.values(db.appointments).filter((a) => a.date >= start && a.date <= end).sort((a, b) => a.date === b.date ? sortByTime(a, b) : a.date.localeCompare(b.date));
   const total = rows.reduce((s, a) => s + Number(a.price || 0), 0);
   const therapistCut = rows.reduce((s, a) => s + Number(COURSE_CATALOG[a.service]?.therapistCut || 0), 0);
+  const collected = rows.reduce((s, a) => s + Number(a.collectedPrice || 0), 0);
+  const reportTab = (panel, label) => `<button class="rounded-lg px-4 py-2 text-sm font-black ${activeReportPanel === panel ? "bg-white text-amber-700 shadow" : "text-slate-500"}" data-report-panel="${panel}">${label}</button>`;
+  const allApptsByPhone = {};
+  Object.values(db.appointments).sort((a, b) => a.date === b.date ? sortByTime(a, b) : a.date.localeCompare(b.date)).forEach((a) => {
+    if (!a.phone) return;
+    allApptsByPhone[a.phone] ||= [];
+    allApptsByPhone[a.phone].push(a);
+  });
+  const revenueTable = `<div class="table-wrap"><table><thead><tr><th>預約日期時間</th><th>顧客</th><th>師傅</th><th>服務</th><th class="text-right">總金額</th><th class="text-right">店家應收</th><th class="text-right">師傅抽成</th></tr></thead><tbody>${rows.length ? rows.map((a) => {
+    const tc = COURSE_CATALOG[a.service]?.therapistCut || 0;
+    return `<tr><td><button data-open-appt="${esc(a.id)}" class="font-mono font-black text-teal-700 hover:text-teal-900">${esc(a.date)} ${esc(a.time)}</button></td><td><button data-open-appt="${esc(a.id)}" class="font-black hover:text-teal-700">${esc(customerDisplay(a.phone, a.customerName))}</button></td><td>${esc(therapistName(a.therapistId))}</td><td>${esc(courseName(a.service))}</td><td class="text-right font-black text-rose-600">${money(a.price)}</td><td class="text-right font-black text-teal-700">${money(Number(a.price || 0) - tc)}</td><td class="text-right font-black text-indigo-700">${money(tc)}</td></tr>`;
+  }).join("") : `<tr><td colspan="7" class="py-10 text-center font-bold text-slate-400">該區間無預約</td></tr>`}</tbody></table></div>`;
+  const guestByDate = {};
+  rows.forEach((a) => {
+    guestByDate[a.date] ||= { count: 0, phones: new Set(), newGuests: 0, returningGuests: 0, total: 0 };
+    const bucket = guestByDate[a.date];
+    bucket.count += 1;
+    bucket.total += Number(a.price || 0);
+    if (a.phone) {
+      bucket.phones.add(a.phone);
+      const first = allApptsByPhone[a.phone]?.[0];
+      if (first?.id === a.id) bucket.newGuests += 1;
+      else bucket.returningGuests += 1;
+    }
+  });
+  const guestTable = `<div class="table-wrap"><table><thead><tr><th>日期</th><th class="text-right">來客數</th><th class="text-right">不重複顧客</th><th class="text-right">新客</th><th class="text-right">回客</th><th class="text-right">營業額</th></tr></thead><tbody>${Object.entries(guestByDate).length ? Object.entries(guestByDate).map(([date, b]) => `<tr><td class="font-mono font-black">${esc(date)}</td><td class="text-right font-black">${b.count}</td><td class="text-right font-black">${b.phones.size}</td><td class="text-right font-black text-emerald-700">${b.newGuests}</td><td class="text-right font-black text-amber-700">${b.returningGuests}</td><td class="text-right font-black text-rose-700">${money(b.total)}</td></tr>`).join("") : `<tr><td colspan="6" class="py-10 text-center font-bold text-slate-400">該區間無來客資料</td></tr>`}</tbody></table></div>`;
+  const therapistStats = Object.keys(db.therapists).map((id) => {
+    const mine = rows.filter((a) => a.therapistId === id);
+    const phoneCounts = {};
+    mine.forEach((a) => { if (a.phone) phoneCounts[a.phone] = (phoneCounts[a.phone] || 0) + 1; });
+    const unique = Object.keys(phoneCounts).length;
+    const returnGuests = Object.values(phoneCounts).filter((count) => count > 1).length;
+    const rate = unique ? Math.round((returnGuests / unique) * 100) : 0;
+    return { id, count: mine.length, unique, returnGuests, rate, total: mine.reduce((s, a) => s + Number(a.price || 0), 0) };
+  }).filter((row) => row.count > 0).sort((a, b) => b.rate - a.rate || b.count - a.count);
+  const retentionTable = `<div class="table-wrap"><table><thead><tr><th>師傅</th><th class="text-right">服務筆數</th><th class="text-right">不重複顧客</th><th class="text-right">回客人數</th><th class="text-right">回客率</th><th class="text-right">營業額</th></tr></thead><tbody>${therapistStats.length ? therapistStats.map((s) => `<tr><td class="font-black text-teal-700">${esc(therapistName(s.id))}</td><td class="text-right font-black">${s.count}</td><td class="text-right font-black">${s.unique}</td><td class="text-right font-black text-amber-700">${s.returnGuests}</td><td class="text-right font-black text-indigo-700">${s.rate}%</td><td class="text-right font-black text-rose-700">${money(s.total)}</td></tr>`).join("") : `<tr><td colspan="6" class="py-10 text-center font-bold text-slate-400">該區間無師傅統計</td></tr>`}</tbody></table></div>`;
+  const commissionStats = Object.keys(db.therapists).map((id) => {
+    const mine = rows.filter((a) => a.therapistId === id);
+    const gross = mine.reduce((s, a) => s + Number(a.price || 0), 0);
+    const paid = mine.reduce((s, a) => s + Number(a.collectedPrice || 0), 0);
+    const cut = mine.reduce((s, a) => s + therapistCutFor(a), 0);
+    return { id, count: mine.length, gross, paid, outstanding: Math.max(0, gross - paid), cut, company: Math.max(0, gross - cut) };
+  }).filter((row) => row.count > 0).sort((a, b) => b.gross - a.gross);
+  const commissionTable = `<div class="table-wrap"><table><thead><tr><th>師傅</th><th class="text-right">服務筆數</th><th class="text-right">應收總額</th><th class="text-right">已回帳</th><th class="text-right">未回帳</th><th class="text-right">師傅抽成</th><th class="text-right">店家應收</th></tr></thead><tbody>${commissionStats.length ? commissionStats.map((s) => `<tr><td class="font-black text-teal-700">${esc(therapistName(s.id))}</td><td class="text-right font-black">${s.count}</td><td class="text-right font-black text-rose-700">${money(s.gross)}</td><td class="text-right font-black text-emerald-700">${money(s.paid)}</td><td class="text-right font-black text-amber-700">${money(s.outstanding)}</td><td class="text-right font-black text-indigo-700">${money(s.cut)}</td><td class="text-right font-black text-teal-700">${money(s.company)}</td></tr>`).join("") : `<tr><td colspan="7" class="py-10 text-center font-bold text-slate-400">該區間無抽成資料</td></tr>`}</tbody></table></div>`;
+  const panelContent = { revenue: revenueTable, guests: guestTable, retention: retentionTable, commission: commissionTable }[activeReportPanel] || revenueTable;
   $("view-report").innerHTML = `
     <div class="card p-5">
       <div class="mb-5 flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
-        <div><h3 class="text-lg font-black">營運財務與業績報表</h3><p class="text-sm font-bold text-slate-500">檢視營業額、店家應收與師傅抽成</p></div>
+        <div><h3 class="text-lg font-black">財務報表</h3><p class="text-sm font-bold text-slate-500">同一區間內切換營收、來客、回客與回帳分析。</p></div>
         <div class="flex flex-col gap-2 sm:flex-row"><input id="reportStartDate" type="date" class="input py-2" value="${start}"><input id="reportEndDate" type="date" class="input py-2" value="${end}"><button id="queryReportBtn" class="btn-primary px-5 py-3">查詢</button><button id="exportReportBtn" class="btn-teal">輸出報表</button></div>
       </div>
-      <div class="mb-5 grid grid-cols-2 gap-4 xl:grid-cols-4">${metric("來客數", rows.length)}${metric("總營業額", money(total))}${metric("店家應收", money(total - therapistCut), "text-teal-700")}${metric("師傅抽成", money(therapistCut), "text-indigo-700")}</div>
-      <div class="table-wrap"><table><thead><tr><th>預約日期時間</th><th>顧客</th><th>師傅</th><th>服務</th><th class="text-right">總金額</th><th class="text-right">店家應收</th><th class="text-right">師傅抽成</th></tr></thead><tbody>${rows.length ? rows.map((a) => {
-        const tc = COURSE_CATALOG[a.service]?.therapistCut || 0;
-        return `<tr><td><button data-open-appt="${esc(a.id)}" class="font-mono font-black text-teal-700 hover:text-teal-900">${esc(a.date)} ${esc(a.time)}</button></td><td><button data-open-appt="${esc(a.id)}" class="font-black hover:text-teal-700">${esc(customerDisplay(a.phone, a.customerName))}</button></td><td>${esc(therapistName(a.therapistId))}</td><td>${esc(courseName(a.service))}</td><td class="text-right font-black text-rose-600">${money(a.price)}</td><td class="text-right font-black text-teal-700">${money(Number(a.price || 0) - tc)}</td><td class="text-right font-black text-indigo-700">${money(tc)}</td></tr>`;
-      }).join("") : `<tr><td colspan="7" class="py-10 text-center font-bold text-slate-400">該區間無預約</td></tr>`}</tbody></table></div>
+      <div class="mb-5 grid grid-cols-2 gap-4 xl:grid-cols-4">${metric("來客數", rows.length)}${metric("總營業額", money(total))}${metric("已回帳", money(collected), "text-emerald-700")}${metric("師傅抽成", money(therapistCut), "text-indigo-700")}</div>
+      <div class="mb-5 flex flex-wrap rounded-xl bg-slate-100 p-1">${reportTab("revenue", "營收明細")}${reportTab("guests", "來客數")}${reportTab("retention", "師傅回客率")}${reportTab("commission", "抽成回帳")}</div>
+      ${panelContent}
     </div>`;
   $("queryReportBtn").onclick = renderReport;
   $("exportReportBtn").onclick = exportReportCSV;
+  $("view-report").querySelectorAll("[data-report-panel]").forEach((btn) => btn.onclick = () => {
+    activeReportPanel = btn.dataset.reportPanel;
+    renderReport();
+  });
   $("view-report").querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => openAppointmentDetailPage(btn.dataset.openAppt));
 }
 
@@ -1414,12 +1457,46 @@ function exportReportCSV() {
   const start = $("reportStartDate").value;
   const end = $("reportEndDate").value;
   const rows = Object.values(db.appointments).filter((a) => a.date >= start && a.date <= end).sort((a, b) => a.date === b.date ? sortByTime(a, b) : a.date.localeCompare(b.date));
-  let csv = "\uFEFF日期,時間,顧客編碼,顧客姓名,聯絡方式,負責師傅,服務項目,總金額,店家應收,師傅抽成\n";
-  rows.forEach((a) => {
-    const tc = COURSE_CATALOG[a.service]?.therapistCut || 0;
-    csv += `${a.date},${a.time},"${customerCode(a.phone)}","${a.customerName || db.customers[a.phone]?.name || ""}","${a.phone}","${therapistName(a.therapistId)}","${courseName(a.service)}",${a.price},${Number(a.price || 0) - tc},${tc}\n`;
-  });
-  downloadCSV(csv, `報表_${start}_至_${end}.csv`);
+  let csv = "\uFEFF";
+  if (activeReportPanel === "commission") {
+    csv += "師傅,服務筆數,應收總額,已回帳,未回帳,師傅抽成,店家應收\n";
+    Object.keys(db.therapists).forEach((id) => {
+      const mine = rows.filter((a) => a.therapistId === id);
+      if (!mine.length) return;
+      const gross = mine.reduce((s, a) => s + Number(a.price || 0), 0);
+      const paid = mine.reduce((s, a) => s + Number(a.collectedPrice || 0), 0);
+      const cut = mine.reduce((s, a) => s + therapistCutFor(a), 0);
+      csv += `"${therapistName(id)}",${mine.length},${gross},${paid},${Math.max(0, gross - paid)},${cut},${Math.max(0, gross - cut)}\n`;
+    });
+  } else if (activeReportPanel === "retention") {
+    csv += "師傅,服務筆數,不重複顧客,回客人數,回客率,營業額\n";
+    Object.keys(db.therapists).forEach((id) => {
+      const mine = rows.filter((a) => a.therapistId === id);
+      if (!mine.length) return;
+      const phoneCounts = {};
+      mine.forEach((a) => { if (a.phone) phoneCounts[a.phone] = (phoneCounts[a.phone] || 0) + 1; });
+      const unique = Object.keys(phoneCounts).length;
+      const returnGuests = Object.values(phoneCounts).filter((count) => count > 1).length;
+      csv += `"${therapistName(id)}",${mine.length},${unique},${returnGuests},${unique ? Math.round((returnGuests / unique) * 100) : 0}%,${mine.reduce((s, a) => s + Number(a.price || 0), 0)}\n`;
+    });
+  } else if (activeReportPanel === "guests") {
+    csv += "日期,來客數,不重複顧客,營業額\n";
+    const byDate = {};
+    rows.forEach((a) => {
+      byDate[a.date] ||= { count: 0, phones: new Set(), total: 0 };
+      byDate[a.date].count += 1;
+      byDate[a.date].total += Number(a.price || 0);
+      if (a.phone) byDate[a.date].phones.add(a.phone);
+    });
+    Object.entries(byDate).forEach(([date, b]) => csv += `${date},${b.count},${b.phones.size},${b.total}\n`);
+  } else {
+    csv += "日期,時間,顧客編碼,顧客姓名,聯絡方式,負責師傅,服務項目,總金額,店家應收,師傅抽成\n";
+    rows.forEach((a) => {
+      const tc = COURSE_CATALOG[a.service]?.therapistCut || 0;
+      csv += `${a.date},${a.time},"${customerCode(a.phone)}","${a.customerName || db.customers[a.phone]?.name || ""}","${a.phone}","${therapistName(a.therapistId)}","${courseName(a.service)}",${a.price},${Number(a.price || 0) - tc},${tc}\n`;
+    });
+  }
+  downloadCSV(csv, `報表_${activeReportPanel}_${start}_至_${end}.csv`);
 }
 
 function renderPortal() {
