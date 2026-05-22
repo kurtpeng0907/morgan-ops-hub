@@ -1254,7 +1254,7 @@ function renderPersonnel() {
       <div class="border-b bg-slate-50 p-5"><h3 class="font-black">在職人員資料庫</h3></div>
       <div class="table-wrap rounded-none border-0">
         <table>
-          <thead><tr><th>編號</th><th>暱稱 / 姓名</th><th>聯絡與體態</th><th>專長</th><th>密碼</th><th>操作</th></tr></thead>
+          <thead><tr><th>編號</th><th>暱稱 / 姓名</th><th>基本資料</th><th>專長</th><th>密碼</th><th>操作</th></tr></thead>
           <tbody>${Object.entries(db.therapists).map(([id, t]) => `<tr>
             <td class="font-black">${esc(id)}</td>
             <td><div class="font-black">${esc(t.nickname || t.name || "未填寫")}</div><div class="text-xs font-bold text-slate-500">${esc(t.name || "未填真實姓名")}</div></td>
