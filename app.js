@@ -20,6 +20,7 @@ let monthWeeks = [];
 let currentUser = null;
 let activeTab = "overview";
 let activeAppointmentView = "card";
+let activePersonnelPanel = "staff";
 let currentScheduleViewDates = [];
 let editingAppointmentId = null;
 let activeAppointmentId = null;
@@ -400,19 +401,22 @@ function renderAll() {
   renderAppointment();
   renderAppointmentDetail();
   renderCustomers();
-  renderSchedule();
-  renderFilter();
   renderPersonnel();
   renderReport();
   renderPortal();
 }
 
 function switchTab(tab) {
+  if (tab === "schedule") {
+    activePersonnelPanel = "schedule";
+    tab = "personnel";
+  }
+  if (tab === "filter") tab = "appointment";
   activeTab = tab;
   document.querySelectorAll(".view").forEach((el) => el.classList.add("hidden"));
   $(`view-${tab}`)?.classList.remove("hidden");
   document.querySelectorAll(".nav-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === tab));
-  const titles = { overview: "總覽", appointment: "預約派班", appointmentDetail: "預約資料", customer: "顧客 CRM", schedule: "班表矩陣", filter: "可用人力", personnel: "人事權限", report: "財務報表", portal: "個人中樞" };
+  const titles = { overview: "總覽", appointment: "預約派班", appointmentDetail: "預約資料", customer: "顧客 CRM", personnel: "人事權限", report: "財務報表", portal: "個人中樞" };
   $("pageTitle").textContent = titles[tab] || "管理中樞";
   hideSidebar();
   renderAll();
@@ -499,7 +503,7 @@ function renderOverview() {
         <div class="card p-5">
           <div class="mb-4 flex items-center justify-between gap-3">
             <div><h3 class="font-black">排班概況</h3><p class="text-xs font-bold text-slate-500">以有填班表的人員計算</p></div>
-            <button class="btn-light px-3 py-2 text-xs" data-jump-tab="schedule">班表</button>
+            <button class="btn-light px-3 py-2 text-xs" data-jump-tab="personnel" data-personnel-panel="schedule">班表</button>
           </div>
           <div class="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border bg-slate-200">
             <div class="bg-white p-4"><p class="text-xs font-black text-slate-500">本週</p><p class="mt-1 text-3xl font-black text-slate-900">${thisWeekScheduled}</p></div>
@@ -544,7 +548,10 @@ function renderOverview() {
   $("doorHistoryBtn").onclick = () => {
     showModal(`<div class="modal max-w-2xl"><h3 class="mb-5 border-b pb-4 text-xl font-black">大門密碼修改紀錄</h3><div class="table-wrap"><table><thead><tr><th>時間</th><th>密碼</th><th>來源</th></tr></thead><tbody>${doorPasswordRecordHtml()}</tbody></table></div><div class="mt-5 flex justify-end border-t pt-4"><button class="btn-light" data-close-modal>關閉</button></div></div>`);
   };
-  $("view-overview").querySelectorAll("[data-jump-tab]").forEach((btn) => btn.onclick = () => switchTab(btn.dataset.jumpTab));
+  $("view-overview").querySelectorAll("[data-jump-tab]").forEach((btn) => btn.onclick = () => {
+    if (btn.dataset.personnelPanel) activePersonnelPanel = btn.dataset.personnelPanel;
+    switchTab(btn.dataset.jumpTab);
+  });
   $("view-overview").querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => openAppointmentDetailPage(btn.dataset.openAppt));
   renderLiveStatus();
 }
@@ -591,12 +598,31 @@ function renderAppointment() {
         </div>
       </div>
     </div>
-    <div id="appointmentBoard" class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3"></div>
-    <div id="appointmentTimeline" class="hidden overflow-x-auto"></div>`;
+    <div class="grid gap-5 xl:grid-cols-[1fr_340px]">
+      <div class="min-w-0">
+        <div id="appointmentBoard" class="grid grid-cols-1 gap-5 md:grid-cols-2 2xl:grid-cols-3"></div>
+        <div id="appointmentTimeline" class="hidden overflow-x-auto"></div>
+      </div>
+      <aside class="card p-5 xl:sticky xl:top-4 xl:self-start">
+        <div class="mb-4 border-b pb-4"><h3 class="font-black">可用人力</h3><p class="mt-1 text-xs font-bold text-slate-500">查到可用師傅後可直接新增預約。</p></div>
+        <div class="space-y-3">
+          <div><label class="label">日期</label><select id="searchDateSelect" class="input py-2">${monthDates.map((d) => `<option value="${d.key}" ${d.key === selectedDate ? "selected" : ""}>${esc(d.displayFull)}</option>`).join("")}</select></div>
+          <div><label class="label">時段</label><input id="searchTimeKeyword" class="input py-2" placeholder="例：14:00"></div>
+          <button id="executeFilterBtn" class="btn-primary w-full px-6 py-3">查詢人力</button>
+        </div>
+        <div id="filterResultContainer" class="mt-4 grid gap-3"></div>
+      </aside>
+    </div>`;
   $("appointmentDate").onchange = renderAppointment;
   $("apptCardBtn").onclick = () => { activeAppointmentView = "card"; renderAppointmentBoard(selectedDate); };
   $("apptTimelineBtn").onclick = () => { activeAppointmentView = "timeline"; renderAppointmentBoard(selectedDate); };
+  $("searchDateSelect").onchange = () => {
+    $("appointmentDate").value = $("searchDateSelect").value;
+    renderAppointment();
+  };
+  $("executeFilterBtn").onclick = executeFilter;
   renderAppointmentBoard(selectedDate);
+  executeFilter();
 }
 
 function renderAppointmentBoard(date) {
@@ -678,7 +704,7 @@ function roomBadge(room) {
   return `<span class="badge ${map[room] || "bg-slate-100 text-slate-600"}">${room === "OUT" ? "外出" : `${esc(room || "-")}房`}</span>`;
 }
 
-function openAppointmentModal({ therapistId, date, appointmentId }) {
+function openAppointmentModal({ therapistId, date, appointmentId, time = "" }) {
   editingAppointmentId = appointmentId || null;
   const existing = appointmentId ? db.appointments[appointmentId] : null;
   const selectedTherapist = existing?.therapistId || therapistId;
@@ -692,7 +718,7 @@ function openAppointmentModal({ therapistId, date, appointmentId }) {
         <div class="grid gap-4 sm:grid-cols-2">
           <div><label class="label">服務課程</label><select name="service" class="input">${serviceOptions}</select></div>
           <div><label class="label">應收金額</label><input name="price" type="number" class="input" value="${esc(existing?.price || "")}"></div>
-          <div><label class="label">預約時間</label><input name="time" type="time" class="input" value="${esc(existing?.time || "")}"></div>
+          <div><label class="label">預約時間</label><input name="time" type="time" class="input" value="${esc(existing?.time || time || "")}"></div>
           <div><label class="label">預估時長</label><input name="duration" type="number" min="10" step="10" class="input" value="${esc(existing?.duration || 60)}"></div>
         </div>
         <div><label class="label">工作室安排</label><select name="room" class="input"><option value="R">Royal (R房)</option><option value="T">Tiffany (T房)</option><option value="OUT">外出</option></select><p id="roomHint" class="mt-2 hidden rounded-lg p-2 text-xs font-black"></p></div>
@@ -1069,27 +1095,6 @@ function addCustomerRecord(phone) {
   showSnackbar("服務紀錄已新增");
 }
 
-function renderSchedule() {
-  const start = $("scheduleStartDate")?.value || monthDates[0]?.key || todayKey();
-  const end = $("scheduleEndDate")?.value || monthDates.at(-1)?.key || todayKey();
-  $("view-schedule").innerHTML = `
-    <div class="card overflow-hidden">
-      <div class="flex flex-col justify-between gap-4 border-b bg-slate-50 p-5 xl:flex-row xl:items-center">
-        <h3 class="font-black">全體人員排班矩陣</h3>
-        <div class="flex flex-col gap-2 sm:flex-row">
-          <input id="scheduleStartDate" type="date" class="input py-2" value="${start}">
-          <input id="scheduleEndDate" type="date" class="input py-2" value="${end}">
-          <button id="queryScheduleBtn" class="btn-light">查詢</button>
-          <button id="exportScheduleBtn" class="btn-teal">匯出班表</button>
-        </div>
-      </div>
-      <div class="table-wrap rounded-none border-0"><table><thead><tr id="scheduleHeader"></tr></thead><tbody id="scheduleRows"></tbody></table></div>
-    </div>`;
-  $("queryScheduleBtn").onclick = drawScheduleTable;
-  $("exportScheduleBtn").onclick = exportScheduleCSV;
-  drawScheduleTable();
-}
-
 function buildDateRange(start, end) {
   const out = [];
   const s = new Date(`${start}T00:00:00`);
@@ -1137,23 +1142,6 @@ function exportScheduleCSV() {
   downloadCSV(csv, `排班總表_${$("scheduleStartDate").value}_至_${$("scheduleEndDate").value}.csv`);
 }
 
-function renderFilter() {
-  $("view-filter").innerHTML = `
-    <div class="card p-5">
-      <div class="mb-5 flex flex-col justify-between gap-4 border-b pb-5 xl:flex-row xl:items-end">
-        <div><h3 class="text-lg font-black">可用人力</h3><p class="text-sm font-bold text-slate-500">依日期與時段快速查詢可排師傅。</p></div>
-        <div class="grid gap-3 md:grid-cols-[220px_220px_auto] md:items-end">
-          <div><label class="label">日期</label><select id="searchDateSelect" class="input py-2">${monthDates.map((d) => `<option value="${d.key}">${esc(d.displayFull)}</option>`).join("")}</select></div>
-          <div><label class="label">時段</label><input id="searchTimeKeyword" class="input py-2" placeholder="例：14:00"></div>
-          <button id="executeFilterBtn" class="btn-primary px-6 py-3">查詢</button>
-        </div>
-      </div>
-      <div id="filterResultContainer" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"></div>
-    </div>`;
-  $("executeFilterBtn").onclick = executeFilter;
-  executeFilter();
-}
-
 function executeFilter() {
   const date = $("searchDateSelect").value;
   const kw = normalizeShift($("searchTimeKeyword").value).replace("休假", "");
@@ -1162,17 +1150,19 @@ function executeFilter() {
     const shift = (db.schedules[id] || {})[date] || "休假";
     if (!isWorking(shift)) return false;
     if (!kw) return true;
-    return shift.split(/[,\s]+/).some((part) => {
+    const inShift = shift.split(/[,\s]+/).some((part) => {
       const [s, e] = part.split("-");
       return s && e && target >= timeToMinutes(s) && target <= timeToMinutes(e);
     });
+    const busy = Object.values(db.appointments).some((a) => a.therapistId === id && a.date === date && target >= timeToMinutes(a.time) && target < timeToMinutes(a.time) + Number(a.duration || 60));
+    return inShift && !busy;
   }).map(([id, t]) => {
     const shift = (db.schedules[id] || {})[date];
-    const busy = target == null ? null : Object.values(db.appointments).find((a) => a.therapistId === id && a.date === date && target >= timeToMinutes(a.time) && target < timeToMinutes(a.time) + Number(a.duration || 60));
-    return `<div class="rounded-xl border bg-white p-4"><div class="flex items-start justify-between gap-3"><div><h4 class="font-black">${esc(therapistName(id))}</h4><p class="mt-1 text-xs font-black text-teal-700">${esc(shift)}</p></div><span class="badge bg-teal-50 text-teal-700">可用</span></div>${busy ? `<button class="mt-3 rounded-lg bg-rose-50 px-2 py-1 text-left text-xs font-black text-rose-700 hover:bg-rose-100" data-open-appt="${esc(busy.id)}">預約：${esc(busy.time)} ${esc(courseName(busy.service))}</button>` : ""}</div>`;
+    return `<div class="rounded-xl border bg-white p-4"><div class="flex items-start justify-between gap-3"><div><h4 class="font-black">${esc(therapistName(id))}</h4><p class="mt-1 text-xs font-black text-teal-700">${esc(shift)}</p></div><span class="badge bg-teal-50 text-teal-700">可用</span></div><button class="btn-light mt-3 w-full px-3 py-2 text-xs" data-add-filter-appt="${esc(id)}">新增預約</button></div>`;
   });
   $("filterResultContainer").innerHTML = cards.join("") || `<p class="font-bold text-slate-400">查無可用人員。</p>`;
   $("filterResultContainer").querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => openAppointmentDetailPage(btn.dataset.openAppt));
+  $("filterResultContainer").querySelectorAll("[data-add-filter-appt]").forEach((btn) => btn.onclick = () => openAppointmentModal({ therapistId: btn.dataset.addFilterAppt, date, time: kw.includes("-") ? "" : kw }));
 }
 
 function therapistProfileFields(profile = {}) {
@@ -1238,7 +1228,11 @@ function saveTherapistProfile(data) {
 }
 
 function renderPersonnel() {
-  $("view-personnel").innerHTML = `
+  const section = $("view-personnel");
+  const scheduleStart = $("scheduleStartDate")?.value || monthDates[0]?.key || todayKey();
+  const scheduleEnd = $("scheduleEndDate")?.value || monthDates.at(-1)?.key || todayKey();
+  const panelBtn = (panel, label) => `<button class="rounded-lg px-4 py-2 text-sm font-black ${activePersonnelPanel === panel ? "bg-white text-teal-700 shadow" : "text-slate-500"}" data-personnel-panel="${panel}">${label}</button>`;
+  const staffPanel = `
     <div class="card p-5">
       <div class="mb-4 flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
         <div><h3 class="font-black">新增按摩師基本人事資料</h3><p class="text-sm font-bold text-slate-500">建立後即可使用編號與 PIN 登入師傅專屬中樞。</p></div>
@@ -1265,45 +1259,82 @@ function renderPersonnel() {
           </tr>`).join("")}</tbody>
         </table>
       </div>
-    </div>
+    </div>`;
+  const schedulePanel = `
+    <div class="card overflow-hidden">
+      <div class="flex flex-col justify-between gap-4 border-b bg-slate-50 p-5 xl:flex-row xl:items-center">
+        <div><h3 class="font-black">班表矩陣</h3><p class="mt-1 text-sm font-bold text-slate-500">排班直接掛在人事資料底下，方便從人員管理進入。</p></div>
+        <div class="flex flex-col gap-2 sm:flex-row">
+          <input id="scheduleStartDate" type="date" class="input py-2" value="${scheduleStart}">
+          <input id="scheduleEndDate" type="date" class="input py-2" value="${scheduleEnd}">
+          <button id="queryScheduleBtn" class="btn-light">查詢</button>
+          <button id="exportScheduleBtn" class="btn-teal">匯出班表</button>
+        </div>
+      </div>
+      <div class="table-wrap rounded-none border-0"><table><thead><tr id="scheduleHeader"></tr></thead><tbody id="scheduleRows"></tbody></table></div>
+    </div>`;
+  const adminPanel = `
     <div class="card overflow-hidden">
       <div class="border-b bg-slate-50 p-5"><h3 class="font-black">系統管理員</h3><p class="mt-1 text-sm font-bold text-slate-500">新增權限與名單管理整併於同一區塊。</p></div>
       <div class="border-b p-5"><form id="adminForm" class="grid gap-4 md:grid-cols-[1fr_1fr_1fr_1fr_auto] md:items-end"><input name="id" class="input" placeholder="帳號"><input name="name" class="input" placeholder="姓名"><input name="email" class="input" placeholder="Email"><input name="pin" class="input" inputmode="numeric" autocomplete="off" placeholder="密碼 PIN"><button class="btn-primary px-5 py-3">建立</button></form></div>
       <div class="table-wrap rounded-none border-0"><table><thead><tr><th>帳號</th><th>姓名</th><th>密碼</th><th>Email</th><th>操作</th></tr></thead><tbody>${Object.entries(db.admins).map(([id, a]) => `<tr><td class="font-black">${esc(id)}</td><td>${esc(a.name)}</td><td><span class="badge bg-slate-100 text-slate-700">${esc(cleanPin(a.pin))}</span></td><td>${esc(a.email || "無")}</td><td class="space-x-2"><button data-edit-admin="${esc(id)}" class="btn-light px-3 py-1 text-xs">編輯</button>${id === "admin" ? `<span class="text-xs font-bold text-slate-400">預設不可刪</span>` : `<button data-delete-admin="${esc(id)}" class="rounded-lg bg-rose-50 px-3 py-1 text-xs font-black text-rose-700">刪除</button>`}</td></tr>`).join("")}</tbody></table></div>
     </div>`;
-  $("therapistForm").onsubmit = (e) => {
-    e.preventDefault();
-    const data = collectTherapistProfile(e.currentTarget);
-    if (!data.id || !data.pin) return showSnackbar("編號與密碼 PIN 必填");
-    saveTherapistProfile(data);
-    renderAll();
-    showSnackbar("按摩師已建立，可用新帳密登入");
-  };
-  wireTherapistBioGenerator("therapistForm");
-  $("adminForm").onsubmit = (e) => {
-    e.preventDefault();
-    const data = Object.fromEntries(new FormData(e.currentTarget).entries());
-    data.id = String(data.id || "").trim();
-    data.name = String(data.name || "").trim();
-    data.email = String(data.email || "").trim();
-    data.pin = cleanPin(data.pin);
-    if (!data.id || !data.name || !data.pin) return showSnackbar("管理員資料必填");
-    db.admins[data.id] = { name: data.name, pin: data.pin, email: data.email };
-    postCloud("saveCustomer", { phone: `SYS_ADMIN_${data.id}`, name: data.name, notes: sheetText(data.pin), records: [{ email: data.email }] });
-    renderAll();
-    showSnackbar("管理員權限已建立");
-  };
-  document.querySelectorAll("[data-edit-therapist]").forEach((btn) => btn.onclick = () => openTherapistEditor(btn.dataset.editTherapist));
-  document.querySelectorAll("[data-edit-admin]").forEach((btn) => btn.onclick = () => openAdminEditor(btn.dataset.editAdmin));
-  document.querySelectorAll("[data-delete-therapist]").forEach((btn) => btn.onclick = () => confirmAction("刪除按摩師", "排班資料會保留於本機資料中，但人員不再顯示。", () => {
-    const id = btn.dataset.deleteTherapist;
-    delete db.therapists[id];
-    delete db.customers[therapistProfileKey(id)];
-    postCloud("deleteCustomer", { phone: therapistProfileKey(id) });
-    renderAll();
-    persist();
-  }));
-  document.querySelectorAll("[data-delete-admin]").forEach((btn) => btn.onclick = () => confirmAction("刪除管理員", "此帳號將無法登入。", () => { delete db.admins[btn.dataset.deleteAdmin]; renderAll(); persist(); }));
+  section.innerHTML = `
+    <div class="card p-5">
+      <div class="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
+        <div><h3 class="text-lg font-black">人事權限</h3><p class="text-sm font-bold text-slate-500">人員資料、班表與登入權限集中管理。</p></div>
+        <div class="flex rounded-xl bg-slate-100 p-1">${panelBtn("staff", "人事資料")}${panelBtn("schedule", "班表矩陣")}${panelBtn("admins", "管理員")}</div>
+      </div>
+    </div>
+    ${activePersonnelPanel === "schedule" ? schedulePanel : activePersonnelPanel === "admins" ? adminPanel : staffPanel}`;
+  section.querySelectorAll("[data-personnel-panel]").forEach((btn) => btn.onclick = () => {
+    activePersonnelPanel = btn.dataset.personnelPanel;
+    renderPersonnel();
+  });
+  if (activePersonnelPanel === "schedule") {
+    $("queryScheduleBtn").onclick = drawScheduleTable;
+    $("exportScheduleBtn").onclick = exportScheduleCSV;
+    drawScheduleTable();
+    return;
+  }
+  if (activePersonnelPanel === "staff") {
+    $("therapistForm").onsubmit = (e) => {
+      e.preventDefault();
+      const data = collectTherapistProfile(e.currentTarget);
+      if (!data.id || !data.pin) return showSnackbar("編號與密碼 PIN 必填");
+      saveTherapistProfile(data);
+      renderAll();
+      showSnackbar("按摩師已建立，可用新帳密登入");
+    };
+    wireTherapistBioGenerator("therapistForm");
+    section.querySelectorAll("[data-edit-therapist]").forEach((btn) => btn.onclick = () => openTherapistEditor(btn.dataset.editTherapist));
+    section.querySelectorAll("[data-delete-therapist]").forEach((btn) => btn.onclick = () => confirmAction("刪除按摩師", "排班資料會保留於本機資料中，但人員不再顯示。", () => {
+      const id = btn.dataset.deleteTherapist;
+      delete db.therapists[id];
+      delete db.customers[therapistProfileKey(id)];
+      postCloud("deleteCustomer", { phone: therapistProfileKey(id) });
+      renderAll();
+      persist();
+    }));
+    return;
+  }
+  if (activePersonnelPanel === "admins") {
+    $("adminForm").onsubmit = (e) => {
+      e.preventDefault();
+      const data = Object.fromEntries(new FormData(e.currentTarget).entries());
+      data.id = String(data.id || "").trim();
+      data.name = String(data.name || "").trim();
+      data.email = String(data.email || "").trim();
+      data.pin = cleanPin(data.pin);
+      if (!data.id || !data.name || !data.pin) return showSnackbar("管理員資料必填");
+      db.admins[data.id] = { name: data.name, pin: data.pin, email: data.email };
+      postCloud("saveCustomer", { phone: `SYS_ADMIN_${data.id}`, name: data.name, notes: sheetText(data.pin), records: [{ email: data.email }] });
+      renderAll();
+      showSnackbar("管理員權限已建立");
+    };
+    section.querySelectorAll("[data-edit-admin]").forEach((btn) => btn.onclick = () => openAdminEditor(btn.dataset.editAdmin));
+    section.querySelectorAll("[data-delete-admin]").forEach((btn) => btn.onclick = () => confirmAction("刪除管理員", "此帳號將無法登入。", () => { delete db.admins[btn.dataset.deleteAdmin]; renderAll(); persist(); }));
+  }
 }
 
 function openTherapistEditor(id) {
