@@ -363,6 +363,46 @@
         let pendingAppointmentData = null; 
         let currentApptViewMode = 'list'; 
 
+        const cleanPin = (value = "") => String(value ?? "").replace(/^'/, "").trim();
+        const cleanStaffCode = (value = "") => String(value ?? "").replace(/^'/, "").trim();
+        const findTherapistId = (enteredId = "") => {
+            const exact = cleanStaffCode(enteredId);
+            if (globalDB.therapists[exact]) return exact;
+            if (!/^\d+$/.test(exact)) return "";
+            const normalized = exact.replace(/^0+/, "");
+            const matches = Object.keys(globalDB.therapists).filter((id) => cleanStaffCode(id).replace(/^0+/, "") === normalized);
+            return matches.length === 1 ? matches[0] : "";
+        };
+        const pinMatches = (stored, entered) => {
+            const storedText = cleanPin(stored);
+            const enteredText = cleanPin(entered);
+            if (storedText === enteredText) return true;
+            if (/^\d+$/.test(storedText) && /^\d+$/.test(enteredText)) {
+                return storedText.replace(/^0+/, "") === enteredText.replace(/^0+/, "");
+            }
+            return false;
+        };
+        const THERAPIST_PROFILE_DEFAULTS = {
+            nickname: "",
+            name: "",
+            contact: "",
+            height: "",
+            weight: "",
+            age: "",
+            specialties: "",
+            notes: "",
+            bio: ""
+        };
+        const normalizeTherapistProfile = (therapist = {}) => {
+            const normalized = { ...THERAPIST_PROFILE_DEFAULTS, ...therapist };
+            normalized.pin = cleanPin(normalized.pin);
+            Object.keys(THERAPIST_PROFILE_DEFAULTS).forEach((key) => {
+                normalized[key] = String(normalized[key] || "").trim();
+            });
+            return normalized;
+        };
+        const therapistName = (id) => globalDB.therapists[id]?.nickname || globalDB.therapists[id]?.name || id || "未知";
+
         // 載入最新的課程價格與抽成模型
         const COURSE_CATALOG = {
             'A60': { name: 'A課程(60m) 指+油', duration: 60, price: 1800, therapistCut: 1000 },
@@ -478,8 +518,20 @@
                     throw new Error("雲端回傳格式異常。");
                 }
 
+                if (!globalDB.therapists) globalDB.therapists = {};
                 if (!globalDB.appointments) globalDB.appointments = {};
                 if (!globalDB.customers) globalDB.customers = {};
+
+                Object.keys(globalDB.customers).forEach(key => {
+                    if (!key.startsWith('SYS_THERAPIST_PROFILE_')) return;
+                    const id = key.replace('SYS_THERAPIST_PROFILE_', '');
+                    let profile = {};
+                    try { profile = JSON.parse(globalDB.customers[key].notes || "{}"); } catch(e) {}
+                    globalDB.therapists[id] = { ...(globalDB.therapists[id] || {}), ...profile };
+                });
+                Object.keys(globalDB.therapists).forEach(id => {
+                    globalDB.therapists[id] = normalizeTherapistProfile(globalDB.therapists[id]);
+                });
                 
                 Object.keys(globalDB.appointments).forEach(key => {
                     let appt = globalDB.appointments[key];
@@ -560,23 +612,24 @@
 
         // ================= 查詢模式邏輯 =================
         window.handleSearch = async function() {
-            const id = document.getElementById('searchInput').value.trim();
+            const inputId = document.getElementById('searchInput').value.trim();
             const err = document.getElementById('searchErrorMsg');
             const btn = document.getElementById('searchBtn');
             const loader = document.getElementById('searchLoader');
             const btnText = document.getElementById('searchBtnText');
 
-            if(!id) return;
+            if(!inputId) return;
             btn.disabled = true; btnText.innerText = ""; loader.classList.remove('hidden'); err.classList.add('hidden');
             
             try {
                 await fetchDatabase();
-                if (!globalDB.therapists[id]) {
+                const id = findTherapistId(inputId);
+                if (!id) {
                     err.innerText = "查無此編號，請重新輸入。"; err.classList.remove('hidden'); 
                     return;
                 }
                 
-                document.getElementById('queryName').innerText = globalDB.therapists[id].name;
+                document.getElementById('queryName').innerText = therapistName(id);
                 document.getElementById('queryId').innerText = `ID: ${id}`;
                 
                 const sched = globalDB.schedules[id] || {};
@@ -618,19 +671,20 @@
 
         // ================= 個人中樞模式邏輯 =================
         window.handleLogin = async function() {
-            const id = document.getElementById('authId').value.trim(), pin = document.getElementById('authPin').value.trim();
+            const inputId = document.getElementById('authId').value.trim(), pin = document.getElementById('authPin').value.trim();
             const err = document.getElementById('loginErrorMsg'), btn = document.getElementById('loginBtn');
             const loader = document.getElementById('loginLoader');
             const btnText = document.getElementById('loginBtnText');
 
-            if(!id||!pin) return;
+            if(!inputId||!pin) return;
 
             btn.disabled = true; btnText.innerText = ""; loader.classList.remove('hidden'); err.classList.add('hidden');
             try {
                 await fetchDatabase();
-                if (globalDB.therapists[id] && String(globalDB.therapists[id].pin) === String(pin)) {
+                const id = findTherapistId(inputId);
+                if (globalDB.therapists[id] && pinMatches(globalDB.therapists[id].pin, pin)) {
                     currentUserId = id;
-                    document.getElementById('loggedInName').innerText = globalDB.therapists[id].name;
+                    document.getElementById('loggedInName').innerText = therapistName(id);
                     populateWeekSelector();
                     renderEditInputs();
                     switchPortalTab('schedule');
@@ -1047,7 +1101,7 @@
             cust.records = cust.records || [];
             
             let existingIdx = cust.records.findIndex(r => r.id === currentReportingApptId);
-            const therapistName = globalDB.therapists[appt.therapistId] ? globalDB.therapists[appt.therapistId].name : '未指定';
+            const reportingTherapistName = globalDB.therapists[appt.therapistId] ? therapistName(appt.therapistId) : '未指定';
             
             if (existingIdx > -1) {
                 cust.records[existingIdx].notes = notes;
@@ -1058,7 +1112,7 @@
                     id: currentReportingApptId,
                     date: appt.date,
                     therapistId: appt.therapistId,
-                    therapistName: therapistName,
+                    therapistName: reportingTherapistName,
                     service: appt.service,
                     notes: notes
                 });
