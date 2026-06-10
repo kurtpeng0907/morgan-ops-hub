@@ -681,22 +681,18 @@ function renderLiveStatus() {
 function renderAppointment() {
   const section = $("view-appointment");
   const selectedDate = $("appointmentDate")?.value || todayKey();
-  const selectedTime = $("searchTimeKeyword")?.value || "";
   section.innerHTML = `
     <div class="card p-5">
-      <div class="mb-5 flex flex-col justify-between gap-4 border-b pb-5 xl:flex-row xl:items-center">
-        <div><h3 class="text-lg font-black">派班資料</h3><p class="text-sm font-bold text-slate-500">選日期與時段，查可用師傅、新增派班，並在同頁管理每筆派班資料。</p></div>
+      <div class="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
+        <div><h3 class="text-lg font-black">派班資料</h3><p class="text-sm font-bold text-slate-500">選日期後直接從師傅看板新增派班，並在同頁管理每筆派班資料。</p></div>
         <div class="flex flex-col gap-3 md:flex-row md:items-end">
           <div><label class="label">日期</label><input id="appointmentDate" type="date" class="input py-2" value="${selectedDate}"></div>
-          <div><label class="label">時段</label><input id="searchTimeKeyword" class="input py-2" value="${esc(selectedTime)}" placeholder="例：14:00"></div>
-          <button id="executeFilterBtn" class="btn-primary px-6 py-3">查詢可用師傅</button>
           <div class="flex rounded-xl bg-slate-100 p-1">
             <button id="apptCardBtn" class="rounded-lg px-4 py-2 text-sm font-black">師傅視角</button>
             <button id="apptTimelineBtn" class="rounded-lg px-4 py-2 text-sm font-black">房型時程</button>
           </div>
         </div>
       </div>
-      <div id="filterResultContainer" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"></div>
     </div>
     <div id="appointmentBoard" class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3"></div>
     <div id="appointmentTimeline" class="hidden overflow-x-auto"></div>
@@ -704,10 +700,7 @@ function renderAppointment() {
   $("appointmentDate").onchange = renderAppointment;
   $("apptCardBtn").onclick = () => { activeAppointmentView = "card"; renderAppointmentBoard(selectedDate); };
   $("apptTimelineBtn").onclick = () => { activeAppointmentView = "timeline"; renderAppointmentBoard(selectedDate); };
-  $("executeFilterBtn").onclick = executeFilter;
-  $("searchTimeKeyword").onkeydown = (event) => { if (event.key === "Enter") executeFilter(); };
   renderAppointmentBoard(selectedDate);
-  executeFilter();
   renderAppointmentDetail();
 }
 
@@ -1233,36 +1226,6 @@ function exportScheduleCSV() {
     csv += `"${therapistName(id)}",` + currentScheduleViewDates.map((d) => `"${(db.schedules[id] || {})[d.key] || "休假"}"`).join(",") + "\n";
   });
   downloadCSV(csv, `排班總表_${$("scheduleStartDate").value}_至_${$("scheduleEndDate").value}.csv`);
-}
-
-function executeFilter() {
-  const date = $("appointmentDate")?.value || todayKey();
-  const kw = normalizeShift($("searchTimeKeyword").value).replace("休假", "");
-  const target = kw ? timeToMinutes(kw) : null;
-  const inTimeRange = (time, start, end) => {
-    let t = time;
-    let e = end;
-    if (e <= start) e += 24 * 60;
-    if (t < start && e > 24 * 60) t += 24 * 60;
-    return t >= start && t <= e;
-  };
-  const cards = Object.entries(db.therapists).filter(([id]) => {
-    const shift = (db.schedules[id] || {})[date] || "休假";
-    if (!isWorking(shift)) return false;
-    if (!kw) return true;
-    const inShift = shift.split(/[,\s]+/).some((part) => {
-      const [s, e] = part.split("-");
-      return s && e && inTimeRange(target, timeToMinutes(s), timeToMinutes(e));
-    });
-    const busy = Object.values(db.appointments).some((a) => a.therapistId === id && a.date === date && inTimeRange(target, timeToMinutes(a.time), timeToMinutes(a.time) + Number(a.duration || 60)));
-    return inShift && !busy;
-  }).map(([id, t]) => {
-    const shift = (db.schedules[id] || {})[date];
-    return `<div class="rounded-xl border bg-white p-4"><div class="flex items-start justify-between gap-3"><div><h4 class="font-black">${esc(therapistName(id))}</h4><p class="mt-1 text-xs font-black text-teal-700">${esc(shift)}</p></div><span class="badge bg-teal-50 text-teal-700">可用</span></div><button class="btn-light mt-3 w-full px-3 py-2 text-xs" data-add-filter-appt="${esc(id)}">新增預約</button></div>`;
-  });
-  $("filterResultContainer").innerHTML = cards.join("") || `<p class="font-bold text-slate-400">查無可用人員。</p>`;
-  $("filterResultContainer").querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => openAppointmentDetailPage(btn.dataset.openAppt));
-  $("filterResultContainer").querySelectorAll("[data-add-filter-appt]").forEach((btn) => btn.onclick = () => openAppointmentModal({ therapistId: btn.dataset.addFilterAppt, date, time: kw.includes("-") ? "" : kw }));
 }
 
 function therapistProfileFields(profile = {}) {
