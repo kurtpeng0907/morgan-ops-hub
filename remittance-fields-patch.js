@@ -113,7 +113,7 @@
       setFormBusy(form, false);
       renderAll();
       activeAppointmentId = draft.id;
-      switchTab("appointmentDetail");
+      switchTab("appointment");
     };
 
     const conflict = findAppointmentConflict(draft);
@@ -184,7 +184,7 @@
     };
   };
 
-  if ($("view-appointmentDetail") && !$("view-appointmentDetail").classList.contains("hidden")) {
+  if ($("appointmentDataPanel") || ($("view-appointmentDetail") && !$("view-appointmentDetail").classList.contains("hidden"))) {
     renderAppointmentDetail();
   }
 })();

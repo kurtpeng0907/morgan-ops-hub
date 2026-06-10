@@ -44,8 +44,7 @@
       </div>
       <nav id="adminNav" class="flex-1 space-y-2 overflow-y-auto p-3">
         <button data-tab="overview" class="nav-btn active">總覽</button>
-        <button data-tab="appointment" class="nav-btn text-teal-300">預約派班</button>
-        <button data-tab="appointmentDetail" class="nav-btn text-teal-200">預約資料</button>
+        <button data-tab="appointment" class="nav-btn text-teal-300">派班資料</button>
         <button data-tab="customer" class="nav-btn text-indigo-300">顧客 CRM</button>
         <button data-tab="personnel" class="nav-btn">人事權限</button>
         <button data-tab="report" class="nav-btn text-amber-300">財務報表</button>
@@ -75,7 +74,6 @@
       <div class="flex-1 overflow-y-auto p-4 md:p-8">
         <section id="view-overview" class="view space-y-6"></section>
         <section id="view-appointment" class="view hidden space-y-6"></section>
-        <section id="view-appointmentDetail" class="view hidden space-y-6"></section>
         <section id="view-customer" class="view hidden space-y-6"></section>
         <section id="view-personnel" class="view hidden space-y-6"></section>
         <section id="view-report" class="view hidden space-y-6"></section>
@@ -95,9 +93,9 @@
       el.classList.remove("hidden");
     });
   </script>
-  <script src="./app.js?v=20260610-1915"></script>
+  <script src="./app.js?v=20260610-2010"></script>
   <script src="./report-accounting-patch.js?v=20260610-1501"></script>
   <script src="./overview-layout-patch.js?v=20260610-1501"></script>
-  <script src="./remittance-fields-patch.js?v=20260610-1810"></script>
+  <script src="./remittance-fields-patch.js?v=20260610-2010"></script>
 </body>
 </html>

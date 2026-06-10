@@ -497,7 +497,6 @@ function renderAll() {
   generateMonthData();
   renderOverview();
   renderAppointment();
-  renderAppointmentDetail();
   renderCustomers();
   renderPersonnel();
   renderReport();
@@ -510,11 +509,12 @@ function switchTab(tab) {
     tab = "personnel";
   }
   if (tab === "filter") tab = "appointment";
+  if (tab === "appointmentDetail") tab = "appointment";
   activeTab = tab;
   document.querySelectorAll(".view").forEach((el) => el.classList.add("hidden"));
   $(`view-${tab}`)?.classList.remove("hidden");
   document.querySelectorAll(".nav-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === tab));
-  const titles = { overview: "總覽", appointment: "預約派班", appointmentDetail: "預約資料", customer: "顧客 CRM", personnel: "人事權限", report: "財務報表", portal: "個人中樞" };
+  const titles = { overview: "總覽", appointment: "派班資料", customer: "顧客 CRM", personnel: "人事權限", report: "財務報表", portal: "個人中樞" };
   $("pageTitle").textContent = titles[tab] || "管理中樞";
   hideSidebar();
   renderAll();
@@ -581,7 +581,7 @@ function renderOverview() {
           <p class="text-xs font-black uppercase tracking-widest text-teal-300">今日營運指揮台</p>
           <div class="mt-2 flex flex-col justify-between gap-4 md:flex-row md:items-end">
             <div><h3 class="text-2xl font-black">${today.replaceAll("-", "/")}</h3><p class="mt-1 text-sm font-bold text-slate-300">${nextAppt ? `下一筆 ${nextAppt.time} · ${customerDisplay(nextAppt.phone, nextAppt.customerName)}` : "今日沒有後續預約"}</p></div>
-            <div class="flex flex-wrap gap-2"><button class="btn-teal" data-jump-tab="appointment">派班看板</button><button class="rounded-xl bg-white/10 px-4 py-2 font-black text-white" data-jump-tab="appointmentDetail">預約資料</button></div>
+            <div class="flex flex-wrap gap-2"><button class="btn-teal" data-jump-tab="appointment">派班資料</button></div>
           </div>
         </div>
         <div class="grid grid-cols-2 gap-px bg-slate-200 xl:grid-cols-6">
@@ -616,7 +616,7 @@ function renderOverview() {
     </div>
     <div class="grid gap-5 xl:grid-cols-[1.15fr_.85fr]">
       <div class="card overflow-hidden">
-        <div class="flex items-center justify-between border-b bg-white px-5 py-4"><div><h3 class="font-black">今日流程</h3><p class="text-xs font-bold text-slate-500">點任一筆可開啟預約資料頁</p></div><span class="badge bg-teal-50 text-teal-700">${todayAppts.length} 筆</span></div>
+        <div class="flex items-center justify-between border-b bg-white px-5 py-4"><div><h3 class="font-black">今日流程</h3><p class="text-xs font-bold text-slate-500">點任一筆可在派班資料內編輯</p></div><span class="badge bg-teal-50 text-teal-700">${todayAppts.length} 筆</span></div>
         <div>${todayTimeline}</div>
       </div>
       <div class="space-y-5">${taskCards}</div>
@@ -685,7 +685,7 @@ function renderAppointment() {
   section.innerHTML = `
     <div class="card p-5">
       <div class="mb-5 flex flex-col justify-between gap-4 border-b pb-5 xl:flex-row xl:items-center">
-        <div><h3 class="text-lg font-black">預約派班</h3><p class="text-sm font-bold text-slate-500">選日期與時段，查可用師傅後直接新增預約。</p></div>
+        <div><h3 class="text-lg font-black">派班資料</h3><p class="text-sm font-bold text-slate-500">選日期與時段，查可用師傅、新增派班，並在同頁管理每筆派班資料。</p></div>
         <div class="flex flex-col gap-3 md:flex-row md:items-end">
           <div><label class="label">日期</label><input id="appointmentDate" type="date" class="input py-2" value="${selectedDate}"></div>
           <div><label class="label">時段</label><input id="searchTimeKeyword" class="input py-2" value="${esc(selectedTime)}" placeholder="例：14:00"></div>
@@ -699,7 +699,8 @@ function renderAppointment() {
       <div id="filterResultContainer" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"></div>
     </div>
     <div id="appointmentBoard" class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3"></div>
-    <div id="appointmentTimeline" class="hidden overflow-x-auto"></div>`;
+    <div id="appointmentTimeline" class="hidden overflow-x-auto"></div>
+    <div id="appointmentDataPanel"></div>`;
   $("appointmentDate").onchange = renderAppointment;
   $("apptCardBtn").onclick = () => { activeAppointmentView = "card"; renderAppointmentBoard(selectedDate); };
   $("apptTimelineBtn").onclick = () => { activeAppointmentView = "timeline"; renderAppointmentBoard(selectedDate); };
@@ -707,6 +708,7 @@ function renderAppointment() {
   $("searchTimeKeyword").onkeydown = (event) => { if (event.key === "Enter") executeFilter(); };
   renderAppointmentBoard(selectedDate);
   executeFilter();
+  renderAppointmentDetail();
 }
 
 function renderAppointmentBoard(date) {
@@ -923,7 +925,7 @@ async function deleteAppointment(id) {
 
 function openAppointmentDetailPage(id) {
   activeAppointmentId = id || null;
-  switchTab("appointmentDetail");
+  switchTab("appointment");
 }
 
 function appointmentRecord(appt) {
@@ -931,7 +933,7 @@ function appointmentRecord(appt) {
 }
 
 function renderAppointmentDetail() {
-  const section = $("view-appointmentDetail");
+  const section = $("appointmentDataPanel") || $("view-appointmentDetail");
   if (!section) return;
   const appts = Object.values(db.appointments).sort((a, b) => a.date === b.date ? sortByTime(a, b) : String(b.date).localeCompare(String(a.date)));
   const active = activeAppointmentId ? db.appointments[activeAppointmentId] : null;
@@ -942,7 +944,7 @@ function renderAppointmentDetail() {
   if (backBtn) backBtn.onclick = () => { activeAppointmentId = null; renderAppointmentDetail(); };
   const cancelBtn = $("cancelAppointmentDetailBtn");
   if (cancelBtn) cancelBtn.onclick = () => { activeAppointmentId = null; renderAppointmentDetail(); };
-  section.querySelectorAll("[data-tab-jump-appointment]").forEach((btn) => btn.onclick = () => switchTab("appointment"));
+  section.querySelectorAll("[data-reset-appointment-data]").forEach((btn) => btn.onclick = () => { activeAppointmentId = null; renderAppointmentDetail(); });
   const form = $("appointmentDetailForm");
   if (form) {
     form.service.onchange = () => {
@@ -979,11 +981,11 @@ function renderAppointmentListPage(appts) {
       <td class="text-right font-black text-teal-700">${money(Number(a.price || 0) - cut)}</td>
       <td class="text-right"><button data-open-appt="${esc(a.id)}" class="btn-light px-3 py-1 text-xs">編輯</button></td>
     </tr>`;
-  }).join("") : `<tr><td colspan="9" class="py-10 text-center font-bold text-slate-400">本月無預約資料</td></tr>`;
+  }).join("") : `<tr><td colspan="9" class="py-10 text-center font-bold text-slate-400">本月無派班資料</td></tr>`;
   return `<div class="card p-5">
     <div class="mb-5 flex flex-col justify-between gap-4 border-b pb-5 sm:flex-row sm:items-center">
-      <div><h3 class="text-lg font-black">預約資料管理</h3><p class="text-sm font-bold text-slate-500">每筆預約都有獨立資訊頁，可由各頁面連結進入編輯。</p></div>
-      <button class="btn-teal" data-tab-jump-appointment>回到派班看板</button>
+      <div><h3 class="text-lg font-black">派班資料清單</h3><p class="text-sm font-bold text-slate-500">本月所有派班集中在同一頁管理，點任一筆即可在此編輯。</p></div>
+      <button class="btn-light" data-reset-appointment-data>顯示清單</button>
     </div>
     <div class="grid grid-cols-2 gap-4 md:grid-cols-4">
       ${metric("本月預約筆數", monthAppts.length)}
@@ -991,7 +993,7 @@ function renderAppointmentListPage(appts) {
       ${metric("已完成", monthAppts.filter((a) => String(a.isCompleted) === "true").length, "text-teal-700")}
       ${metric("待回報", monthAppts.filter((a) => String(a.isCompleted) !== "true").length, "text-indigo-700")}
     </div>
-    <div class="table-wrap mt-5"><table><thead><tr><th>預約時間</th><th>顧客</th><th>師傅</th><th>空間</th><th>服務</th><th>備註</th><th class="text-right">金額</th><th class="text-right">店收</th><th class="text-right">操作</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="table-wrap mt-5"><table><thead><tr><th>派班時間</th><th>顧客</th><th>師傅</th><th>空間</th><th>服務</th><th>備註</th><th class="text-right">金額</th><th class="text-right">店收</th><th class="text-right">操作</th></tr></thead><tbody>${rows}</tbody></table></div>
   </div>`;
 }
 
@@ -1003,8 +1005,8 @@ function renderAppointmentDetailForm(appt, allAppts) {
   return `<div class="grid gap-5 xl:grid-cols-[1fr_360px]">
     <form id="appointmentDetailForm" class="card p-5">
       <div class="mb-5 flex flex-col justify-between gap-4 border-b pb-5 sm:flex-row sm:items-center">
-        <div><p class="text-xs font-black uppercase tracking-widest text-slate-500">預約資訊</p><h3 class="text-xl font-black">${esc(customerDisplay(appt.phone, appt.customerName))}</h3><p class="text-xs font-bold text-slate-500">ID：${esc(appt.id)}</p></div>
-        <div class="flex gap-2"><button id="backToAppointmentListBtn" type="button" class="btn-light">返回列表</button><button data-delete-appt="${esc(appt.id)}" type="button" class="rounded-xl bg-rose-50 px-4 py-2 font-black text-rose-700">刪除</button></div>
+        <div><p class="text-xs font-black uppercase tracking-widest text-slate-500">派班資料</p><h3 class="text-xl font-black">${esc(customerDisplay(appt.phone, appt.customerName))}</h3><p class="text-xs font-bold text-slate-500">ID：${esc(appt.id)}</p></div>
+        <div class="flex gap-2"><button id="backToAppointmentListBtn" type="button" class="btn-light">返回清單</button><button data-delete-appt="${esc(appt.id)}" type="button" class="rounded-xl bg-rose-50 px-4 py-2 font-black text-rose-700">刪除</button></div>
       </div>
       <div class="grid gap-4 md:grid-cols-2">
         <div><label class="label">預約日期</label><input name="date" type="date" class="input" value="${esc(appt.date || todayKey())}"></div>
@@ -1022,7 +1024,7 @@ function renderAppointmentDetailForm(appt, allAppts) {
         <div class="md:col-span-2"><label class="label">服務紀錄 / 顧客反饋</label><textarea name="recordNotes" class="input min-h-28">${esc(record.notes || "")}</textarea></div>
       </div>
       <p id="appointmentDetailError" class="mt-4 hidden text-sm font-black text-rose-600"></p>
-      <div class="mt-5 flex justify-end gap-3 border-t pt-4"><button id="cancelAppointmentDetailBtn" type="button" class="btn-light">取消</button><button class="btn-teal">儲存預約資訊</button></div>
+      <div class="mt-5 flex justify-end gap-3 border-t pt-4"><button id="cancelAppointmentDetailBtn" type="button" class="btn-light">取消</button><button class="btn-teal">儲存派班資料</button></div>
     </form>
     <aside class="space-y-4">
       <div class="card p-5"><h4 class="mb-4 font-black">帳務摘要</h4><div class="space-y-3">${metric("應收金額", money(appt.price), "text-rose-700")}${metric("店家應收", money(Number(appt.price || 0) - cut), "text-teal-700")}${metric("師傅抽成", money(cut), "text-indigo-700")}</div></div>
@@ -1075,11 +1077,11 @@ async function saveAppointmentDetailForm(form) {
     await saveCloudActions([
       { action: "addAppointment", data: next },
       { action: "saveCustomer", data: { phone: next.phone, ...customer } }
-    ], "預約資訊已寫入雲端");
+    ], "派班資料已寫入雲端");
     setFormBusy(form, false);
     renderAll();
     activeAppointmentId = next.id;
-    switchTab("appointmentDetail");
+    switchTab("appointment");
   };
   const conflict = findAppointmentConflict(next);
   if (conflict) confirmAction("仍要儲存撞期預約？", conflict, commit, "強制儲存");
@@ -1172,7 +1174,7 @@ function openCustomerModal(phone = "", recordsOpen = false) {
 
 function renderRecordList(phone) {
   const records = [...(db.customers[phone]?.records || [])].sort((a, b) => String(b.date).localeCompare(String(a.date)));
-  return records.length ? records.map((r) => `<div class="rounded-xl border bg-white p-3"><div class="mb-1 flex justify-between gap-2"><b>${esc(r.date)}</b><span class="badge bg-slate-100 text-slate-600">${esc(courseName(r.service))}</span></div><p class="text-xs font-black text-teal-700">${esc(r.therapistName || therapistName(r.therapistId))}</p><p class="mt-1 whitespace-pre-wrap text-sm text-slate-600">${esc(r.notes || "尚未填寫細節")}</p>${db.appointments[r.id] ? `<button type="button" class="btn-light mt-3 px-3 py-1 text-xs" data-open-appt="${esc(r.id)}">開啟預約資訊</button>` : ""}</div>`).join("") : `<div class="rounded-xl border border-dashed py-6 text-center text-sm font-bold text-slate-400">無紀錄</div>`;
+  return records.length ? records.map((r) => `<div class="rounded-xl border bg-white p-3"><div class="mb-1 flex justify-between gap-2"><b>${esc(r.date)}</b><span class="badge bg-slate-100 text-slate-600">${esc(courseName(r.service))}</span></div><p class="text-xs font-black text-teal-700">${esc(r.therapistName || therapistName(r.therapistId))}</p><p class="mt-1 whitespace-pre-wrap text-sm text-slate-600">${esc(r.notes || "尚未填寫細節")}</p>${db.appointments[r.id] ? `<button type="button" class="btn-light mt-3 px-3 py-1 text-xs" data-open-appt="${esc(r.id)}">開啟派班資料</button>` : ""}</div>`).join("") : `<div class="rounded-xl border border-dashed py-6 text-center text-sm font-bold text-slate-400">無紀錄</div>`;
 }
 
 async function addCustomerRecord(phone) {
