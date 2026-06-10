@@ -2,6 +2,8 @@
 
 const API_URL = "https://script.google.com/macros/s/AKfycbxC4Pk1v6rkdmd96cR_2r_xPhbcNjrQ0bNdikGKyqbR9OMMeCwN9L5t9mE1j-AoS-ie/exec";
 const STORAGE_KEY = "morgan-ops-hub-v2";
+const SYNC_META_KEY = `${STORAGE_KEY}-sync-meta`;
+const LOCAL_BACKUP_PREFIX = `${STORAGE_KEY}-backup`;
 
 const COURSE_CATALOG = {
   A60: { name: "A課程 60分", duration: 60, price: 1800, therapistCut: 1000 },
@@ -90,6 +92,7 @@ function therapistDisplayMeta(therapist = {}) {
 }
 
 let db = seedDatabase();
+let syncMeta = loadSyncMeta();
 
 function customerCode(phone = "") {
   return db.customers[phone]?.code || "";
@@ -206,28 +209,58 @@ function persist() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
 }
 
-function mergeCloudWithLocal(cloudData, localData) {
-  const cloud = normalizeDb(cloudData || {});
-  const local = normalizeDb(localData || {});
-  return normalizeDb({
-    ...cloud,
-    therapists: { ...cloud.therapists, ...local.therapists },
-    schedules: { ...cloud.schedules, ...local.schedules },
-    admins: { ...cloud.admins, ...local.admins },
-    appointments: { ...cloud.appointments, ...local.appointments },
-    customers: { ...cloud.customers, ...local.customers }
-  });
+function loadSyncMeta() {
+  try {
+    return {
+      pending: false,
+      source: "local",
+      lastSync: "",
+      reason: "",
+      ...JSON.parse(localStorage.getItem(SYNC_META_KEY) || "{}")
+    };
+  } catch {
+    return { pending: false, source: "local", lastSync: "", reason: "" };
+  }
+}
+
+function saveSyncMeta() {
+  localStorage.setItem(SYNC_META_KEY, JSON.stringify(syncMeta));
+}
+
+function backupLocalDb(reason) {
+  try {
+    localStorage.setItem(`${LOCAL_BACKUP_PREFIX}-${Date.now()}`, JSON.stringify({
+      reason,
+      at: new Date().toISOString(),
+      db
+    }));
+  } catch {}
+}
+
+function markSyncPending(isPending, reason = "") {
+  syncMeta.pending = isPending;
+  syncMeta.reason = reason;
+  syncMeta.source = isPending ? "local" : "cloud";
+  syncMeta.lastSync = isPending ? syncMeta.lastSync : new Date().toISOString();
+  saveSyncMeta();
 }
 
 async function tryCloudSync() {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5500);
+  const timeout = setTimeout(() => controller.abort(), 15000);
   try {
     const res = await fetch(`${API_URL}?t=${Date.now()}`, { signal: controller.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    db = mergeCloudWithLocal(await res.json(), db);
+    const cloudDb = normalizeDb(await res.json());
+    if (syncMeta.pending) {
+      $("sysStatus").textContent = "雲端已連線；此裝置有未同步資料，暫保留本機版本";
+      return;
+    }
+    backupLocalDb("before-cloud-authoritative-sync");
+    db = cloudDb;
     persist();
-    $("sysStatus").textContent = "已連線雲端資料，本機異動已保留";
+    markSyncPending(false);
+    $("sysStatus").textContent = "已連線雲端資料";
   } catch {
     $("sysStatus").textContent = "雲端未連線，使用本機測試資料";
   } finally {
@@ -237,11 +270,15 @@ async function tryCloudSync() {
 
 async function postCloud(action, data) {
   persist();
+  const hadFailedWrite = syncMeta.pending && syncMeta.reason === "last-write-failed";
+  if (!hadFailedWrite) markSyncPending(true, "uploading");
   try {
     const res = await fetch(API_URL, { method: "POST", body: JSON.stringify({ action, data }) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!hadFailedWrite) markSyncPending(false);
     return true;
   } catch {
+    markSyncPending(true, "last-write-failed");
     showSnackbar("已先存於此瀏覽器；雲端寫入失敗，請檢查 Apps Script 權限");
     return false;
   }
