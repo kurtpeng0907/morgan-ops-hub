@@ -73,8 +73,9 @@
         </header>
 
         <!-- 主導航 -->
-        <div class="flex bg-zinc-100/80 p-1.5 rounded-2xl mx-auto w-fit mb-10 border border-zinc-200/50">
+        <div class="flex flex-wrap justify-center bg-zinc-100/80 p-1.5 rounded-2xl mx-auto w-fit mb-10 border border-zinc-200/50">
             <button onclick="switchTab('query')" id="tabQuery" class="px-8 py-2.5 rounded-xl tab-active transition-all text-sm tracking-wide">全域班表查詢</button>
+            <button onclick="switchTab('personnel')" id="tabPersonnel" class="px-8 py-2.5 rounded-xl tab-inactive transition-all text-sm tracking-wide">人事資料表</button>
             <button onclick="switchTab('edit')" id="tabEdit" class="px-8 py-2.5 rounded-xl tab-inactive transition-all text-sm tracking-wide flex items-center gap-2">
                 個人管理中樞 
                 <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
@@ -109,6 +110,26 @@
                     </div>
 
                     <div id="queryScheduleContainer" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 md:gap-4"></div>
+                </div>
+            </div>
+
+            <!-- ==================== 人事資料表 ==================== -->
+            <div id="viewPersonnel" class="hidden transition-opacity duration-300">
+                <div class="glass-card rounded-3xl p-6 md:p-8">
+                    <div class="flex flex-col gap-4 border-b border-zinc-200/70 pb-6 md:flex-row md:items-end md:justify-between">
+                        <div>
+                            <p class="mb-2 text-xs font-black uppercase tracking-[0.24em] text-teal-700">Personnel</p>
+                            <h2 class="text-2xl font-black tracking-tight text-zinc-900">人事資料表</h2>
+                            <p class="mt-2 text-sm font-medium text-zinc-500">與後台人事資料即時連動，僅顯示前台作業需要的基本資料。</p>
+                        </div>
+                        <button onclick="renderPersonnelDirectory(true)" id="personnelRefreshBtn" class="rounded-xl bg-zinc-900 px-5 py-3 text-sm font-bold text-white transition-colors hover:bg-zinc-800">
+                            同步資料
+                        </button>
+                    </div>
+                    <div id="personnelDirectorySummary" class="mt-5 text-sm font-bold text-zinc-500">尚未同步資料</div>
+                    <div id="personnelDirectoryBody" class="mt-5">
+                        <div class="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 p-8 text-center text-sm font-bold text-zinc-400">點擊同步資料，載入後台人事表。</div>
+                    </div>
                 </div>
             </div>
 
@@ -402,6 +423,12 @@
             return normalized;
         };
         const therapistName = (id) => globalDB.therapists[id]?.nickname || globalDB.therapists[id]?.name || id || "未知";
+        const esc = (value = "") => String(value ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+        const compactStats = (therapist = {}) => [
+            therapist.age ? `${therapist.age}歲` : "",
+            therapist.height ? `${therapist.height}cm` : "",
+            therapist.weight ? `${therapist.weight}kg` : ""
+        ].filter(Boolean).join(" / ");
 
         // 載入最新的課程價格與抽成模型
         const COURSE_CATALOG = {
@@ -572,12 +599,97 @@
 
         // ================= 雙模態視圖切換 =================
         window.switchTab = function(tabName) {
-            ['query', 'edit'].forEach(n => {
+            ['query', 'personnel', 'edit'].forEach(n => {
                 const el = document.getElementById(`tab${n.charAt(0).toUpperCase() + n.slice(1)}`);
-                if(n === tabName) el.className = "px-8 py-2.5 rounded-xl tab-active transition-all text-sm tracking-wide";
+                if(n === tabName) el.className = "px-8 py-2.5 rounded-xl tab-active transition-all text-sm tracking-wide flex items-center gap-2";
                 else el.className = "px-8 py-2.5 rounded-xl tab-inactive transition-all text-sm tracking-wide flex items-center gap-2";
                 document.getElementById(`view${n.charAt(0).toUpperCase() + n.slice(1)}`).classList[n === tabName ? 'remove' : 'add']('hidden');
             });
+            if(tabName === 'personnel') renderPersonnelDirectory();
+        };
+
+        window.renderPersonnelDirectory = async function(force = false) {
+            const body = document.getElementById('personnelDirectoryBody');
+            const summary = document.getElementById('personnelDirectorySummary');
+            const btn = document.getElementById('personnelRefreshBtn');
+            if (!body || !summary) return;
+
+            if (force || Object.keys(globalDB.therapists || {}).length === 0) {
+                if (btn) { btn.disabled = true; btn.innerText = "同步中..."; }
+                summary.innerText = "正在同步後台人事資料...";
+                body.innerHTML = `<div class="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 p-8 text-center text-sm font-bold text-zinc-400">載入中...</div>`;
+                try {
+                    await fetchDatabase();
+                } catch (e) {
+                    summary.innerText = "同步失敗";
+                    body.innerHTML = `<div class="rounded-2xl border border-rose-100 bg-rose-50 p-8 text-center text-sm font-bold text-rose-600">無法連線至後台資料庫，請稍後再試。</div>`;
+                    if (btn) { btn.disabled = false; btn.innerText = "重新同步"; }
+                    return;
+                } finally {
+                    if (btn) { btn.disabled = false; btn.innerText = "同步資料"; }
+                }
+            }
+
+            const rows = Object.entries(globalDB.therapists || {}).sort(([a], [b]) => a.localeCompare(b, 'zh-Hant', { numeric: true }));
+            summary.innerText = `已同步 ${rows.length} 位人員｜${new Date().toLocaleString('zh-TW', { hour12: false })}`;
+
+            if (!rows.length) {
+                body.innerHTML = `<div class="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 p-8 text-center text-sm font-bold text-zinc-400">目前後台尚未建立師傅資料。</div>`;
+                return;
+            }
+
+            const cards = rows.map(([id, therapist]) => {
+                const stats = compactStats(therapist);
+                const contact = therapist.contact || "未填";
+                const realName = therapist.name && therapist.nickname && therapist.name !== therapist.nickname ? therapist.name : "";
+                return `
+                    <article class="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_2px_10px_-5px_rgba(0,0,0,0.08)]">
+                        <div class="mb-4 flex items-start justify-between gap-3">
+                            <div>
+                                <p class="text-xs font-black uppercase tracking-widest text-zinc-400">ID ${esc(id)}</p>
+                                <h3 class="mt-1 text-xl font-black text-zinc-900">${esc(therapistName(id))}</h3>
+                                ${realName ? `<p class="mt-1 text-sm font-bold text-zinc-500">${esc(realName)}</p>` : ""}
+                            </div>
+                            <span class="rounded-full bg-teal-50 px-3 py-1 text-xs font-black text-teal-700">在職</span>
+                        </div>
+                        <div class="grid gap-2 text-sm font-bold text-zinc-600">
+                            <p><span class="text-zinc-400">基本資料：</span>${esc([contact, stats].filter(Boolean).join(" · ") || "未填")}</p>
+                            <p><span class="text-zinc-400">專長：</span>${esc(therapist.specialties || "未填")}</p>
+                            ${therapist.bio ? `<p class="line-clamp-3 font-medium leading-relaxed text-zinc-500">${esc(therapist.bio)}</p>` : ""}
+                        </div>
+                    </article>`;
+            }).join("");
+
+            const tableRows = rows.map(([id, therapist]) => `
+                <tr class="border-b border-zinc-100 align-top last:border-0">
+                    <td class="px-4 py-3 font-mono text-sm font-black text-zinc-800">${esc(id)}</td>
+                    <td class="px-4 py-3">
+                        <div class="font-black text-zinc-900">${esc(therapistName(id))}</div>
+                        ${therapist.name && therapist.nickname && therapist.name !== therapist.nickname ? `<div class="mt-1 text-xs font-bold text-zinc-400">${esc(therapist.name)}</div>` : ""}
+                    </td>
+                    <td class="px-4 py-3 text-sm font-bold text-zinc-600">${esc(therapist.contact || "未填")}</td>
+                    <td class="px-4 py-3 text-sm font-bold text-zinc-600">${esc(compactStats(therapist) || "未填")}</td>
+                    <td class="px-4 py-3 text-sm font-bold text-zinc-600">${esc(therapist.specialties || "未填")}</td>
+                    <td class="max-w-sm px-4 py-3 text-sm font-medium leading-relaxed text-zinc-500">${esc(therapist.bio || therapist.notes || "未填")}</td>
+                </tr>`).join("");
+
+            body.innerHTML = `
+                <div class="grid gap-4 md:hidden">${cards}</div>
+                <div class="hidden overflow-x-auto rounded-2xl border border-zinc-200 bg-white md:block">
+                    <table class="w-full min-w-[900px] text-left">
+                        <thead class="bg-zinc-50 text-xs font-black uppercase tracking-widest text-zinc-400">
+                            <tr>
+                                <th class="px-4 py-3">代碼</th>
+                                <th class="px-4 py-3">姓名</th>
+                                <th class="px-4 py-3">聯絡方式</th>
+                                <th class="px-4 py-3">基本資料</th>
+                                <th class="px-4 py-3">專長</th>
+                                <th class="px-4 py-3">介紹 / 備註</th>
+                            </tr>
+                        </thead>
+                        <tbody>${tableRows}</tbody>
+                    </table>
+                </div>`;
         };
 
         window.switchPortalTab = function(tabName) {
