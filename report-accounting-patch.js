@@ -1,10 +1,15 @@
 "use strict";
 
 (function patchFinanceAccounting() {
-  const remittedAmount = (appt) => Number(appt.collectedPrice || 0);
   const grossAmount = (appt) => Number(appt.price || 0);
-  const shopCutAmount = (appt) => Math.max(0, grossAmount(appt) - Number(COURSE_CATALOG[appt.service]?.therapistCut || 0));
-  const unremittedAmount = (appt) => Math.max(0, shopCutAmount(appt) - remittedAmount(appt));
+  const remittanceDueAmount = (appt) => Math.max(0, grossAmount(appt) - Number(COURSE_CATALOG[appt.service]?.therapistCut || 0));
+  const isRemitted = (appt) => String(appt.remittancePaid) === "true" || Number(appt.collectedPrice || 0) > 0;
+  const remittedAmount = (appt) => isRemitted(appt) ? remittanceDueAmount(appt) : 0;
+  const unremittedAmount = (appt) => isRemitted(appt) ? 0 : remittanceDueAmount(appt);
+  const remittanceMethod = (appt) => isRemitted(appt) ? (appt.remittanceMethod || "未記錄") : "未回帳";
+  const paidBadge = (appt) => isRemitted(appt)
+    ? `<span class="badge bg-emerald-50 text-emerald-700">已回帳</span>`
+    : `<span class="badge bg-amber-50 text-amber-700">未回帳</span>`;
   const csvCell = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
 
   const reportRows = (start, end) => Object.values(db.appointments)
@@ -13,7 +18,7 @@
 
   const reportTab = (panel, label) => `<button class="rounded-lg px-4 py-2 text-sm font-black ${activeReportPanel === panel ? "bg-white text-amber-700 shadow" : "text-slate-500"}" data-report-panel="${panel}">${label}</button>`;
 
-  const revenueTableHtml = (rows) => `<div class="table-wrap"><table><thead><tr><th>預約日期時間</th><th>顧客</th><th>師傅</th><th>服務</th><th class="text-right">應收總額</th><th class="text-right">已回帳金額</th><th class="text-right">未回帳金額（店家抽成）</th></tr></thead><tbody>${rows.length ? rows.map((appt) => `<tr><td><button data-open-appt="${esc(appt.id)}" class="font-mono font-black text-teal-700 hover:text-teal-900">${esc(appt.date)} ${esc(appt.time)}</button></td><td><button data-open-appt="${esc(appt.id)}" class="font-black hover:text-teal-700">${esc(customerDisplay(appt.phone, appt.customerName))}</button></td><td>${esc(therapistName(appt.therapistId))}</td><td>${esc(courseName(appt.service))}</td><td class="text-right font-black text-rose-600">${money(grossAmount(appt))}</td><td class="text-right font-black text-emerald-700">${money(remittedAmount(appt))}</td><td class="text-right font-black text-amber-700">${money(unremittedAmount(appt))}</td></tr>`).join("") : `<tr><td colspan="7" class="py-10 text-center font-bold text-slate-400">該區間無預約</td></tr>`}</tbody></table></div>`;
+  const revenueTableHtml = (rows) => `<div class="table-wrap"><table><thead><tr><th>預約日期時間</th><th>顧客</th><th>師傅</th><th>服務</th><th class="text-right">應收總額</th><th class="text-right">應回帳金額</th><th>已回帳</th><th>回帳管道</th></tr></thead><tbody>${rows.length ? rows.map((appt) => `<tr><td><button data-open-appt="${esc(appt.id)}" class="font-mono font-black text-teal-700 hover:text-teal-900">${esc(appt.date)} ${esc(appt.time)}</button></td><td><button data-open-appt="${esc(appt.id)}" class="font-black hover:text-teal-700">${esc(customerDisplay(appt.phone, appt.customerName))}</button></td><td>${esc(therapistName(appt.therapistId))}</td><td>${esc(courseName(appt.service))}</td><td class="text-right font-black text-rose-600">${money(grossAmount(appt))}</td><td class="text-right font-black text-teal-700">${money(remittanceDueAmount(appt))}</td><td>${paidBadge(appt)}</td><td class="font-bold text-slate-600">${esc(remittanceMethod(appt))}</td></tr>`).join("") : `<tr><td colspan="8" class="py-10 text-center font-bold text-slate-400">該區間無預約</td></tr>`}</tbody></table></div>`;
 
   const guestTableHtml = (rows) => {
     const allApptsByPhone = {};
@@ -54,11 +59,12 @@
     const stats = Object.keys(db.therapists).map((id) => {
       const mine = rows.filter((appt) => appt.therapistId === id);
       const gross = mine.reduce((sum, appt) => sum + grossAmount(appt), 0);
+      const due = mine.reduce((sum, appt) => sum + remittanceDueAmount(appt), 0);
       const remitted = mine.reduce((sum, appt) => sum + remittedAmount(appt), 0);
       const unremitted = mine.reduce((sum, appt) => sum + unremittedAmount(appt), 0);
-      return { id, count: mine.length, gross, remitted, unremitted };
+      return { id, count: mine.length, gross, due, remitted, unremitted };
     }).filter((row) => row.count > 0).sort((a, b) => b.gross - a.gross);
-    return `<div class="table-wrap"><table><thead><tr><th>師傅</th><th class="text-right">服務筆數</th><th class="text-right">應收總額</th><th class="text-right">已回帳金額</th><th class="text-right">未回帳金額（店家抽成）</th></tr></thead><tbody>${stats.length ? stats.map((stat) => `<tr><td class="font-black text-teal-700">${esc(therapistName(stat.id))}</td><td class="text-right font-black">${stat.count}</td><td class="text-right font-black text-rose-700">${money(stat.gross)}</td><td class="text-right font-black text-emerald-700">${money(stat.remitted)}</td><td class="text-right font-black text-amber-700">${money(stat.unremitted)}</td></tr>`).join("") : `<tr><td colspan="5" class="py-10 text-center font-bold text-slate-400">該區間無回帳資料</td></tr>`}</tbody></table></div>`;
+    return `<div class="table-wrap"><table><thead><tr><th>師傅</th><th class="text-right">服務筆數</th><th class="text-right">應收總額</th><th class="text-right">應回帳金額</th><th class="text-right">已回帳金額</th><th class="text-right">未回帳金額</th></tr></thead><tbody>${stats.length ? stats.map((stat) => `<tr><td class="font-black text-teal-700">${esc(therapistName(stat.id))}</td><td class="text-right font-black">${stat.count}</td><td class="text-right font-black text-rose-700">${money(stat.gross)}</td><td class="text-right font-black text-teal-700">${money(stat.due)}</td><td class="text-right font-black text-emerald-700">${money(stat.remitted)}</td><td class="text-right font-black text-amber-700">${money(stat.unremitted)}</td></tr>`).join("") : `<tr><td colspan="6" class="py-10 text-center font-bold text-slate-400">該區間無回帳資料</td></tr>`}</tbody></table></div>`;
   };
 
   renderReport = function renderReport() {
@@ -66,6 +72,7 @@
     const end = $("reportEndDate")?.value || todayKey();
     const rows = reportRows(start, end);
     const total = rows.reduce((sum, appt) => sum + grossAmount(appt), 0);
+    const due = rows.reduce((sum, appt) => sum + remittanceDueAmount(appt), 0);
     const remitted = rows.reduce((sum, appt) => sum + remittedAmount(appt), 0);
     const unremitted = rows.reduce((sum, appt) => sum + unremittedAmount(appt), 0);
     const panelContent = {
@@ -78,10 +85,10 @@
     $("view-report").innerHTML = `
       <div class="card p-5">
         <div class="mb-5 flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
-          <div><h3 class="text-lg font-black">財務報表</h3><p class="text-sm font-bold text-slate-500">應收總額為客人支付總額；未回帳金額為店家抽成扣除已回帳後的金額。</p></div>
+          <div><h3 class="text-lg font-black">財務報表</h3><p class="text-sm font-bold text-slate-500">應收總額為客人支付總額；應回帳金額為店家抽成，可用已回帳與回帳管道追蹤狀態。</p></div>
           <div class="flex flex-col gap-2 sm:flex-row"><input id="reportStartDate" type="date" class="input py-2" value="${start}"><input id="reportEndDate" type="date" class="input py-2" value="${end}"><button id="queryReportBtn" class="btn-primary px-5 py-3">查詢</button><button id="exportReportBtn" class="btn-teal">輸出報表</button></div>
         </div>
-        <div class="mb-5 grid grid-cols-2 gap-4 xl:grid-cols-4">${metric("來客數", rows.length)}${metric("應收總額", money(total), "text-rose-700")}${metric("已回帳金額", money(remitted), "text-emerald-700")}${metric("未回帳金額", money(unremitted), "text-amber-700")}</div>
+        <div class="mb-5 grid grid-cols-2 gap-4 xl:grid-cols-4">${metric("來客數", rows.length)}${metric("應收總額", money(total), "text-rose-700")}${metric("應回帳金額", money(due), "text-teal-700")}${metric("未回帳金額", money(unremitted), "text-amber-700")}</div>
         <div class="mb-5 flex flex-wrap rounded-xl bg-slate-100 p-1">${reportTab("revenue", "營收明細")}${reportTab("guests", "來客數")}${reportTab("retention", "師傅回客率")}${reportTab("commission", "回帳總表")}</div>
         ${panelContent}
       </div>`;
@@ -100,14 +107,15 @@
     const rows = reportRows(start, end);
     let csv = "\uFEFF";
     if (activeReportPanel === "commission") {
-      csv += "師傅,服務筆數,應收總額,已回帳金額,未回帳金額（店家抽成）\n";
+      csv += "師傅,服務筆數,應收總額,應回帳金額,已回帳金額,未回帳金額\n";
       Object.keys(db.therapists).forEach((id) => {
         const mine = rows.filter((appt) => appt.therapistId === id);
         if (!mine.length) return;
         const gross = mine.reduce((sum, appt) => sum + grossAmount(appt), 0);
+        const due = mine.reduce((sum, appt) => sum + remittanceDueAmount(appt), 0);
         const remitted = mine.reduce((sum, appt) => sum + remittedAmount(appt), 0);
         const unremitted = mine.reduce((sum, appt) => sum + unremittedAmount(appt), 0);
-        csv += [therapistName(id), mine.length, gross, remitted, unremitted].map(csvCell).join(",") + "\n";
+        csv += [therapistName(id), mine.length, gross, due, remitted, unremitted].map(csvCell).join(",") + "\n";
       });
     } else if (activeReportPanel === "retention") {
       csv += "師傅,服務筆數,不重複顧客,回客人數,回客率,應收總額\n";
@@ -131,9 +139,9 @@
       });
       Object.entries(byDate).forEach(([date, bucket]) => csv += [date, bucket.count, bucket.phones.size, bucket.total].map(csvCell).join(",") + "\n");
     } else {
-      csv += "日期,時間,顧客編碼,顧客姓名,聯絡方式,負責師傅,服務項目,應收總額,已回帳金額,未回帳金額（店家抽成）\n";
+      csv += "日期,時間,顧客編碼,顧客姓名,聯絡方式,負責師傅,服務項目,應收總額,應回帳金額,已回帳,回帳管道\n";
       rows.forEach((appt) => {
-        csv += [appt.date, appt.time, customerCode(appt.phone), appt.customerName || db.customers[appt.phone]?.name || "", appt.phone, therapistName(appt.therapistId), courseName(appt.service), grossAmount(appt), remittedAmount(appt), unremittedAmount(appt)].map(csvCell).join(",") + "\n";
+        csv += [appt.date, appt.time, customerCode(appt.phone), appt.customerName || db.customers[appt.phone]?.name || "", appt.phone, therapistName(appt.therapistId), courseName(appt.service), grossAmount(appt), remittanceDueAmount(appt), isRemitted(appt) ? "是" : "否", remittanceMethod(appt)].map(csvCell).join(",") + "\n";
       });
     }
     downloadCSV(csv, `報表_${activeReportPanel}_${start}_至_${end}.csv`);
