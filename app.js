@@ -273,14 +273,43 @@ async function postCloud(action, data) {
   const hadFailedWrite = syncMeta.pending && syncMeta.reason === "last-write-failed";
   if (!hadFailedWrite) markSyncPending(true, "uploading");
   try {
-    const res = await fetch(API_URL, { method: "POST", body: JSON.stringify({ action, data }) });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const res = await fetch(API_URL, {
+      method: "POST",
+      body: JSON.stringify({ action, data }),
+      redirect: "manual"
+    });
+    const accepted = res.ok || res.status === 302 || res.type === "opaqueredirect" || (res.status >= 200 && res.status < 400);
+    if (!accepted) throw new Error(`HTTP ${res.status}`);
     if (!hadFailedWrite) markSyncPending(false);
     return true;
   } catch {
     markSyncPending(true, "last-write-failed");
     showSnackbar("已先存於此瀏覽器；雲端寫入失敗，請檢查 Apps Script 權限");
     return false;
+  }
+}
+
+async function saveCloudActions(actions, successMessage = "已儲存到雲端") {
+  showSnackbar("正在寫入雲端...");
+  const results = [];
+  for (const item of actions) {
+    results.push(await postCloud(item.action, item.data));
+  }
+  const ok = results.every(Boolean);
+  showSnackbar(ok ? successMessage : "已保存在此裝置；雲端寫入失敗時，重新開啟會保留本機版本");
+  return ok;
+}
+
+function setFormBusy(form, busy, label = "寫入雲端...") {
+  const button = form?.querySelector('button[type="submit"], button:not([type]), .btn-teal, .btn-primary');
+  if (!button) return;
+  if (busy) {
+    button.dataset.originalText = button.textContent;
+    button.textContent = label;
+    button.disabled = true;
+  } else {
+    button.textContent = button.dataset.originalText || button.textContent;
+    button.disabled = false;
   }
 }
 
@@ -562,7 +591,7 @@ function renderOverview() {
       <div class="space-y-5">${taskCards}</div>
     </div>
     `;
-  $("saveDoorBtn").onclick = () => {
+  $("saveDoorBtn").onclick = async () => {
     const previous = db.customers.SYS_DOOR_PWD || { name: "設定", notes: "", records: [] };
     const nextValue = $("doorPassword").value.trim();
     const records = previous.records || [];
@@ -570,18 +599,16 @@ function renderOverview() {
       records.push({ at: new Date().toLocaleString("zh-TW", { hour12: false }), value: nextValue, reason: "手動更新" });
     }
     db.customers.SYS_DOOR_PWD = { name: "設定", notes: nextValue, records };
-    postCloud("saveCustomer", { phone: "SYS_DOOR_PWD", ...db.customers.SYS_DOOR_PWD });
-    showSnackbar("大門密碼已更新");
+    await saveCloudActions([{ action: "saveCustomer", data: { phone: "SYS_DOOR_PWD", ...db.customers.SYS_DOOR_PWD } }], "大門密碼已更新到雲端");
   };
-  $("randomDoorBtn").onclick = () => {
+  $("randomDoorBtn").onclick = async () => {
     const code = String(Math.floor(Math.random() * 10000)).padStart(4, "0");
     $("doorPassword").value = code;
     const previous = db.customers.SYS_DOOR_PWD || { name: "設定", notes: "", records: [] };
     const records = previous.records || [];
     records.push({ at: new Date().toLocaleString("zh-TW", { hour12: false }), value: code, reason: "隨機四碼" });
     db.customers.SYS_DOOR_PWD = { name: "設定", notes: code, records };
-    postCloud("saveCustomer", { phone: "SYS_DOOR_PWD", ...db.customers.SYS_DOOR_PWD });
-    showSnackbar("已產生並儲存隨機大門密碼");
+    await saveCloudActions([{ action: "saveCustomer", data: { phone: "SYS_DOOR_PWD", ...db.customers.SYS_DOOR_PWD } }], "已產生並儲存隨機大門密碼");
   };
   $("doorHistoryBtn").onclick = () => {
     showModal(`<div class="modal max-w-2xl"><h3 class="mb-5 border-b pb-4 text-xl font-black">大門密碼修改紀錄</h3><div class="table-wrap"><table><thead><tr><th>時間</th><th>密碼</th><th>來源</th></tr></thead><tbody>${doorPasswordRecordHtml()}</tbody></table></div><div class="mt-5 flex justify-end border-t pt-4"><button class="btn-light" data-close-modal>關閉</button></div></div>`);
@@ -797,7 +824,7 @@ function suggestRoom(form, date) {
   }
 }
 
-function saveAppointmentFromForm(form, date) {
+async function saveAppointmentFromForm(form, date) {
   const data = Object.fromEntries(new FormData(form).entries());
   data.id = editingAppointmentId || `APT-${Date.now().toString(36).toUpperCase()}`;
   data.appId = data.id;
@@ -814,7 +841,8 @@ function saveAppointmentFromForm(form, date) {
     return;
   }
   const conflict = findAppointmentConflict(data);
-  const commit = () => {
+  const commit = async () => {
+    setFormBusy(form, true);
     db.appointments[data.id] = data;
     const customer = db.customers[data.phone] || { name: data.customerName, notes: "", records: [] };
     customer.name = data.customerName;
@@ -828,10 +856,13 @@ function saveAppointmentFromForm(form, date) {
     if (recordIndex >= 0) customer.records[recordIndex] = record;
     else customer.records.push(record);
     db.customers[data.phone] = customer;
-    postCloud("addAppointment", data);
+    await saveCloudActions([
+      { action: "addAppointment", data },
+      { action: "saveCustomer", data: { phone: data.phone, ...customer } }
+    ], "預約已寫入雲端");
+    setFormBusy(form, false);
     closeModal();
     renderAll();
-    showSnackbar("預約已儲存");
   };
   if (conflict) {
     confirmAction("仍要儲存撞期預約？", conflict, commit, "強制儲存");
@@ -850,14 +881,13 @@ function findAppointmentConflict(data) {
   return `${therapist ? `師傅在 ${therapist.time} 已有預約。\n` : ""}${room ? `${data.room}房時段或10分鐘緩衝不足。` : ""}`;
 }
 
-function deleteAppointment(id) {
+async function deleteAppointment(id) {
   const appt = db.appointments[id];
   delete db.appointments[id];
   if (appt && db.customers[appt.phone]?.records) db.customers[appt.phone].records = db.customers[appt.phone].records.filter((r) => r.id !== id);
   if (activeAppointmentId === id) activeAppointmentId = null;
-  postCloud("deleteAppointment", { appId: id });
+  await saveCloudActions([{ action: "deleteAppointment", data: { appId: id } }], "預約已刪除");
   renderAll();
-  showSnackbar("預約已刪除");
 }
 
 function openAppointmentDetailPage(id) {
@@ -970,7 +1000,7 @@ function renderAppointmentDetailForm(appt, allAppts) {
   </div>`;
 }
 
-function saveAppointmentDetailForm(form) {
+async function saveAppointmentDetailForm(form) {
   const old = db.appointments[activeAppointmentId];
   if (!old) return;
   const data = Object.fromEntries(new FormData(form).entries());
@@ -993,7 +1023,8 @@ function saveAppointmentDetailForm(form) {
     err.classList.remove("hidden");
     return;
   }
-  const commit = () => {
+  const commit = async () => {
+    setFormBusy(form, true);
     if (old.phone && old.phone !== next.phone && db.customers[old.phone]?.records) {
       db.customers[old.phone].records = db.customers[old.phone].records.filter((r) => r.id !== next.id);
     }
@@ -1010,12 +1041,14 @@ function saveAppointmentDetailForm(form) {
     if (idx >= 0) customer.records[idx] = { ...customer.records[idx], ...record };
     else customer.records.push(record);
     db.customers[next.phone] = customer;
-    postCloud("addAppointment", next);
-    postCloud("saveCustomer", { phone: next.phone, ...customer });
+    await saveCloudActions([
+      { action: "addAppointment", data: next },
+      { action: "saveCustomer", data: { phone: next.phone, ...customer } }
+    ], "預約資訊已寫入雲端");
+    setFormBusy(form, false);
     renderAll();
     activeAppointmentId = next.id;
     switchTab("appointmentDetail");
-    showSnackbar("預約資訊已更新");
   };
   const conflict = findAppointmentConflict(next);
   if (conflict) confirmAction("仍要儲存撞期預約？", conflict, commit, "強制儲存");
@@ -1047,9 +1080,9 @@ function drawCustomerRows() {
   }).join("");
   rows.innerHTML = html || `<tr><td colspan="6" class="py-8 text-center font-bold text-slate-400">無符合顧客</td></tr>`;
   rows.querySelectorAll("[data-record]").forEach((btn) => btn.onclick = () => openCustomerModal(btn.dataset.record, true));
-  rows.querySelectorAll("[data-delete-customer]").forEach((btn) => btn.onclick = () => confirmAction("刪除 CRM 檔案", "顧客基本資料與服務紀錄將移除。", () => {
+  rows.querySelectorAll("[data-delete-customer]").forEach((btn) => btn.onclick = () => confirmAction("刪除 CRM 檔案", "顧客基本資料與服務紀錄將移除。", async () => {
     delete db.customers[btn.dataset.deleteCustomer];
-    postCloud("deleteCustomer", { phone: btn.dataset.deleteCustomer });
+    await saveCloudActions([{ action: "deleteCustomer", data: { phone: btn.dataset.deleteCustomer } }], "顧客檔案已刪除");
     renderAll();
   }));
 }
@@ -1083,7 +1116,7 @@ function openCustomerModal(phone = "", recordsOpen = false) {
         <div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>關閉</button><button class="btn-teal">儲存基本資料</button></div>
       </form>
     </div>`);
-  $("customerForm").onsubmit = (event) => {
+  $("customerForm").onsubmit = async (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
     if (!data.phone.trim()) {
@@ -1093,10 +1126,11 @@ function openCustomerModal(phone = "", recordsOpen = false) {
     }
     db.customers[data.phone] = { code: db.customers[data.phone]?.code, name: data.name.trim(), notes: data.notes.trim(), records: db.customers[data.phone]?.records || [] };
     assignCustomerCodes(db);
-    postCloud("saveCustomer", { phone: data.phone, ...db.customers[data.phone] });
+    setFormBusy(event.currentTarget, true);
+    await saveCloudActions([{ action: "saveCustomer", data: { phone: data.phone, ...db.customers[data.phone] } }], "顧客資料已寫入雲端");
+    setFormBusy(event.currentTarget, false);
     closeModal();
     renderAll();
-    showSnackbar("顧客資料已更新");
   };
   if ($("addRecordBtn")) $("addRecordBtn").onclick = () => addCustomerRecord(phone);
   $("modalRoot").querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => {
@@ -1110,15 +1144,14 @@ function renderRecordList(phone) {
   return records.length ? records.map((r) => `<div class="rounded-xl border bg-white p-3"><div class="mb-1 flex justify-between gap-2"><b>${esc(r.date)}</b><span class="badge bg-slate-100 text-slate-600">${esc(courseName(r.service))}</span></div><p class="text-xs font-black text-teal-700">${esc(r.therapistName || therapistName(r.therapistId))}</p><p class="mt-1 whitespace-pre-wrap text-sm text-slate-600">${esc(r.notes || "尚未填寫細節")}</p>${db.appointments[r.id] ? `<button type="button" class="btn-light mt-3 px-3 py-1 text-xs" data-open-appt="${esc(r.id)}">開啟預約資訊</button>` : ""}</div>`).join("") : `<div class="rounded-xl border border-dashed py-6 text-center text-sm font-bold text-slate-400">無紀錄</div>`;
 }
 
-function addCustomerRecord(phone) {
+async function addCustomerRecord(phone) {
   const therapistId = $("recordTherapist").value;
   const service = $("recordService").value.trim();
   const record = { id: `REC-${Date.now().toString(36)}`, date: $("recordDate").value, therapistId, therapistName: therapistName(therapistId), service, collectedPrice: $("recordCollectedPrice").value.trim(), notes: $("recordNotes").value.trim() };
   db.customers[phone].records ||= [];
   db.customers[phone].records.push(record);
-  postCloud("saveCustomer", { phone, ...db.customers[phone] });
+  await saveCloudActions([{ action: "saveCustomer", data: { phone, ...db.customers[phone] } }], "服務紀錄已寫入雲端");
   $("recordList").innerHTML = renderRecordList(phone);
-  showSnackbar("服務紀錄已新增");
 }
 
 function buildDateRange(start, end) {
@@ -1142,14 +1175,15 @@ function drawScheduleTable() {
 
 function openScheduleModal(id) {
   showModal(`<div class="modal max-w-4xl"><h3 class="mb-5 border-b pb-4 text-xl font-black">強制編輯：${esc(therapistName(id))}</h3><form id="scheduleForm" class="space-y-4"><div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">${currentScheduleViewDates.map((d) => `<label class="rounded-xl border bg-slate-50 p-3"><span class="label ${d.isWeekend ? "text-rose-600" : ""}">${esc(d.displayFull)}</span><input class="input py-2" name="${d.key}" value="${esc((db.schedules[id] || {})[d.key] || "")}" placeholder="休假 / 13:00-22:00"></label>`).join("")}</div><div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">覆寫紀錄</button></div></form></div>`);
-  $("scheduleForm").onsubmit = (event) => {
+  $("scheduleForm").onsubmit = async (event) => {
     event.preventDefault();
+    setFormBusy(event.currentTarget, true);
     db.schedules[id] ||= {};
     Object.entries(Object.fromEntries(new FormData(event.currentTarget).entries())).forEach(([date, value]) => db.schedules[id][date] = normalizeShift(value));
-    postCloud("saveSchedule", { id, schedule: db.schedules[id] });
+    await saveCloudActions([{ action: "saveSchedule", data: { id, schedule: db.schedules[id] } }], "班表已寫入雲端");
+    setFormBusy(event.currentTarget, false);
     closeModal();
     renderAll();
-    showSnackbar("班表已更新");
   };
 }
 
@@ -1250,14 +1284,16 @@ function wireTherapistBioGenerator(formId) {
   };
 }
 
-function saveTherapistProfile(data) {
+async function saveTherapistProfile(data) {
   const existing = db.therapists[data.id] || {};
   db.therapists[data.id] = normalizeTherapistProfile({ ...existing, ...data });
   db.schedules[data.id] ||= {};
-  postCloud("addTherapist", { ...db.therapists[data.id], id: data.id, pin: sheetText(data.pin) });
   const { pin, ...profile } = db.therapists[data.id];
   db.customers[therapistProfileKey(data.id)] = { name: profile.nickname || profile.name || data.id, notes: JSON.stringify(profile), records: [] };
-  postCloud("saveCustomer", { phone: therapistProfileKey(data.id), ...db.customers[therapistProfileKey(data.id)] });
+  return saveCloudActions([
+    { action: "addTherapist", data: { ...db.therapists[data.id], id: data.id, pin: sheetText(data.pin) } },
+    { action: "saveCustomer", data: { phone: therapistProfileKey(data.id), ...db.customers[therapistProfileKey(data.id)] } }
+  ], "按摩師資料已寫入雲端");
 }
 
 function renderPersonnel() {
@@ -1331,28 +1367,29 @@ function renderPersonnel() {
     return;
   }
   if (activePersonnelPanel === "staff") {
-    $("therapistForm").onsubmit = (e) => {
+    $("therapistForm").onsubmit = async (e) => {
       e.preventDefault();
       const data = collectTherapistProfile(e.currentTarget);
       if (!data.id || !data.pin) return showSnackbar("編號與密碼 PIN 必填");
-      saveTherapistProfile(data);
+      setFormBusy(e.currentTarget, true);
+      await saveTherapistProfile(data);
+      setFormBusy(e.currentTarget, false);
       renderAll();
-      showSnackbar("按摩師已建立，可用新帳密登入");
     };
     wireTherapistBioGenerator("therapistForm");
     section.querySelectorAll("[data-edit-therapist]").forEach((btn) => btn.onclick = () => openTherapistEditor(btn.dataset.editTherapist));
-    section.querySelectorAll("[data-delete-therapist]").forEach((btn) => btn.onclick = () => confirmAction("刪除按摩師", "排班資料會保留於本機資料中，但人員不再顯示。", () => {
+    section.querySelectorAll("[data-delete-therapist]").forEach((btn) => btn.onclick = () => confirmAction("刪除按摩師", "排班資料會保留於本機資料中，但人員不再顯示。", async () => {
       const id = btn.dataset.deleteTherapist;
       delete db.therapists[id];
       delete db.customers[therapistProfileKey(id)];
-      postCloud("deleteCustomer", { phone: therapistProfileKey(id) });
+      await saveCloudActions([{ action: "deleteCustomer", data: { phone: therapistProfileKey(id) } }], "按摩師資料已刪除");
       renderAll();
       persist();
     }));
     return;
   }
   if (activePersonnelPanel === "admins") {
-    $("adminForm").onsubmit = (e) => {
+    $("adminForm").onsubmit = async (e) => {
       e.preventDefault();
       const data = Object.fromEntries(new FormData(e.currentTarget).entries());
       data.id = String(data.id || "").trim();
@@ -1360,13 +1397,19 @@ function renderPersonnel() {
       data.email = String(data.email || "").trim();
       data.pin = cleanPin(data.pin);
       if (!data.id || !data.name || !data.pin) return showSnackbar("管理員資料必填");
+      setFormBusy(e.currentTarget, true);
       db.admins[data.id] = { name: data.name, pin: data.pin, email: data.email };
-      postCloud("saveCustomer", { phone: `SYS_ADMIN_${data.id}`, name: data.name, notes: sheetText(data.pin), records: [{ email: data.email }] });
+      await saveCloudActions([{ action: "saveCustomer", data: { phone: `SYS_ADMIN_${data.id}`, name: data.name, notes: sheetText(data.pin), records: [{ email: data.email }] } }], "管理員權限已寫入雲端");
+      setFormBusy(e.currentTarget, false);
       renderAll();
-      showSnackbar("管理員權限已建立");
     };
     section.querySelectorAll("[data-edit-admin]").forEach((btn) => btn.onclick = () => openAdminEditor(btn.dataset.editAdmin));
-    section.querySelectorAll("[data-delete-admin]").forEach((btn) => btn.onclick = () => confirmAction("刪除管理員", "此帳號將無法登入。", () => { delete db.admins[btn.dataset.deleteAdmin]; renderAll(); persist(); }));
+    section.querySelectorAll("[data-delete-admin]").forEach((btn) => btn.onclick = () => confirmAction("刪除管理員", "此帳號將無法登入。", async () => {
+      const id = btn.dataset.deleteAdmin;
+      delete db.admins[id];
+      await saveCloudActions([{ action: "deleteCustomer", data: { phone: `SYS_ADMIN_${id}` } }], "管理員權限已刪除");
+      renderAll();
+    }));
   }
 }
 
@@ -1384,14 +1427,15 @@ function openTherapistEditor(id) {
       <div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">儲存修改</button></div>
     </form>
   </div>`);
-  $("therapistEditForm").onsubmit = (event) => {
+  $("therapistEditForm").onsubmit = async (event) => {
     event.preventDefault();
     const data = collectTherapistProfile(event.currentTarget);
     if (!data.pin) return showSnackbar("密碼 PIN 必填");
-    saveTherapistProfile(data);
+    setFormBusy(event.currentTarget, true);
+    await saveTherapistProfile(data);
+    setFormBusy(event.currentTarget, false);
     closeModal();
     renderAll();
-    showSnackbar("按摩師人事資料已更新");
   };
   wireTherapistBioGenerator("therapistEditForm");
 }
@@ -1400,7 +1444,7 @@ function openAdminEditor(id) {
   const admin = db.admins[id];
   if (!admin) return;
   showModal(`<div class="modal max-w-lg"><h3 class="mb-5 border-b pb-4 text-xl font-black">編輯管理員權限</h3><form id="adminEditForm" class="space-y-4"><div><label class="label">帳號</label><input name="id" class="input bg-slate-100" readonly value="${esc(id)}"></div><div><label class="label">姓名</label><input name="name" class="input" value="${esc(admin.name || "")}"></div><div><label class="label">Email</label><input name="email" class="input" value="${esc(admin.email || "")}"></div><div><label class="label">密碼 PIN</label><input name="pin" class="input" inputmode="numeric" autocomplete="off" value="${esc(cleanPin(admin.pin))}"><p class="mt-2 text-xs font-bold text-slate-500">PIN 會以文字保存，開頭 0 不會被移除。</p></div><div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">儲存修改</button></div></form></div>`);
-  $("adminEditForm").onsubmit = (event) => {
+  $("adminEditForm").onsubmit = async (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
     data.id = String(data.id || "").trim();
@@ -1408,15 +1452,17 @@ function openAdminEditor(id) {
     data.email = String(data.email || "").trim();
     data.pin = cleanPin(data.pin);
     if (!data.name || !data.pin) return showSnackbar("姓名與密碼必填");
+    setFormBusy(event.currentTarget, true);
     db.admins[data.id] = { name: data.name, pin: data.pin, email: data.email };
     if (data.id !== "admin") {
-      postCloud("saveCustomer", { phone: `SYS_ADMIN_${data.id}`, name: data.name, notes: sheetText(data.pin), records: [{ email: data.email }] });
+      await saveCloudActions([{ action: "saveCustomer", data: { phone: `SYS_ADMIN_${data.id}`, name: data.name, notes: sheetText(data.pin), records: [{ email: data.email }] } }], "管理員登入資料已寫入雲端");
     } else {
       persist();
+      showSnackbar("預設管理員資料已保存在此裝置");
     }
+    setFormBusy(event.currentTarget, false);
     closeModal();
     renderAll();
-    showSnackbar("管理員登入資料已更新");
   };
 }
 
@@ -1564,12 +1610,11 @@ function renderPortal() {
         <div id="portalScheduleInputs" class="space-y-3">${(monthWeeks[0] || []).map((d) => `<label class="block rounded-xl border bg-slate-50 p-3"><span class="label">${esc(d.displayFull)}</span><input class="input py-2" data-portal-shift="${d.key}" value="${esc((db.schedules[currentUser.id] || {})[d.key] || "")}"></label>`).join("")}</div>
       </div>
     </div>`;
-  $("savePortalScheduleBtn").onclick = () => {
+  $("savePortalScheduleBtn").onclick = async () => {
     db.schedules[currentUser.id] ||= {};
     document.querySelectorAll("[data-portal-shift]").forEach((input) => db.schedules[currentUser.id][input.dataset.portalShift] = normalizeShift(input.value));
-    postCloud("saveSchedule", { id: currentUser.id, schedule: db.schedules[currentUser.id] });
+    await saveCloudActions([{ action: "saveSchedule", data: { id: currentUser.id, schedule: db.schedules[currentUser.id] } }], "班表已寫入雲端");
     renderAll();
-    showSnackbar("班表已儲存");
   };
   section.querySelectorAll("[data-complete]").forEach((btn) => btn.onclick = () => openTherapistReport(btn.dataset.complete));
   section.querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => openAppointmentDetailPage(btn.dataset.openAppt));
@@ -1578,8 +1623,9 @@ function renderPortal() {
 function openTherapistReport(id) {
   const a = db.appointments[id];
   showModal(`<div class="modal max-w-lg"><h3 class="mb-5 border-b pb-4 text-xl font-black">填寫服務紀錄與回款</h3><form id="therapistReportForm" class="space-y-4"><div class="rounded-xl border bg-slate-50 p-4"><b>${esc(customerDisplay(a.phone, a.customerName))}</b><p class="text-sm font-bold text-teal-700">${esc(a.date)} / ${esc(a.time)} - ${esc(courseName(a.service))}</p></div><input name="collectedPrice" class="input" type="number" placeholder="實際回款金額" value="${esc(a.collectedPrice || "")}"><textarea name="notes" class="input min-h-28" placeholder="服務細節與顧客反饋">${esc(findRecord(a)?.notes || "")}</textarea><label class="flex items-center gap-3 rounded-xl border p-3 font-black"><input name="isCompleted" type="checkbox" ${String(a.isCompleted) === "true" ? "checked" : ""}> 標記為已完成</label><div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">儲存入檔</button></div></form></div>`);
-  $("therapistReportForm").onsubmit = (event) => {
+  $("therapistReportForm").onsubmit = async (event) => {
     event.preventDefault();
+    setFormBusy(event.currentTarget, true);
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
     a.collectedPrice = data.collectedPrice || "";
     a.isCompleted = data.isCompleted === "on";
@@ -1594,10 +1640,13 @@ function openTherapistReport(id) {
     if (idx >= 0) customer.records[idx] = { ...customer.records[idx], ...record };
     else customer.records.push(record);
     db.customers[a.phone] = customer;
-    postCloud("addAppointment", a);
+    await saveCloudActions([
+      { action: "addAppointment", data: a },
+      { action: "saveCustomer", data: { phone: a.phone, ...customer } }
+    ], "服務紀錄已寫入雲端");
+    setFormBusy(event.currentTarget, false);
     closeModal();
     renderAll();
-    showSnackbar("服務紀錄已同步");
   };
 }
 

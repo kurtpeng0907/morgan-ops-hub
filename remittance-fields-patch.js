@@ -41,7 +41,7 @@
     };
   }
 
-  function saveAppointmentDetailWithRemittance(form) {
+  async function saveAppointmentDetailWithRemittance(form) {
     const old = db.appointments[activeAppointmentId];
     if (!old) return;
     const data = Object.fromEntries(new FormData(form).entries());
@@ -77,7 +77,8 @@
     }
     err.classList.add("hidden");
 
-    const commit = () => {
+    const commit = async () => {
+      setFormBusy(form, true);
       if (old.phone && old.phone !== draft.phone && db.customers[old.phone]?.records) {
         db.customers[old.phone].records = db.customers[old.phone].records.filter((record) => record.id !== draft.id);
       }
@@ -105,12 +106,14 @@
       if (idx >= 0) customer.records[idx] = { ...customer.records[idx], ...record };
       else customer.records.push(record);
       db.customers[draft.phone] = customer;
-      postCloud("addAppointment", draft);
-      postCloud("saveCustomer", { phone: draft.phone, ...customer });
+      await saveCloudActions([
+        { action: "addAppointment", data: draft },
+        { action: "saveCustomer", data: { phone: draft.phone, ...customer } }
+      ], "預約與回帳狀態已寫入雲端");
+      setFormBusy(form, false);
       renderAll();
       activeAppointmentId = draft.id;
       switchTab("appointmentDetail");
-      showSnackbar("預約與回帳狀態已更新");
     };
 
     const conflict = findAppointmentConflict(draft);
@@ -131,8 +134,9 @@
     const record = findRecord(appt);
     showModal(`<div class="modal max-w-lg"><h3 class="mb-5 border-b pb-4 text-xl font-black">填寫服務紀錄與回帳</h3><form id="therapistReportForm" class="space-y-4"><div class="rounded-xl border bg-slate-50 p-4"><b>${esc(customerDisplay(appt.phone, appt.customerName))}</b><p class="text-sm font-bold text-teal-700">${esc(appt.date)} / ${esc(appt.time)} - ${esc(courseName(appt.service))}</p></div><div class="grid grid-cols-2 gap-3"><div class="metric"><p class="text-xs font-black text-slate-500">應收總額</p><p class="mt-1 text-2xl font-black text-rose-700">${money(appt.price)}</p></div><div class="metric"><p class="text-xs font-black text-slate-500">應回帳金額</p><p class="mt-1 text-2xl font-black text-teal-700">${money(due)}</p></div></div><label class="flex items-center gap-3 rounded-xl border p-3 font-black"><input name="remittancePaid" type="checkbox" class="h-5 w-5" ${paid ? "checked" : ""}> 已回帳</label><div><label class="label">回帳管道</label><select name="remittanceMethod" class="input">${remittanceMethodOptions(appt.remittanceMethod || "")}</select></div><textarea name="notes" class="input min-h-28" placeholder="服務細節與顧客反饋">${esc(record?.notes || "")}</textarea><label class="flex items-center gap-3 rounded-xl border p-3 font-black"><input name="isCompleted" type="checkbox" ${String(appt.isCompleted) === "true" ? "checked" : ""}> 標記為已完成</label><p id="therapistReportError" class="hidden text-sm font-black text-rose-600"></p><div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">儲存入檔</button></div></form></div>`);
 
-    $("therapistReportForm").onsubmit = (event) => {
+    $("therapistReportForm").onsubmit = async (event) => {
       event.preventDefault();
+      setFormBusy(event.currentTarget, true);
       const data = Object.fromEntries(new FormData(event.currentTarget).entries());
       const reportPaid = data.remittancePaid === "on";
       const method = reportPaid ? String(data.remittanceMethod || "").trim() : "";
@@ -170,11 +174,13 @@
       if (idx >= 0) customer.records[idx] = { ...customer.records[idx], ...nextRecord };
       else customer.records.push(nextRecord);
       db.customers[appt.phone] = customer;
-      postCloud("addAppointment", appt);
-      postCloud("saveCustomer", { phone: appt.phone, ...customer });
+      await saveCloudActions([
+        { action: "addAppointment", data: appt },
+        { action: "saveCustomer", data: { phone: appt.phone, ...customer } }
+      ], "服務紀錄與回帳狀態已寫入雲端");
+      setFormBusy(event.currentTarget, false);
       closeModal();
       renderAll();
-      showSnackbar("服務紀錄與回帳狀態已同步");
     };
   };
 
