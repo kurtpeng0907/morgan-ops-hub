@@ -1,0 +1,1111 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>專業按摩師排班與派單中樞</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700;900&display=swap');
+        body { 
+            font-family: 'Noto Sans TC', sans-serif; 
+            background-color: #fafafa; 
+            color: #18181b; 
+        }
+        /* 極簡風格特製漸變與陰影 */
+        .glass-card {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(244, 244, 245, 0.8);
+            box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.03);
+        }
+        .soft-input {
+            background-color: #f4f4f5;
+            border: 1px solid transparent;
+            transition: all 0.2s ease;
+        }
+        .soft-input:focus {
+            background-color: #ffffff;
+            border-color: #e4e4e7;
+            box-shadow: 0 0 0 4px rgba(24, 24, 27, 0.05);
+        }
+        .tab-active { 
+            background-color: #ffffff; 
+            color: #18181b; 
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+            font-weight: 700;
+        }
+        .tab-inactive { color: #71717a; font-weight: 500; }
+        .tab-inactive:hover { color: #3f3f46; }
+        
+        .portal-tab-active { border-bottom: 2px solid #0f766e; color: #0f766e; font-weight: 700; }
+        .portal-tab-inactive { color: #a1a1aa; font-weight: 500; }
+        .portal-tab-inactive:hover { color: #52525b; }
+
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        .loader { 
+            border: 2px solid #e4e4e7; border-top: 2px solid #18181b; 
+            border-radius: 50%; width: 16px; height: 16px; 
+            animation: spin 0.8s linear infinite; display: inline-block; 
+        }
+        .loader-white { border-top-color: #ffffff; border-color: rgba(255,255,255,0.3); }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="p-4 md:p-10 min-h-screen flex flex-col selection:bg-zinc-200">
+
+    <div class="max-w-5xl mx-auto w-full flex-1">
+        
+        <!-- 表頭設計 -->
+        <header class="mb-12 text-center pt-8">
+            <h1 class="text-3xl md:text-4xl font-black text-zinc-900 mb-4 tracking-tight">排班與派單管理</h1>
+            <div class="flex items-center justify-center gap-3 text-zinc-500">
+                <button onclick="changeMonth(-1)" class="p-2 hover:bg-zinc-100 rounded-full transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+                </button>
+                <span id="headerDateRange" class="text-lg font-bold text-zinc-800 w-32 tracking-wider">載入中...</span>
+                <button onclick="changeMonth(1)" class="p-2 hover:bg-zinc-100 rounded-full transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- 主導航 -->
+        <div class="flex bg-zinc-100/80 p-1.5 rounded-2xl mx-auto w-fit mb-10 border border-zinc-200/50">
+            <button onclick="switchTab('query')" id="tabQuery" class="px-8 py-2.5 rounded-xl tab-active transition-all text-sm tracking-wide">全域班表查詢</button>
+            <button onclick="switchTab('edit')" id="tabEdit" class="px-8 py-2.5 rounded-xl tab-inactive transition-all text-sm tracking-wide flex items-center gap-2">
+                個人管理中樞 
+                <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+            </button>
+        </div>
+
+        <div id="mainContent">
+            <!-- ==================== 查詢模式 ==================== -->
+            <div id="viewQuery" class="transition-opacity duration-300">
+                <div class="glass-card rounded-2xl p-2 max-w-xl mx-auto mb-12 flex items-center shadow-sm">
+                    <div class="pl-4 text-zinc-400"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg></div>
+                    <input type="text" id="searchInput" placeholder="請輸入欲查詢的師傅編號，如：001" class="flex-1 px-4 py-3 bg-transparent text-zinc-800 placeholder-zinc-400 outline-none font-medium" onkeypress="if(event.key === 'Enter') handleSearch()">
+                    <button onclick="handleSearch()" id="searchBtn" class="bg-zinc-900 text-white px-6 py-3 rounded-xl hover:bg-zinc-800 font-medium text-sm flex items-center transition-all">
+                        <span id="searchBtnText">查詢</span>
+                        <div id="searchLoader" class="loader loader-white hidden ml-2"></div>
+                    </button>
+                </div>
+                <p id="searchErrorMsg" class="text-rose-500 text-sm text-center -mt-8 mb-8 hidden font-medium"></p>
+
+                <div id="queryResultArea" class="hidden opacity-0 transition-opacity duration-500">
+                    <div class="flex items-center justify-between mb-8 px-2 border-b border-zinc-200/60 pb-6">
+                        <div class="flex items-baseline gap-3">
+                            <h2 class="text-3xl font-black text-zinc-900 tracking-tight" id="queryName">--</h2>
+                            <span class="text-sm font-bold text-zinc-400" id="queryId">ID: --</span>
+                        </div>
+                        <span class="px-3 py-1 bg-zinc-100 text-zinc-500 rounded-lg text-xs font-bold tracking-wider uppercase">排班狀態已同步</span>
+                    </div>
+                    
+                    <div class="hidden lg:grid grid-cols-7 gap-4 mb-3 px-2 text-center text-xs font-bold text-zinc-400 uppercase tracking-widest">
+                        <div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div>
+                        <div class="text-rose-400/80">Sat</div><div class="text-rose-400/80">Sun</div>
+                    </div>
+
+                    <div id="queryScheduleContainer" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 md:gap-4"></div>
+                </div>
+            </div>
+
+            <!-- ==================== 個人中樞模式 ==================== -->
+            <div id="viewEdit" class="hidden transition-opacity duration-300">
+                
+                <!-- 登入卡片 -->
+                <div id="loginForm" class="glass-card p-8 md:p-10 rounded-3xl max-w-md mx-auto">
+                    <div class="mb-8">
+                        <h2 class="text-2xl font-black text-zinc-900 mb-2 tracking-tight">安全驗證</h2>
+                        <p class="text-sm text-zinc-500 font-medium">請登入以檢視個人派單與編輯排班。</p>
+                    </div>
+                    <div class="space-y-4">
+                        <input type="text" id="authId" placeholder="專屬編號 (ID)" class="w-full px-5 py-3.5 soft-input rounded-xl outline-none font-medium text-zinc-800 placeholder-zinc-400">
+                        <input type="password" id="authPin" placeholder="密碼 (PIN)" class="w-full px-5 py-3.5 soft-input rounded-xl outline-none font-medium text-zinc-800 placeholder-zinc-400" onkeypress="if(event.key === 'Enter') handleLogin()">
+                        <button onclick="handleLogin()" id="loginBtn" class="w-full bg-zinc-900 text-white px-8 py-3.5 rounded-xl hover:bg-zinc-800 font-bold flex items-center justify-center transition-all mt-2">
+                            <span id="loginBtnText">登入專屬中樞</span>
+                            <div id="loginLoader" class="loader loader-white hidden ml-2"></div>
+                        </button>
+                        <p id="loginErrorMsg" class="text-rose-500 text-sm text-center hidden font-medium"></p>
+                    </div>
+                </div>
+
+                <!-- 師傅專屬中樞介面 -->
+                <div id="editForm" class="hidden glass-card p-6 md:p-10 rounded-3xl w-full mx-auto shadow-sm">
+                    
+                    <div class="flex justify-between items-center mb-6 pb-6 border-b border-zinc-100">
+                        <div>
+                            <p class="text-zinc-500 text-sm font-bold tracking-widest uppercase mb-1">按摩師個人中樞</p>
+                            <h2 class="text-2xl font-black text-zinc-900 tracking-tight" id="loggedInName">--</h2>
+                        </div>
+                        <button onclick="logout()" class="text-sm text-zinc-500 hover:text-zinc-900 font-bold transition-colors bg-zinc-100 px-4 py-2 rounded-lg">安全登出</button>
+                    </div>
+
+                    <!-- 內部次導航 -->
+                    <div class="flex gap-6 mb-8 border-b border-zinc-200">
+                        <button onclick="switchPortalTab('schedule')" id="portalTabSchedule" class="pb-3 px-1 portal-tab-active text-base transition-all">我的排班設定</button>
+                        <button onclick="switchPortalTab('appointments')" id="portalTabAppointments" class="pb-3 px-1 portal-tab-inactive text-base transition-all">當月派單與回報</button>
+                    </div>
+                    
+                    <!-- 區塊 A：排班設定 -->
+                    <div id="portalSectionSchedule" class="block max-w-2xl mx-auto">
+                        <div class="mb-8">
+                            <label class="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-3">請選擇欲填寫之週次</label>
+                            <select id="weekSelector" onchange="renderEditInputs()" class="w-full px-5 py-3.5 bg-white border border-zinc-200 rounded-xl outline-none font-medium text-zinc-800 shadow-sm focus:border-zinc-400 focus:ring-4 focus:ring-zinc-100 transition-all"></select>
+                        </div>
+                        <div id="editInputsContainer" class="space-y-3 mb-10"></div>
+                        <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
+                            <p id="saveMsg" class="text-sm font-bold text-teal-600 hidden"></p>
+                            <button onclick="saveSchedule()" id="saveBtn" class="bg-zinc-900 text-white w-full sm:w-auto px-10 py-3.5 rounded-xl hover:bg-zinc-800 font-bold transition-all shadow-[0_4px_14px_0_rgba(0,0,0,0.1)] flex justify-center items-center sm:ml-auto">
+                                <span id="saveBtnText">儲存班表至雲端</span>
+                                <div id="saveLoader" class="loader loader-white hidden ml-2"></div>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 區塊 B：派單與回報 -->
+                    <div id="portalSectionAppointments" class="hidden">
+                        <div class="flex flex-col sm:flex-row items-start sm:items-end justify-between mb-6 gap-4">
+                            <div>
+                                <p class="text-sm text-zinc-500 font-medium">此處顯示您於 <span id="apptMonthLabel" class="font-bold text-zinc-800"></span> 的預約排程。<br>服務完成後，請點擊區塊填寫「實際回款金額」與「顧客偏好備註」。</p>
+                            </div>
+                            <div class="flex items-center gap-2 bg-zinc-100 p-1.5 rounded-xl shrink-0 border border-zinc-200/60 shadow-inner w-full sm:w-auto">
+                                <button id="btnApptViewList" onclick="switchApptView('list')" class="flex-1 sm:flex-none px-5 py-2 text-xs font-bold rounded-lg bg-white shadow-sm text-zinc-800 transition-all tracking-wide">分類列表</button>
+                                <button id="btnApptViewCal" onclick="switchApptView('calendar')" class="flex-1 sm:flex-none px-5 py-2 text-xs font-bold rounded-lg text-zinc-500 hover:text-zinc-800 transition-all tracking-wide">月度日曆</button>
+                                <button onclick="renderMyAppointments()" class="ml-1 px-3 py-2 text-zinc-500 hover:text-zinc-800 transition-colors" title="重新整理">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 模式一：分類列表 (下一個/今日/本週/本月) -->
+                        <div id="myAppointmentsContainer" class="flex flex-col gap-8 w-full"></div>
+
+                        <!-- 模式二：月度日曆 -->
+                        <div id="myAppointmentsCalendarContainer" class="hidden">
+                            <div class="grid grid-cols-7 gap-1 md:gap-3 mb-2 px-1 md:px-2 text-center text-[10px] md:text-xs font-bold text-zinc-400 uppercase tracking-widest">
+                                <div class="text-rose-400/80">Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div class="text-rose-400/80">Sat</div>
+                            </div>
+                            <div id="myAppointmentsCalendarGrid" class="grid grid-cols-7 gap-1 md:gap-3"></div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 師傅專屬：預約/排班 Modal (含抽成試算) -->
+    <div id="addAppointmentModal" class="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/60 hidden p-4 backdrop-blur-sm">
+        <div class="bg-white p-6 md:p-8 rounded-[2rem] shadow-2xl w-full max-w-md max-h-full flex flex-col overflow-y-auto">
+            <h2 class="text-xl font-black mb-5 pb-4 border-b border-zinc-200/50 flex justify-between items-center text-zinc-800">
+                <span id="apptModalTitle">新增顧客預約</span>
+                <span id="apptModalDateDisplay" class="text-sm font-bold text-teal-700 bg-teal-50 px-3 py-1 rounded-full shadow-sm border border-teal-100/50"></span>
+            </h2>
+            <div class="space-y-4 mb-5 flex-1">
+                <div>
+                    <label class="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">指定按摩師</label>
+                    <select id="apptTherapistId" class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none font-black text-zinc-700" disabled></select>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="col-span-2 sm:col-span-1">
+                        <label class="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">服務課程</label>
+                        <select id="apptService" onchange="handleCourseChange()" class="w-full px-4 py-3 soft-input rounded-xl focus:ring-2 focus:ring-teal-400 outline-none font-bold text-zinc-700">
+                            <option value="">(自訂項目)</option>
+                            <option value="A60">A課程 60分 ($1,800)</option>
+                            <option value="C120">C課程 120分 ($2,800)</option>
+                            <option value="C90">C課程 90分 ($2,500)</option>
+                            <option value="D120">D課程 120分 ($2,400)</option>
+                            <option value="D90">D課程 90分 ($2,100)</option>
+                            <option value="OUT_DAY">外出 22:00前 ($3,200)</option>
+                            <option value="OUT_NIGHT">外出 22:00後 ($3,500)</option>
+                        </select>
+                    </div>
+                    <div class="col-span-2 sm:col-span-1">
+                        <label class="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">應收金額 ($)</label>
+                        <input type="number" id="apptPrice" placeholder="0" class="w-full px-4 py-3 soft-input rounded-xl focus:ring-2 focus:ring-teal-400 outline-none font-black text-rose-600">
+                    </div>
+                    
+                    <!-- ✨ 新增：抽成試算動態顯示區 -->
+                    <div id="commissionDisplay" class="col-span-2 hidden bg-teal-50/80 border border-teal-100/60 p-3 rounded-xl text-xs font-bold text-teal-700 flex justify-between items-center shadow-sm">
+                        <span>🏢 公司抽成：<span id="compCut">--</span></span>
+                        <span>💆‍♂️ 師傅實抽：<span id="therapistCut" class="text-teal-900 text-sm">--</span></span>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">預約時間 (起)</label>
+                        <input type="time" id="apptTime" onchange="calculateOptimalRoom()" class="w-full px-4 py-3 soft-input rounded-xl focus:ring-2 focus:ring-teal-400 outline-none font-bold text-zinc-700">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">時長 (分鐘)</label>
+                        <input type="number" id="apptDuration" value="60" min="10" step="10" onchange="calculateOptimalRoom()" class="w-full px-4 py-3 soft-input rounded-xl focus:ring-2 focus:ring-teal-400 outline-none font-bold text-zinc-700">
+                    </div>
+                </div>
+                
+                <div class="p-4 bg-zinc-50 border border-zinc-200 rounded-2xl relative shadow-sm">
+                    <label class="block text-xs font-black text-zinc-700 uppercase tracking-widest mb-2">工作室安排</label>
+                    <select id="apptRoom" class="w-full px-4 py-2.5 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-teal-400 outline-none font-black text-zinc-800 shadow-sm">
+                        <option value="R">Royal (R房) - 預設優先</option>
+                        <option value="T">Tiffany (T房)</option>
+                    </select>
+                    <p id="roomWarningMsg" class="text-xs text-zinc-500 mt-2 flex items-start gap-1 hidden"></p>
+                </div>
+
+                <div class="pt-2">
+                    <label class="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">聯絡方式 (電話/Line 帶入舊客)</label>
+                    <input type="text" id="apptPhone" placeholder="手機號碼或 Line ID" onkeyup="autoFillCustomerName(this.value)" class="w-full px-4 py-3 soft-input rounded-xl focus:ring-2 focus:ring-teal-400 outline-none font-bold text-zinc-700">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">顧客姓名</label>
+                    <input type="text" id="apptCustomer" placeholder="請輸入姓名" class="w-full px-4 py-3 soft-input rounded-xl focus:ring-2 focus:ring-teal-400 outline-none font-bold text-zinc-700">
+                </div>
+            </div>
+            
+            <p id="apptErrorMsg" class="text-rose-500 text-sm mb-4 hidden font-bold"></p>
+            
+            <div class="flex justify-end gap-3 pt-5 border-t border-zinc-200/50 mt-auto shrink-0">
+                <button onclick="document.getElementById('addAppointmentModal').classList.add('hidden')" class="px-6 py-3 bg-zinc-100 text-zinc-600 rounded-xl hover:bg-zinc-200 font-bold transition-colors shadow-sm">取消</button>
+                <button onclick="saveAppointment()" id="apptSaveBtn" class="px-6 py-3 bg-teal-600 text-white hover:bg-teal-700 rounded-xl font-bold flex items-center justify-center min-w-[120px]">儲存預約</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 師傅專屬：服務紀錄回報 Modal (結合打勾完成) -->
+    <div id="therapistRecordModal" class="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-900/60 hidden p-4 backdrop-blur-sm">
+        <div class="bg-white p-6 md:p-8 rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
+            <h2 class="text-xl font-black mb-1 text-zinc-900 flex items-center gap-2">
+                <svg class="w-6 h-6 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                填寫服務紀錄與回款
+            </h2>
+            <p class="text-sm text-zinc-500 mb-6 pb-4 border-b border-zinc-100">將服務細節與帳務同步於雲端，打造無微不至的顧客體驗。</p>
+            
+            <div class="flex-1 overflow-y-auto space-y-5 no-scrollbar pr-1">
+                <div class="bg-zinc-50 p-4 rounded-2xl border border-zinc-100 flex justify-between items-center shadow-inner">
+                    <div>
+                        <p class="text-xs text-zinc-400 font-bold tracking-widest uppercase mb-1">顧客姓名</p>
+                        <p class="text-lg font-black text-zinc-800" id="trModalCustomerName">--</p>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-xs text-zinc-400 font-bold tracking-widest uppercase mb-1">預約時間</p>
+                        <p class="text-sm font-bold text-teal-700" id="trModalServiceInfo">--</p>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">實際回款金額 ($)</label>
+                        <input type="number" id="trModalCollectedPrice" placeholder="例如：1800" class="w-full px-4 py-3 bg-white border border-zinc-300 rounded-xl focus:border-teal-500 focus:ring-4 focus:ring-teal-50 outline-none font-medium text-zinc-800 transition-all">
+                    </div>
+                    <div class="flex items-center md:mt-6">
+                        <label class="flex items-center cursor-pointer gap-3 p-3 w-full border border-zinc-200 rounded-xl hover:bg-teal-50/50 transition-colors shadow-sm bg-white">
+                            <input type="checkbox" id="trModalIsCompleted" class="w-5 h-5 text-teal-600 rounded focus:ring-teal-500 border-zinc-300">
+                            <span class="text-sm font-bold text-zinc-700">標記為「已完成服務」</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">本次服務細節與顧客反饋 (必填)</label>
+                    <textarea id="trModalNotes" rows="4" placeholder="例如：顧客表示左肩頸極度緊繃，今日針對左側深層放鬆。偏好力道偏重..." class="w-full px-4 py-3 bg-white border border-zinc-300 rounded-xl focus:border-teal-500 focus:ring-4 focus:ring-teal-50 outline-none resize-none font-medium text-zinc-800 transition-all shadow-sm"></textarea>
+                </div>
+            </div>
+            
+            <p id="trModalErrorMsg" class="text-rose-500 text-sm mt-2 hidden font-bold"></p>
+            
+            <div class="flex justify-end gap-3 pt-6 mt-2 border-t border-zinc-100 shrink-0">
+                <button onclick="closeTherapistRecordModal()" class="px-6 py-3 bg-zinc-100 text-zinc-600 rounded-xl hover:bg-zinc-200 font-bold transition-colors">取消退出</button>
+                <button onclick="submitTherapistRecord()" id="trModalSubmitBtn" class="px-6 py-3 bg-teal-600 text-white rounded-xl hover:bg-teal-700 font-bold transition-colors shadow-md flex items-center justify-center min-w-[120px]">
+                    儲存入檔
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 自訂衝突確認 Modal -->
+    <div id="conflictModal" class="fixed inset-0 z-[80] flex items-center justify-center bg-zinc-900/50 hidden p-4 backdrop-blur-sm">
+        <div class="bg-white p-6 md:p-8 rounded-[2rem] shadow-2xl w-full max-w-sm transform transition-all text-center border border-zinc-100">
+            <div class="w-16 h-16 rounded-2xl bg-amber-50 text-amber-500 mx-auto flex items-center justify-center mb-5 shadow-sm transform rotate-3">
+                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+            </div>
+            <h3 class="text-xl font-black text-zinc-800 mb-2 tracking-tight">時段衝突警告</h3>
+            <p id="conflictMsgText" class="text-sm text-zinc-600 mb-8 font-bold leading-relaxed whitespace-pre-wrap"></p>
+            <div class="flex justify-center gap-3">
+                <button onclick="document.getElementById('conflictModal').classList.add('hidden')" class="px-5 py-3 bg-zinc-100 rounded-xl text-zinc-600 hover:bg-zinc-200 transition-colors font-bold w-full">取消返回</button>
+                <button onclick="forceSaveAppointment()" class="px-5 py-3 bg-amber-500 text-white rounded-xl hover:bg-amber-600 transition-colors font-bold shadow-md w-full">強制儲存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 系統狀態提示 Snackbar -->
+    <div id="snackbar" class="fixed bottom-8 left-1/2 transform -translate-x-1/2 bg-zinc-900 text-white px-6 py-3.5 rounded-2xl shadow-2xl transition-all duration-300 opacity-0 translate-y-4 pointer-events-none z-[100] flex items-center gap-3 w-[90%] md:w-auto text-center md:text-left border border-white/10">
+        <span id="snackbarIcon" class="shrink-0"></span>
+        <span id="snackbarMsg" class="font-bold text-sm tracking-wide"></span>
+    </div>
+
+    <script>
+        const API_URL = "https://script.google.com/macros/s/AKfycbxC4Pk1v6rkdmd96cR_2r_xPhbcNjrQ0bNdikGKyqbR9OMMeCwN9L5t9mE1j-AoS-ie/exec"; 
+        
+        let globalDB = { therapists: {}, schedules: {}, appointments: {}, customers: {} };
+        let currentUserId = null;
+        let currentYear = new Date().getFullYear();
+        let currentMonth = new Date().getMonth(); 
+        let monthDatesList = [];
+        let monthWeeksList = [];
+        
+        let currentReportingApptId = null; 
+        let currentReportingPhone = null;
+        let currentEditAppointmentId = null;
+        let pendingAppointmentData = null; 
+        let currentApptViewMode = 'list'; 
+
+        // 載入最新的課程價格與抽成模型
+        const COURSE_CATALOG = {
+            'A60': { name: 'A課程(60m) 指+油', duration: 60, price: 1800, therapistCut: 1000 },
+            'C120': { name: 'C課程(120m) 指油+泰', duration: 120, price: 2800, therapistCut: 1600 },
+            'C90': { name: 'C課程(90m) 指油+泰', duration: 90, price: 2500, therapistCut: 1400 },
+            'D120': { name: 'D課程(120m) 指+油', duration: 120, price: 2400, therapistCut: 1400 },
+            'D90': { name: 'D課程(90m) 指+油', duration: 90, price: 2100, therapistCut: 1200 },
+            'OUT_DAY': { name: '外出 (22:00前)', duration: 120, price: 3200, therapistCut: 2000 },
+            'OUT_NIGHT': { name: '外出 (22:00後)', duration: 120, price: 3500, therapistCut: 2200 }
+        };
+
+        window.formatTimeInput = function(el) {
+            let val = el.value.trim();
+            if (val === "") { el.value = "休假"; return; }
+            if (val.includes("休") || val === "尚未排班") return;
+            val = val.replace(/\s*[-~到至]\s*/g, '-');
+            val = val.replace(/\b(\d{1,2})(\d{2})\b/g, (match, h, m) => h.padStart(2, '0') + ':' + m);
+            let parts = val.split('-');
+            if (parts.length === 2) {
+                parts = parts.map(p => {
+                    let time = p.trim();
+                    if (/^\d{1,2}$/.test(time)) return time.padStart(2, '0') + ':00';
+                    return time;
+                });
+                val = parts.join('-');
+            }
+            el.value = val;
+        };
+
+        function timeToMinutes(timeStr) {
+            if(!timeStr) return 0;
+            const parts = timeStr.split(':');
+            return parseInt(parts[0]) * 60 + parseInt(parts[1]);
+        }
+
+        function showSnackbar(msg, type = 'success') {
+            const snackbar = document.getElementById('snackbar');
+            const icon = document.getElementById('snackbarIcon');
+            document.getElementById('snackbarMsg').innerText = msg;
+            
+            if (type === 'success') {
+                icon.innerHTML = `<svg class="w-5 h-5 text-teal-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>`;
+            } else {
+                icon.innerHTML = `<svg class="w-5 h-5 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>`;
+            }
+            
+            snackbar.classList.remove('opacity-0', 'translate-y-4');
+            snackbar.classList.add('opacity-100', 'translate-y-0');
+            setTimeout(() => { snackbar.classList.add('opacity-0', 'translate-y-4'); snackbar.classList.remove('opacity-100', 'translate-y-0'); }, 3000);
+        }
+
+        function generateMonthData() {
+            monthDatesList = [];
+            const date = new Date(currentYear, currentMonth, 1);
+            const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+            while (date.getMonth() === currentMonth) {
+                monthDatesList.push({
+                    key: `${currentYear}-${String(currentMonth+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`,
+                    dayDisplay: String(date.getDate()).padStart(2,'0'),
+                    dayOfWeek: dayNames[date.getDay()],
+                    isWeekend: date.getDay() === 0 || date.getDay() === 6,
+                    rawDay: date.getDay()
+                });
+                date.setDate(date.getDate() + 1);
+            }
+            document.getElementById('headerDateRange').innerText = `${currentYear} 年 ${String(currentMonth+1).padStart(2,'0')} 月`;
+            if(document.getElementById('apptMonthLabel')) document.getElementById('apptMonthLabel').innerText = `${currentYear}年${currentMonth+1}月`;
+            groupDatesIntoWeeks();
+        }
+
+        function groupDatesIntoWeeks() {
+            monthWeeksList = [];
+            let currentWeek = [];
+            monthDatesList.forEach(d => {
+                currentWeek.push(d);
+                if (d.rawDay === 0 || d.key === monthDatesList[monthDatesList.length-1].key) {
+                    monthWeeksList.push([...currentWeek]);
+                    currentWeek = [];
+                }
+            });
+        }
+
+        window.changeMonth = async function(offset) {
+            currentMonth += offset;
+            if (currentMonth > 11) { currentMonth = 0; currentYear++; }
+            else if (currentMonth < 0) { currentMonth = 11; currentYear--; }
+            generateMonthData();
+            
+            if (currentUserId && !document.getElementById('editForm').classList.contains('hidden')) {
+                populateWeekSelector();
+                renderEditInputs();
+                renderMyAppointments();
+            }
+            if (!document.getElementById('queryResultArea').classList.contains('hidden')) {
+                handleSearch();
+            }
+        }
+
+        async function fetchDatabase() {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000);
+            try {
+                const cacheBuster = "?t=" + new Date().getTime();
+                const res = await fetch(API_URL + cacheBuster, { signal: controller.signal });
+                clearTimeout(timeoutId);
+                
+                if (!res.ok) throw new Error(`HTTP 錯誤狀態碼：${res.status}`);
+                
+                const text = await res.text();
+                try {
+                    globalDB = JSON.parse(text);
+                } catch (parseError) {
+                    throw new Error("雲端回傳格式異常。");
+                }
+
+                if (!globalDB.appointments) globalDB.appointments = {};
+                if (!globalDB.customers) globalDB.customers = {};
+                
+                Object.keys(globalDB.appointments).forEach(key => {
+                    let appt = globalDB.appointments[key];
+                    appt.id = key; 
+                    if (appt.date && (appt.date.includes(' ') || appt.date.includes('T'))) {
+                        try {
+                            const d = new Date(appt.date);
+                            if (!isNaN(d.getTime())) appt.date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                        } catch(e) {}
+                    }
+                    if (appt.time) {
+                        const timeStr = String(appt.time);
+                        if (timeStr.includes('GMT') || timeStr.includes('1899') || timeStr.includes('T')) {
+                            const timeMatch = timeStr.match(/(\d{2}):(\d{2}):\d{2}/);
+                            if (timeMatch) appt.time = `${timeMatch[1]}:${timeMatch[2]}`;
+                        }
+                    }
+                });
+            } catch (e) { console.error("API 連線異常"); throw e; }
+        }
+
+        async function postToDatabase(payload) {
+            const res = await fetch(API_URL, {
+                method: 'POST',
+                body: JSON.stringify(payload),
+                redirect: 'manual'
+            });
+            if (res.type === 'opaqueredirect' || res.status === 0 || (res.status >= 300 && res.status < 400)) {
+                return { ok: true, redirected: true };
+            }
+            const text = await res.text();
+            try {
+                return text ? JSON.parse(text) : { ok: true };
+            } catch (e) {
+                return { ok: true, raw: text };
+            }
+        }
+
+        // ================= 雙模態視圖切換 =================
+        window.switchTab = function(tabName) {
+            ['query', 'edit'].forEach(n => {
+                const el = document.getElementById(`tab${n.charAt(0).toUpperCase() + n.slice(1)}`);
+                if(n === tabName) el.className = "px-8 py-2.5 rounded-xl tab-active transition-all text-sm tracking-wide";
+                else el.className = "px-8 py-2.5 rounded-xl tab-inactive transition-all text-sm tracking-wide flex items-center gap-2";
+                document.getElementById(`view${n.charAt(0).toUpperCase() + n.slice(1)}`).classList[n === tabName ? 'remove' : 'add']('hidden');
+            });
+        };
+
+        window.switchPortalTab = function(tabName) {
+            ['schedule', 'appointments'].forEach(n => {
+                const el = document.getElementById(`portalTab${n.charAt(0).toUpperCase() + n.slice(1)}`);
+                if(n === tabName) el.className = "pb-3 px-1 portal-tab-active text-base transition-all";
+                else el.className = "pb-3 px-1 portal-tab-inactive text-base transition-all";
+                
+                const section = document.getElementById(`portalSection${n.charAt(0).toUpperCase() + n.slice(1)}`);
+                if (n === tabName) section.classList.remove('hidden');
+                else section.classList.add('hidden');
+            });
+            if(tabName === 'appointments') renderMyAppointments();
+        };
+
+        window.switchApptView = function(mode) {
+            currentApptViewMode = mode;
+            const btnList = document.getElementById('btnApptViewList');
+            const btnCal = document.getElementById('btnApptViewCal');
+            if (mode === 'list') {
+                btnList.className = "flex-1 sm:flex-none px-5 py-2 text-xs font-bold rounded-lg bg-white shadow-sm text-zinc-800 transition-all tracking-wide";
+                btnCal.className = "flex-1 sm:flex-none px-5 py-2 text-xs font-bold rounded-lg text-zinc-500 hover:text-zinc-800 transition-all tracking-wide";
+                document.getElementById('myAppointmentsContainer').classList.remove('hidden');
+                document.getElementById('myAppointmentsCalendarContainer').classList.add('hidden');
+            } else {
+                btnCal.className = "flex-1 sm:flex-none px-5 py-2 text-xs font-bold rounded-lg bg-white shadow-sm text-zinc-800 transition-all tracking-wide";
+                btnList.className = "flex-1 sm:flex-none px-5 py-2 text-xs font-bold rounded-lg text-zinc-500 hover:text-zinc-800 transition-all tracking-wide";
+                document.getElementById('myAppointmentsContainer').classList.add('hidden');
+                document.getElementById('myAppointmentsCalendarContainer').classList.remove('hidden');
+            }
+        };
+
+        // ================= 查詢模式邏輯 =================
+        window.handleSearch = async function() {
+            const id = document.getElementById('searchInput').value.trim();
+            const err = document.getElementById('searchErrorMsg');
+            const btn = document.getElementById('searchBtn');
+            const loader = document.getElementById('searchLoader');
+            const btnText = document.getElementById('searchBtnText');
+
+            if(!id) return;
+            btn.disabled = true; btnText.innerText = ""; loader.classList.remove('hidden'); err.classList.add('hidden');
+            
+            try {
+                await fetchDatabase();
+                if (!globalDB.therapists[id]) {
+                    err.innerText = "查無此編號，請重新輸入。"; err.classList.remove('hidden'); 
+                    return;
+                }
+                
+                document.getElementById('queryName').innerText = globalDB.therapists[id].name;
+                document.getElementById('queryId').innerText = `ID: ${id}`;
+                
+                const sched = globalDB.schedules[id] || {};
+                const container = document.getElementById('queryScheduleContainer'); container.innerHTML = '';
+                
+                const firstDayMap = { 1: 'lg:col-start-1', 2: 'lg:col-start-2', 3: 'lg:col-start-3', 4: 'lg:col-start-4', 5: 'lg:col-start-5', 6: 'lg:col-start-6', 0: 'lg:col-start-7' };
+                
+                monthDatesList.forEach((d, index) => {
+                    const shift = sched[d.key] || "尚未排班";
+                    const isOff = shift.includes("休") || shift === "尚未排班";
+                    
+                    const bg = isOff ? "bg-zinc-50/50 border-zinc-200/50 border-dashed" : "bg-white border-zinc-200/80 shadow-[0_2px_8px_-3px_rgba(0,0,0,0.05)]";
+                    const textCol = isOff ? "text-zinc-400" : "text-zinc-800";
+                    const dateLabelCol = d.isWeekend ? "text-rose-400 font-bold" : "text-zinc-400 font-medium";
+                    
+                    const fullDateDisplay = `${String(currentMonth + 1).padStart(2, '0')}/${d.dayDisplay}`;
+                    let startColClass = index === 0 ? (firstDayMap[d.rawDay] || '') : '';
+                    
+                    container.innerHTML += `
+                        <div class="flex flex-col border rounded-2xl p-4 ${bg} ${startColClass} transition-all hover:border-zinc-300">
+                            <div class="flex justify-between items-center mb-3">
+                                <span class="text-[10px] uppercase tracking-widest ${dateLabelCol}">${d.dayOfWeek}</span>
+                                <span class="text-xs font-bold text-zinc-500">${fullDateDisplay}</span>
+                            </div>
+                            <div class="text-center flex-1 flex items-center justify-center mt-1">
+                                <span class="text-sm font-black tracking-wide ${textCol} break-words leading-tight">${shift}</span>
+                            </div>
+                        </div>`;
+                });
+                
+                document.getElementById('queryResultArea').classList.remove('hidden');
+                setTimeout(() => document.getElementById('queryResultArea').classList.add('opacity-100'), 50);
+            } catch (e) {
+                err.innerText = "資料庫連線異常。"; err.classList.remove('hidden');
+            } finally {
+                btn.disabled = false; btnText.innerText = "查詢"; loader.classList.add('hidden');
+            }
+        };
+
+        // ================= 個人中樞模式邏輯 =================
+        window.handleLogin = async function() {
+            const id = document.getElementById('authId').value.trim(), pin = document.getElementById('authPin').value.trim();
+            const err = document.getElementById('loginErrorMsg'), btn = document.getElementById('loginBtn');
+            const loader = document.getElementById('loginLoader');
+            const btnText = document.getElementById('loginBtnText');
+
+            if(!id||!pin) return;
+
+            btn.disabled = true; btnText.innerText = ""; loader.classList.remove('hidden'); err.classList.add('hidden');
+            try {
+                await fetchDatabase();
+                if (globalDB.therapists[id] && String(globalDB.therapists[id].pin) === String(pin)) {
+                    currentUserId = id;
+                    document.getElementById('loggedInName').innerText = globalDB.therapists[id].name;
+                    populateWeekSelector();
+                    renderEditInputs();
+                    switchPortalTab('schedule');
+                    document.getElementById('loginForm').classList.add('hidden');
+                    document.getElementById('editForm').classList.remove('hidden');
+                } else { err.innerText = "身分驗證失敗，請檢查編號或密碼。"; err.classList.remove('hidden'); }
+            } catch (error) { err.innerText = `連線異常，請稍後重試。`; err.classList.remove('hidden'); } 
+            finally { btn.disabled = false; btnText.innerText = "登入專屬中樞"; loader.classList.add('hidden'); }
+        };
+
+        window.populateWeekSelector = function() {
+            const sel = document.getElementById('weekSelector'); sel.innerHTML = '';
+            const monthStr = String(currentMonth + 1).padStart(2, '0');
+            monthWeeksList.forEach((week, idx) => {
+                const start = `${monthStr}/${week[0].dayDisplay}`;
+                const end = `${monthStr}/${week[week.length-1].dayDisplay}`;
+                sel.innerHTML += `<option value="${idx}">第 ${idx+1} 週 （${start} - ${end}）</option>`;
+            });
+        };
+
+        window.renderEditInputs = function() {
+            const weekIdx = document.getElementById('weekSelector').value;
+            const weekDays = monthWeeksList[weekIdx] || [];
+            const container = document.getElementById('editInputsContainer'); container.innerHTML = '';
+            const sched = globalDB.schedules[currentUserId] || {};
+            
+            weekDays.forEach(d => {
+                const isWeekend = d.isWeekend ? 'text-rose-500 font-bold' : 'text-zinc-600 font-bold';
+                const fullDateDisplay = `${String(currentMonth + 1).padStart(2, '0')}/${d.dayDisplay}`;
+                
+                container.innerHTML += `
+                    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 bg-white border border-zinc-200 rounded-xl hover:border-zinc-300 transition-colors gap-3">
+                        <div class="sm:w-1/3 text-sm tracking-wide ${isWeekend} flex items-center gap-2">
+                            <span class="w-10 text-xs font-medium text-zinc-400 uppercase tracking-widest">${d.dayOfWeek}</span>
+                            ${fullDateDisplay}
+                        </div>
+                        <input type="text" id="input_${d.key}" value="${sched[d.key] || ''}" placeholder="例：1200-2200 (留白為休假)" class="w-full sm:w-2/3 px-4 py-2.5 soft-input rounded-lg outline-none font-medium text-zinc-800" onfocus="if(this.value==='休假') this.value='';" onblur="formatTimeInput(this)">
+                    </div>`;
+            });
+        };
+
+        window.saveSchedule = async function() {
+            const btn = document.getElementById('saveBtn'), msg = document.getElementById('saveMsg');
+            const loader = document.getElementById('saveLoader');
+            const btnText = document.getElementById('saveBtnText');
+
+            btn.disabled = true; btnText.innerText = "寫入中..."; loader.classList.remove('hidden'); msg.classList.add('hidden');
+
+            const weekIdx = document.getElementById('weekSelector').value;
+            const weekDays = monthWeeksList[weekIdx] || [];
+            let payloadData = { id: currentUserId, schedule: {} };
+            
+            weekDays.forEach(d => { payloadData.schedule[d.key] = document.getElementById(`input_${d.key}`).value.trim() || "休假"; });
+
+            try {
+                await postToDatabase({ action: 'saveSchedule', data: payloadData });
+                await fetchDatabase(); 
+                showSnackbar("✅ 班表變更已安全儲存。", "success");
+            } catch (e) {
+                showSnackbar("❌ 儲存失敗，請檢查網路連線。", "error");
+            } finally {
+                btn.disabled = false; btnText.innerText = "儲存班表至雲端"; loader.classList.add('hidden');
+            }
+        };
+
+        // ================= 顧客預約空間演算與派單 =================
+        window.handleCourseChange = function() {
+            const serviceCode = document.getElementById('apptService').value;
+            const durationInput = document.getElementById('apptDuration');
+            const priceInput = document.getElementById('apptPrice');
+            const roomSelect = document.getElementById('apptRoom');
+            const msgNode = document.getElementById('roomWarningMsg');
+            const commissionDisplay = document.getElementById('commissionDisplay');
+            const compCutSpan = document.getElementById('compCut');
+            const therapistCutSpan = document.getElementById('therapistCut');
+
+            if (!serviceCode) {
+                if(commissionDisplay) commissionDisplay.classList.add('hidden');
+                return;
+            }
+
+            const course = COURSE_CATALOG[serviceCode];
+            durationInput.value = course.duration;
+            priceInput.value = course.price;
+
+            if(commissionDisplay && course.therapistCut) {
+                const compCut = course.price - course.therapistCut;
+                compCutSpan.innerText = `$${compCut.toLocaleString()}`;
+                therapistCutSpan.innerText = `$${course.therapistCut.toLocaleString()}`;
+                commissionDisplay.classList.remove('hidden');
+            }
+
+            if (serviceCode.startsWith('OUT')) {
+                roomSelect.innerHTML = '<option value="OUT">外出服務 (無須房間)</option>';
+                roomSelect.value = 'OUT';
+                if(msgNode) msgNode.classList.add('hidden');
+            } else {
+                if (roomSelect.querySelector('option[value="OUT"]')) {
+                    roomSelect.innerHTML = '<option value="R">Royal (R房) - 預設優先</option><option value="T">Tiffany (T房)</option>';
+                }
+                calculateOptimalRoom();
+            }
+        };
+
+        window.calculateOptimalRoom = function() {
+            const serviceCode = document.getElementById('apptService').value;
+            if (serviceCode.startsWith('OUT')) return; 
+
+            const therapistId = document.getElementById('apptTherapistId').value;
+            const dateStr = document.getElementById('appointmentDate') ? document.getElementById('appointmentDate').value : new Date().toISOString().split('T')[0];
+            const timeStr = document.getElementById('apptTime').value;
+            const durationStr = document.getElementById('apptDuration').value;
+            const roomSelect = document.getElementById('apptRoom');
+            const msgNode = document.getElementById('roomWarningMsg');
+
+            if (!timeStr || !dateStr) return;
+
+            const duration = parseInt(durationStr) || 60;
+            const newStart = timeToMinutes(timeStr);
+            const newEnd = newStart + duration + 10; 
+
+            const allAppts = Object.values(globalDB.appointments || {}).filter(a => a.date === dateStr && a.id !== currentEditAppointmentId);
+
+            const isRoomAvailable = (targetRoom) => {
+                return !allAppts.some(a => {
+                    if (a.room !== targetRoom) return false;
+                    const aStart = timeToMinutes(a.time);
+                    const aEnd = aStart + a.duration + 10;
+                    return (newStart < aEnd && newEnd > aStart);
+                });
+            };
+
+            let optimalRoom = 'R'; 
+            let reason = "系統預設優先啟用 Royal 房。";
+            let warningLevel = 'info'; 
+
+            const therapistAppts = allAppts.filter(a => a.therapistId === therapistId && a.room !== 'OUT');
+            let prevAppt = null;
+            let minGap = Infinity;
+            let isTherapistBusy = false;
+            
+            therapistAppts.forEach(a => {
+                const aStart = timeToMinutes(a.time);
+                const aActualEnd = aStart + a.duration; 
+                
+                if (newStart < aActualEnd && (newStart + duration) > aStart) isTherapistBusy = true;
+
+                if (aActualEnd <= newStart && (newStart - aActualEnd) < minGap) {
+                    minGap = newStart - aActualEnd;
+                    prevAppt = a;
+                }
+            });
+
+            if (prevAppt && minGap <= 60) {
+                optimalRoom = prevAppt.room;
+                reason = `連續預約，自動安插於 ${optimalRoom} 房。`;
+            }
+
+            if (isRoomAvailable(optimalRoom)) {
+                roomSelect.value = optimalRoom;
+            } else {
+                const fallbackRoom = optimalRoom === 'R' ? 'T' : 'R';
+                if (isRoomAvailable(fallbackRoom)) {
+                    roomSelect.value = fallbackRoom;
+                    reason = `${optimalRoom} 房已被佔用，轉移至 ${fallbackRoom} 房。`;
+                    warningLevel = 'warn';
+                } else {
+                    reason = `強烈警告：該時段 R 房與 T 房皆已客滿！`;
+                    warningLevel = 'error';
+                }
+            }
+
+            if (isTherapistBusy) {
+                reason = `【嚴重衝突】該名師傅在此時段已有其他安排！\n${reason}`;
+                warningLevel = 'error';
+            }
+
+            if(msgNode) {
+                msgNode.innerText = reason;
+                msgNode.classList.remove('hidden');
+                if(warningLevel === 'info') msgNode.className = "text-xs text-teal-600 mt-2 flex items-start gap-1 font-bold whitespace-pre-wrap";
+                if(warningLevel === 'warn') msgNode.className = "text-xs text-amber-600 mt-2 flex items-start gap-1 font-bold whitespace-pre-wrap";
+                if(warningLevel === 'error') msgNode.className = "text-xs text-rose-600 mt-2 flex items-start gap-1 font-bold bg-rose-50 p-2 rounded whitespace-pre-wrap";
+            }
+        };
+
+        // ================= 派單與回報模組 (智慧時序分類引擎 & 日曆渲染) =================
+        const createApptCardHtml = (appt, allApptsData) => {
+            const serviceName = COURSE_CATALOG[appt.service] ? COURSE_CATALOG[appt.service].name : (appt.service || '一般預約');
+            let roomBadgeColor = 'bg-zinc-100 text-zinc-600 border-zinc-200';
+            if (appt.room === 'R') roomBadgeColor = 'bg-amber-50 text-amber-700 border-amber-200';
+            if (appt.room === 'T') roomBadgeColor = 'bg-teal-50 text-teal-700 border-teal-200';
+            if (appt.room === 'OUT') roomBadgeColor = 'bg-rose-50 text-rose-700 border-rose-200';
+            const roomLabel = appt.room === 'OUT' ? '外出' : `${appt.room} 房`;
+
+            const isCompleted = appt.isCompleted === true || String(appt.isCompleted) === 'true';
+            const completedBadge = isCompleted ? `<span class="ml-1 text-[10px] bg-teal-100 text-teal-700 px-1.5 py-0.5 rounded font-bold border border-teal-300 tracking-wider flex items-center gap-0.5 shadow-sm"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>已完成</span>` : '';
+            
+            const visitCount = allApptsData.filter(a => a.phone === appt.phone).length;
+            let vipBadge = '';
+            if (visitCount <= 1) {
+                vipBadge = `<span class="ml-1 text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold border border-emerald-200 tracking-wider">新客</span>`;
+            } else {
+                vipBadge = `<span class="ml-1 text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold border border-amber-300 tracking-wider">熟客</span>`;
+            }
+
+            const cust = globalDB.customers[appt.phone];
+            const hasRecord = cust && cust.records && cust.records.find(r => r.id === appt.id && r.notes.trim() !== '');
+            const btnStyle = hasRecord ? "bg-zinc-100 text-zinc-600 hover:bg-zinc-200" : "bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-100";
+            const btnText = hasRecord ? "檢視或修改紀錄" : "填寫服務紀錄";
+            const checkIcon = hasRecord ? `<svg class="w-4 h-4 mr-1 text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>` : '';
+
+            return `
+                <div class="p-5 border border-zinc-200 rounded-2xl bg-white shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)] hover:border-teal-300 transition-colors flex flex-col ${isCompleted ? 'opacity-70 grayscale-[20%]' : ''}">
+                    <div class="flex justify-between items-start mb-3 border-b border-zinc-100 pb-3">
+                        <div class="flex flex-col gap-1">
+                            <span class="text-xs font-bold bg-zinc-100 text-zinc-500 px-2 py-1 rounded w-fit uppercase tracking-wider flex items-center gap-1">${appt.date} ${completedBadge}</span>
+                            <span class="text-lg font-black text-zinc-800 tracking-tight">${appt.time} <span class="text-xs text-zinc-400 font-medium">(${appt.duration}m)</span></span>
+                        </div>
+                        <span class="text-[10px] font-black ${roomBadgeColor} px-2.5 py-1 rounded border uppercase tracking-widest shadow-sm">${roomLabel}</span>
+                    </div>
+                    <div class="mb-5 flex-1">
+                        <h4 class="font-black text-zinc-900 text-lg mb-1">${appt.customerName}</h4>
+                        <p class="text-sm font-bold text-zinc-500">${serviceName}</p>
+                    </div>
+                    <button onclick="openTherapistRecordModal('${appt.id}')" class="w-full py-2.5 rounded-xl text-sm font-bold transition-colors flex items-center justify-center ${btnStyle}">
+                        ${checkIcon} ${btnText}
+                    </button>
+                </div>`;
+        };
+
+        window.renderMyAppointments = function() {
+            const listContainer = document.getElementById('myAppointmentsContainer');
+            const calContainer = document.getElementById('myAppointmentsCalendarGrid');
+            if(!listContainer || !calContainer) return;
+            
+            listContainer.innerHTML = '';
+            calContainer.innerHTML = '';
+            
+            const allApptsData = Object.values(globalDB.appointments || {});
+            const monthKeys = monthDatesList.map(d => d.key);
+            let myAppts = allApptsData.filter(a => a.therapistId === currentUserId && monthKeys.includes(a.date));
+            
+            myAppts.sort((a, b) => {
+                if (a.date !== b.date) return a.date.localeCompare(b.date);
+                return a.time.localeCompare(b.time);
+            });
+
+            // ===== 渲染列表模式 (智慧時序分類) =====
+            if (myAppts.length === 0) {
+                listContainer.innerHTML = `<div class="py-12 text-center text-zinc-400 font-medium border border-dashed border-zinc-200 rounded-2xl bg-zinc-50 w-full">本月目前尚無您的預約排程</div>`;
+            } else {
+                const now = new Date();
+                const formatD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                const todayStr = formatD(now);
+                const currentMins = now.getHours() * 60 + now.getMinutes();
+
+                const dayOfWeek = now.getDay() || 7; 
+                const weekStart = new Date(now);
+                weekStart.setDate(now.getDate() - dayOfWeek + 1);
+                const weekEnd = new Date(now);
+                weekEnd.setDate(now.getDate() - dayOfWeek + 7);
+                const weekStartStr = formatD(weekStart);
+                const weekEndStr = formatD(weekEnd);
+
+                let nextAppt = null;
+                let todayAppts = [];
+                let weekAppts = [];
+                let monthAppts = [];
+
+                myAppts.forEach(appt => {
+                    const apptStartMins = timeToMinutes(appt.time);
+                    const apptEndMins = apptStartMins + (parseInt(appt.duration) || 60);
+                    const isCompleted = appt.isCompleted === true || String(appt.isCompleted) === 'true';
+
+                    if (!nextAppt && !isCompleted && (appt.date > todayStr || (appt.date === todayStr && apptEndMins > currentMins))) {
+                        nextAppt = appt;
+                        return;
+                    }
+
+                    if (appt.date === todayStr) { todayAppts.push(appt); return; }
+                    if (appt.date >= weekStartStr && appt.date <= weekEndStr) { weekAppts.push(appt); return; }
+                    monthAppts.push(appt);
+                });
+
+                let listHtml = '';
+                
+                if (nextAppt) {
+                    listHtml += `
+                        <div>
+                            <h4 class="text-sm font-bold text-teal-700 mb-4 flex items-center gap-2">
+                                <span class="relative flex h-2.5 w-2.5">
+                                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
+                                  <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-teal-500"></span>
+                                </span> 
+                                下一個行程 / 進行中
+                            </h4>
+                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">${createApptCardHtml(nextAppt, allApptsData)}</div>
+                        </div>`;
+                }
+
+                if (todayAppts.length > 0) {
+                    listHtml += `
+                        <div>
+                            <h4 class="text-sm font-bold text-zinc-600 mb-4 flex items-center gap-2 border-b border-zinc-200/60 pb-2">📅 今日行程</h4>
+                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">${todayAppts.map(a => createApptCardHtml(a, allApptsData)).join('')}</div>
+                        </div>`;
+                }
+
+                if (weekAppts.length > 0) {
+                    listHtml += `
+                        <div>
+                            <h4 class="text-sm font-bold text-zinc-600 mb-4 flex items-center gap-2 border-b border-zinc-200/60 pb-2">🗓️ 本週行程</h4>
+                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">${weekAppts.map(a => createApptCardHtml(a, allApptsData)).join('')}</div>
+                        </div>`;
+                }
+
+                if (monthAppts.length > 0) {
+                    listHtml += `
+                        <div>
+                            <h4 class="text-sm font-bold text-zinc-600 mb-4 flex items-center gap-2 border-b border-zinc-200/60 pb-2">📅 本月其餘行程</h4>
+                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">${monthAppts.map(a => createApptCardHtml(a, allApptsData)).join('')}</div>
+                        </div>`;
+                }
+
+                listContainer.innerHTML = listHtml;
+            }
+
+            // ===== 渲染日曆模式 =====
+            const firstDay = monthDatesList[0].rawDay; 
+            for(let i = 0; i < firstDay; i++) {
+                calContainer.innerHTML += `<div class="bg-transparent rounded-xl"></div>`;
+            }
+
+            const todayStr = new Date().toISOString().split('T')[0];
+
+            monthDatesList.forEach(d => {
+                const dayAppts = myAppts.filter(a => a.date === d.key);
+                let apptsHtml = '';
+                
+                dayAppts.forEach(appt => {
+                    const isCompleted = appt.isCompleted === true || String(appt.isCompleted) === 'true';
+                    const styleClass = isCompleted ? "bg-zinc-100 text-zinc-400 line-through border-transparent" : "bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-100 shadow-[0_1px_2px_rgba(0,0,0,0.02)]";
+                    apptsHtml += `
+                        <div onclick="openTherapistRecordModal('${appt.id}')" class="mb-1.5 p-1 md:px-2 md:py-1.5 rounded-lg text-[9px] md:text-xs truncate cursor-pointer transition-all ${styleClass}" title="${appt.time} ${appt.customerName} - 點擊編輯紀錄">
+                            <span class="font-black tracking-tight">${appt.time}</span> <span class="font-medium">${appt.customerName}</span>
+                        </div>
+                    `;
+                });
+                
+                const isToday = d.key === todayStr;
+                const dateBadgeStyle = isToday ? "bg-teal-600 text-white w-6 h-6 md:w-7 md:h-7 rounded-full flex items-center justify-center shadow-md" : (d.isWeekend ? "text-rose-400" : "text-zinc-500");
+
+                calContainer.innerHTML += `
+                    <div class="bg-white border border-zinc-200 rounded-2xl p-1.5 md:p-3 min-h-[90px] md:min-h-[130px] flex flex-col hover:border-teal-300 transition-colors shadow-sm relative overflow-hidden group">
+                        <div class="absolute top-0 left-0 w-full h-1 ${isToday ? 'bg-teal-400' : 'bg-transparent'}"></div>
+                        <div class="mb-2 flex justify-end">
+                            <span class="text-[10px] md:text-xs font-bold ${dateBadgeStyle}">${d.dayDisplay}</span>
+                        </div>
+                        <div class="flex-1 overflow-y-auto no-scrollbar pb-1">
+                            ${apptsHtml}
+                        </div>
+                    </div>
+                `;
+            });
+        };
+
+        window.openTherapistRecordModal = async function(appId) {
+            const appt = globalDB.appointments[appId];
+            if (!appt) return;
+
+            currentReportingApptId = appId;
+            currentReportingPhone = appt.phone;
+            
+            document.getElementById('trModalCustomerName').innerText = appt.customerName;
+            const serviceName = COURSE_CATALOG[appt.service] ? COURSE_CATALOG[appt.service].name : (appt.service || '一般預約');
+            document.getElementById('trModalServiceInfo').innerText = `${appt.date} / ${appt.time} - ${serviceName}`;
+            
+            const cust = globalDB.customers[appt.phone];
+            const existingRecord = cust && cust.records ? cust.records.find(r => r.id === appId) : null;
+            document.getElementById('trModalNotes').value = existingRecord ? existingRecord.notes : '';
+            
+            document.getElementById('trModalCollectedPrice').value = appt.collectedPrice || '';
+            document.getElementById('trModalIsCompleted').checked = appt.isCompleted === true || String(appt.isCompleted) === 'true';
+            
+            document.getElementById('trModalErrorMsg').classList.add('hidden');
+            document.getElementById('trModalSubmitBtn').innerText = "儲存入檔";
+            
+            document.getElementById('therapistRecordModal').classList.remove('hidden');
+        };
+
+        window.closeTherapistRecordModal = function() {
+            currentReportingApptId = null;
+            currentReportingPhone = null;
+            document.getElementById('therapistRecordModal').classList.add('hidden');
+        };
+
+        window.submitTherapistRecord = async function() {
+            const notes = document.getElementById('trModalNotes').value.trim();
+            const collectedPrice = document.getElementById('trModalCollectedPrice').value.trim();
+            const isCompleted = document.getElementById('trModalIsCompleted').checked;
+            const errMsg = document.getElementById('trModalErrorMsg');
+            const btn = document.getElementById('trModalSubmitBtn');
+
+            if (!notes) { errMsg.innerText = "服務細節不可為空白喔！"; errMsg.classList.remove('hidden'); return; }
+            if (!currentReportingPhone || !currentReportingApptId) return;
+
+            const appt = globalDB.appointments[currentReportingApptId];
+            if (!appt) return;
+
+            btn.disabled = true; btn.innerText = "資料寫入中..."; errMsg.classList.add('hidden');
+
+            const cust = globalDB.customers[currentReportingPhone] || { name: appt.customerName, notes: '', records: [] };
+            cust.records = cust.records || [];
+            
+            let existingIdx = cust.records.findIndex(r => r.id === currentReportingApptId);
+            const therapistName = globalDB.therapists[appt.therapistId] ? globalDB.therapists[appt.therapistId].name : '未指定';
+            
+            if (existingIdx > -1) {
+                cust.records[existingIdx].notes = notes;
+                cust.records[existingIdx].date = appt.date;
+                cust.records[existingIdx].service = appt.service;
+            } else {
+                cust.records.push({
+                    id: currentReportingApptId,
+                    date: appt.date,
+                    therapistId: appt.therapistId,
+                    therapistName: therapistName,
+                    service: appt.service,
+                    notes: notes
+                });
+            }
+
+            try {
+                await postToDatabase({ action: 'saveCustomer', data: { phone: currentReportingPhone, name: cust.name, notes: cust.notes, records: cust.records } });
+                
+                appt.collectedPrice = collectedPrice;
+                appt.isCompleted = isCompleted;
+                await postToDatabase({ 
+                    action: 'addAppointment', 
+                    data: { 
+                        appId: appt.id, date: appt.date, time: appt.time, duration: appt.duration, 
+                        room: appt.room, therapistId: appt.therapistId, customerName: appt.customerName, 
+                        phone: appt.phone, service: appt.service, price: appt.price,
+                        collectedPrice: collectedPrice, isCompleted: isCompleted
+                    } 
+                });
+
+                globalDB.customers[currentReportingPhone] = cust;
+                globalDB.appointments[currentReportingApptId] = appt;
+
+                await fetchDatabase();
+                
+                if (globalDB.appointments[currentReportingApptId]) {
+                    globalDB.appointments[currentReportingApptId].collectedPrice = collectedPrice;
+                    globalDB.appointments[currentReportingApptId].isCompleted = isCompleted;
+                }
+
+                renderMyAppointments(); 
+                closeTherapistRecordModal();
+                showSnackbar("服務紀錄與帳務狀態已成功同步！", "success");
+            } catch (e) {
+                errMsg.innerText = "儲存失敗，請檢查網路連線。"; errMsg.classList.remove('hidden');
+            } finally {
+                btn.disabled = false; btn.innerText = "儲存入檔";
+            }
+        };
+
+        window.logout = function() {
+            currentUserId = null; document.getElementById('authPin').value = '';
+            document.getElementById('editForm').classList.add('hidden'); document.getElementById('loginForm').classList.remove('hidden');
+            generateMonthData(); 
+        };
+
+        generateMonthData();
+    </script>
+</body>
+</html>
