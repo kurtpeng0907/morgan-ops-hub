@@ -56,6 +56,26 @@ const timeToMinutes = (value = "00:00") => {
 };
 const minsToTime = (mins) => `${String(Math.floor(mins / 60) % 24).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
 
+function normalizeDateField(value = "") {
+  if (!value) return "";
+  const text = String(value).trim();
+  const direct = text.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (direct) return `${direct[1]}-${String(direct[2]).padStart(2, "0")}-${String(direct[3]).padStart(2, "0")}`;
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? text : toDateKey(parsed);
+}
+
+function normalizeTimeField(value = "") {
+  if (value === null || value === undefined || value === "") return "";
+  if (typeof value === "number" && value >= 0 && value < 1) {
+    return minsToTime(Math.round(value * 24 * 60));
+  }
+  const text = String(value).trim();
+  const match = text.match(/\b(\d{1,2}):(\d{2})(?::\d{2})?\b/);
+  if (match) return `${String(match[1]).padStart(2, "0")}:${match[2]}`;
+  return text;
+}
+
 const THERAPIST_PROFILE_DEFAULTS = {
   nickname: "",
   name: "",
@@ -159,6 +179,12 @@ function normalizeDb(data) {
     if (!data.customers[appt.phone].name && appt.customerName) data.customers[appt.phone].name = appt.customerName;
   });
   Object.keys(data.customers).forEach((key) => {
+    data.customers[key].records ||= [];
+    data.customers[key].records.forEach((record) => {
+      record.date = normalizeDateField(record.date);
+      record.time = normalizeTimeField(record.time);
+      record.collectedPrice = cleanPin(record.collectedPrice || "");
+    });
     if (!key.startsWith("SYS_ADMIN_")) return;
     const id = key.replace("SYS_ADMIN_", "");
     data.admins[id] = {
@@ -182,6 +208,11 @@ function normalizeDb(data) {
   });
   Object.entries(data.appointments).forEach(([id, appt]) => {
     appt.id = appt.id || id;
+    appt.date = normalizeDateField(appt.date);
+    appt.time = normalizeTimeField(appt.time);
+    appt.duration = Number(appt.duration || 60);
+    appt.price = Number(appt.price || 0);
+    appt.collectedPrice = cleanPin(appt.collectedPrice || "");
     appt.customerName = String(appt.customerName || "").trim();
   });
   assignCustomerCodes(data);
