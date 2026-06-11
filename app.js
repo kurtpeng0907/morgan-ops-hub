@@ -89,6 +89,10 @@ const THERAPIST_PROFILE_DEFAULTS = {
 };
 
 const therapistProfileKey = (id) => `SYS_THERAPIST_PROFILE_${id}`;
+const APPROVAL_PREFIX = "SYS_APPROVAL_";
+const approvalKey = (id) => `${APPROVAL_PREFIX}${id}`;
+const approvalTypeLabel = (type) => ({ profile: "人事資料", schedule: "班表", password: "密碼" }[type] || type);
+const approvalStatusLabel = (status) => ({ pending: "待審核", approved: "已核可", rejected: "已退回" }[status] || status);
 
 function normalizeTherapistProfile(therapist = {}) {
   const normalized = { ...THERAPIST_PROFILE_DEFAULTS, ...therapist };
@@ -173,6 +177,7 @@ function normalizeDb(data) {
   };
   data.appointments ||= {};
   data.customers ||= {};
+  data.approvals ||= {};
   Object.values(data.appointments).forEach((appt) => {
     if (!appt.phone || isSystemCustomerKey(appt.phone)) return;
     data.customers[appt.phone] ||= { name: appt.customerName || "", notes: "", records: [] };
@@ -199,6 +204,14 @@ function normalizeDb(data) {
     let profile = {};
     try { profile = JSON.parse(data.customers[key].notes || "{}"); } catch {}
     data.therapists[id] = { ...(data.therapists[id] || {}), ...profile };
+  });
+  data.approvals = {};
+  Object.keys(data.customers).forEach((key) => {
+    if (!key.startsWith(APPROVAL_PREFIX)) return;
+    try {
+      const approval = JSON.parse(data.customers[key].notes || "{}");
+      if (approval.id) data.approvals[approval.id] = approval;
+    } catch {}
   });
   Object.keys(data.therapists).forEach((id) => {
     data.therapists[id] = normalizeTherapistProfile(data.therapists[id]);
@@ -1292,11 +1305,121 @@ async function saveTherapistProfile(data) {
   ], "按摩師資料已寫入雲端");
 }
 
+function approvalsList(status = "") {
+  return Object.values(db.approvals || {})
+    .filter((item) => !status || item.status === status)
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+}
+
+function approvalSummary(item) {
+  if (item.type === "schedule") {
+    const days = Object.keys(item.data?.schedule || {}).length;
+    return `${item.data?.weekLabel || "班表區間"}，共 ${days} 天`;
+  }
+  if (item.type === "password") return "變更為新的 4 位數 PIN";
+  const d = item.data || {};
+  return [d.nickname || d.name || "", d.contact || "", d.specialties || ""].filter(Boolean).join(" · ") || "更新人事基本資料";
+}
+
+function renderApprovalDetail(item) {
+  if (item.type === "schedule") {
+    const rows = Object.entries(item.data?.schedule || {}).map(([date, shift]) => `<tr><td class="font-mono font-black">${esc(date)}</td><td>${esc(item.before?.[date] || "休假")}</td><td class="font-black text-teal-700">${esc(shift)}</td></tr>`).join("");
+    return `<div class="table-wrap mt-3"><table><thead><tr><th>日期</th><th>原班表</th><th>申請班表</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  }
+  if (item.type === "password") {
+    return `<div class="mt-3 rounded-xl bg-slate-50 p-3 text-sm font-bold text-slate-600">新 PIN 為 4 位數字，核可後才會更新登入密碼。</div>`;
+  }
+  const d = item.data || {};
+  return `<div class="mt-3 grid gap-2 rounded-xl bg-slate-50 p-3 text-sm font-bold text-slate-600 sm:grid-cols-2">
+    <div>暱稱：${esc(d.nickname || "未填")}</div><div>姓名：${esc(d.name || "未填")}</div>
+    <div>聯絡方式：${esc(d.contact || "未填")}</div><div>基本資料：${esc([d.age ? `${d.age}歲` : "", d.height ? `${d.height}cm` : "", d.weight ? `${d.weight}kg` : ""].filter(Boolean).join(" / ") || "未填")}</div>
+    <div class="sm:col-span-2">專長：${esc(d.specialties || "未填")}</div>
+    <div class="sm:col-span-2">介紹 / 備註：${esc(d.bio || d.notes || "未填")}</div>
+  </div>`;
+}
+
+async function updateApprovalRecord(item, status, extra = {}) {
+  const next = { ...item, ...extra, status, updatedAt: new Date().toISOString(), reviewedBy: currentUser?.id || "" };
+  db.approvals[next.id] = next;
+  db.customers[approvalKey(next.id)] = {
+    name: `${approvalStatusLabel(status)}-${approvalTypeLabel(next.type)}-${therapistName(next.therapistId)}`,
+    notes: JSON.stringify(next),
+    records: []
+  };
+  await saveCloudActions([{ action: "saveCustomer", data: { phone: approvalKey(next.id), ...db.customers[approvalKey(next.id)] } }], `申請已${approvalStatusLabel(status)}`);
+}
+
+async function approveRequest(id) {
+  const item = db.approvals[id];
+  if (!item || item.status !== "pending") return;
+  const therapistId = item.therapistId;
+  const therapist = db.therapists[therapistId] || { pin: "" };
+  const actions = [];
+
+  if (item.type === "profile") {
+    db.therapists[therapistId] = normalizeTherapistProfile({ ...therapist, ...item.data, id: therapistId, pin: therapist.pin });
+    const { pin, ...profile } = db.therapists[therapistId];
+    db.customers[therapistProfileKey(therapistId)] = { name: profile.nickname || profile.name || therapistId, notes: JSON.stringify(profile), records: [] };
+    actions.push(
+      { action: "addTherapist", data: { ...db.therapists[therapistId], id: therapistId, pin: sheetText(pin) } },
+      { action: "saveCustomer", data: { phone: therapistProfileKey(therapistId), ...db.customers[therapistProfileKey(therapistId)] } }
+    );
+  } else if (item.type === "password") {
+    db.therapists[therapistId] = normalizeTherapistProfile({ ...therapist, pin: cleanPin(item.data?.pin) });
+    actions.push({ action: "addTherapist", data: { ...db.therapists[therapistId], id: therapistId, pin: sheetText(db.therapists[therapistId].pin) } });
+  } else if (item.type === "schedule") {
+    db.schedules[therapistId] = { ...(db.schedules[therapistId] || {}), ...(item.data?.schedule || {}) };
+    actions.push({ action: "saveSchedule", data: { id: therapistId, schedule: db.schedules[therapistId] } });
+  }
+
+  const next = { ...item, status: "approved", updatedAt: new Date().toISOString(), reviewedBy: currentUser?.id || "" };
+  db.approvals[id] = next;
+  db.customers[approvalKey(id)] = { name: `已核可-${approvalTypeLabel(item.type)}-${therapistName(therapistId)}`, notes: JSON.stringify(next), records: [] };
+  actions.push({ action: "saveCustomer", data: { phone: approvalKey(id), ...db.customers[approvalKey(id)] } });
+  await saveCloudActions(actions, "申請已核可並套用");
+  renderAll();
+}
+
+async function rejectRequest(id) {
+  const item = db.approvals[id];
+  if (!item || item.status !== "pending") return;
+  await updateApprovalRecord(item, "rejected");
+  renderAll();
+}
+
 function renderPersonnel() {
   const section = $("view-personnel");
   const scheduleStart = $("scheduleStartDate")?.value || monthDates[0]?.key || todayKey();
   const scheduleEnd = $("scheduleEndDate")?.value || monthDates.at(-1)?.key || todayKey();
-  const panelBtn = (panel, label) => `<button class="rounded-lg px-4 py-2 text-sm font-black ${activePersonnelPanel === panel ? "bg-white text-teal-700 shadow" : "text-slate-500"}" data-personnel-panel="${panel}">${label}</button>`;
+  const pendingCount = approvalsList("pending").length;
+  const panelBtn = (panel, label) => `<button class="rounded-lg px-4 py-2 text-sm font-black ${activePersonnelPanel === panel ? "bg-white text-teal-700 shadow" : "text-slate-500"}" data-personnel-panel="${panel}">${label}${panel === "approvals" && pendingCount ? ` <span class="ml-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">${pendingCount}</span>` : ""}</button>`;
+  const approvalPanel = `
+    <div class="card overflow-hidden">
+      <div class="border-b bg-slate-50 p-5">
+        <h3 class="font-black">前台變更審核</h3>
+        <p class="mt-1 text-sm font-bold text-slate-500">師傅在前台提出的人事資料、密碼與班表變更，都需在此核可後才會套用。</p>
+      </div>
+      <div class="divide-y divide-slate-100">
+        ${approvalsList().length ? approvalsList().map((item) => {
+          const statusClass = item.status === "approved" ? "bg-teal-50 text-teal-700" : item.status === "rejected" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700";
+          return `<div class="p-5">
+            <div class="flex flex-col justify-between gap-3 lg:flex-row lg:items-start">
+              <div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="badge bg-slate-100 text-slate-700">${esc(approvalTypeLabel(item.type))}</span>
+                  <span class="badge ${statusClass}">${esc(approvalStatusLabel(item.status))}</span>
+                  <span class="text-xs font-bold text-slate-400">${esc(new Date(item.createdAt).toLocaleString("zh-TW", { hour12: false }))}</span>
+                </div>
+                <h4 class="mt-2 text-lg font-black">${esc(therapistName(item.therapistId))} <span class="font-mono text-sm text-slate-400">${esc(item.therapistId)}</span></h4>
+                <p class="mt-1 text-sm font-bold text-slate-500">${esc(approvalSummary(item))}</p>
+              </div>
+              ${item.status === "pending" ? `<div class="flex gap-2"><button class="btn-teal px-4 py-2 text-sm" data-approve-request="${esc(item.id)}">核可套用</button><button class="rounded-xl bg-rose-50 px-4 py-2 text-sm font-black text-rose-700" data-reject-request="${esc(item.id)}">退回</button></div>` : ""}
+            </div>
+            ${renderApprovalDetail(item)}
+          </div>`;
+        }).join("") : `<div class="p-10 text-center text-sm font-bold text-slate-400">目前沒有前台送審項目</div>`}
+      </div>
+    </div>`;
   const staffPanel = `
     <div class="card p-5">
       <div class="mb-4 flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
@@ -1348,10 +1471,10 @@ function renderPersonnel() {
     <div class="card p-5">
       <div class="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
         <div><h3 class="text-lg font-black">人事權限</h3><p class="text-sm font-bold text-slate-500">人員資料、班表與登入權限集中管理。</p></div>
-        <div class="flex rounded-xl bg-slate-100 p-1">${panelBtn("schedule", "班表矩陣")}${panelBtn("staff", "人事資料")}${panelBtn("admins", "管理員")}</div>
+        <div class="flex flex-wrap rounded-xl bg-slate-100 p-1">${panelBtn("schedule", "班表矩陣")}${panelBtn("staff", "人事資料")}${panelBtn("approvals", "審核")}${panelBtn("admins", "管理員")}</div>
       </div>
     </div>
-    ${activePersonnelPanel === "schedule" ? schedulePanel : activePersonnelPanel === "admins" ? adminPanel : staffPanel}`;
+    ${activePersonnelPanel === "schedule" ? schedulePanel : activePersonnelPanel === "admins" ? adminPanel : activePersonnelPanel === "approvals" ? approvalPanel : staffPanel}`;
   section.querySelectorAll("[data-personnel-panel]").forEach((btn) => btn.onclick = () => {
     activePersonnelPanel = btn.dataset.personnelPanel;
     renderPersonnel();
@@ -1382,6 +1505,11 @@ function renderPersonnel() {
       renderAll();
       persist();
     }));
+    return;
+  }
+  if (activePersonnelPanel === "approvals") {
+    section.querySelectorAll("[data-approve-request]").forEach((btn) => btn.onclick = () => approveRequest(btn.dataset.approveRequest));
+    section.querySelectorAll("[data-reject-request]").forEach((btn) => btn.onclick = () => rejectRequest(btn.dataset.rejectRequest));
     return;
   }
   if (activePersonnelPanel === "admins") {

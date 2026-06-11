@@ -75,7 +75,6 @@
         <!-- 主導航 -->
         <div class="flex flex-wrap justify-center bg-zinc-100/80 p-1.5 rounded-2xl mx-auto w-fit mb-10 border border-zinc-200/50">
             <button onclick="switchTab('query')" id="tabQuery" class="px-8 py-2.5 rounded-xl tab-active transition-all text-sm tracking-wide">全域班表查詢</button>
-            <button onclick="switchTab('personnel')" id="tabPersonnel" class="px-8 py-2.5 rounded-xl tab-inactive transition-all text-sm tracking-wide">人事資料表</button>
             <button onclick="switchTab('edit')" id="tabEdit" class="px-8 py-2.5 rounded-xl tab-inactive transition-all text-sm tracking-wide flex items-center gap-2">
                 個人管理中樞 
                 <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
@@ -113,26 +112,6 @@
                 </div>
             </div>
 
-            <!-- ==================== 人事資料表 ==================== -->
-            <div id="viewPersonnel" class="hidden transition-opacity duration-300">
-                <div class="glass-card rounded-3xl p-6 md:p-8">
-                    <div class="flex flex-col gap-4 border-b border-zinc-200/70 pb-6 md:flex-row md:items-end md:justify-between">
-                        <div>
-                            <p class="mb-2 text-xs font-black uppercase tracking-[0.24em] text-teal-700">Personnel</p>
-                            <h2 class="text-2xl font-black tracking-tight text-zinc-900">人事資料表</h2>
-                            <p class="mt-2 text-sm font-medium text-zinc-500">與後台人事資料即時連動，僅顯示前台作業需要的基本資料。</p>
-                        </div>
-                        <button onclick="renderPersonnelDirectory(true)" id="personnelRefreshBtn" class="rounded-xl bg-zinc-900 px-5 py-3 text-sm font-bold text-white transition-colors hover:bg-zinc-800">
-                            同步資料
-                        </button>
-                    </div>
-                    <div id="personnelDirectorySummary" class="mt-5 text-sm font-bold text-zinc-500">尚未同步資料</div>
-                    <div id="personnelDirectoryBody" class="mt-5">
-                        <div class="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 p-8 text-center text-sm font-bold text-zinc-400">點擊同步資料，載入後台人事表。</div>
-                    </div>
-                </div>
-            </div>
-
             <!-- ==================== 個人中樞模式 ==================== -->
             <div id="viewEdit" class="hidden transition-opacity duration-300">
                 
@@ -165,13 +144,21 @@
                     </div>
 
                     <!-- 內部次導航 -->
-                    <div class="flex gap-6 mb-8 border-b border-zinc-200">
-                        <button onclick="switchPortalTab('schedule')" id="portalTabSchedule" class="pb-3 px-1 portal-tab-active text-base transition-all">我的排班設定</button>
+                    <div class="flex flex-wrap gap-6 mb-8 border-b border-zinc-200">
+                        <button onclick="switchPortalTab('profile')" id="portalTabProfile" class="pb-3 px-1 portal-tab-active text-base transition-all">我的人事資料</button>
+                        <button onclick="switchPortalTab('schedule')" id="portalTabSchedule" class="pb-3 px-1 portal-tab-inactive text-base transition-all">我的排班設定</button>
                         <button onclick="switchPortalTab('appointments')" id="portalTabAppointments" class="pb-3 px-1 portal-tab-inactive text-base transition-all">當月派單與回報</button>
                     </div>
+
+                    <!-- 區塊 A：個人人事資料 -->
+                    <div id="portalSectionProfile" class="block">
+                        <div id="profileApprovalStatus" class="mb-5"></div>
+                        <div id="profileFormContainer"></div>
+                    </div>
                     
-                    <!-- 區塊 A：排班設定 -->
-                    <div id="portalSectionSchedule" class="block max-w-2xl mx-auto">
+                    <!-- 區塊 B：排班設定 -->
+                    <div id="portalSectionSchedule" class="hidden max-w-2xl mx-auto">
+                        <div id="scheduleApprovalStatus" class="mb-5"></div>
                         <div class="mb-8">
                             <label class="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-3">請選擇欲填寫之週次</label>
                             <select id="weekSelector" onchange="renderEditInputs()" class="w-full px-5 py-3.5 bg-white border border-zinc-200 rounded-xl outline-none font-medium text-zinc-800 shadow-sm focus:border-zinc-400 focus:ring-4 focus:ring-zinc-100 transition-all"></select>
@@ -180,13 +167,13 @@
                         <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
                             <p id="saveMsg" class="text-sm font-bold text-teal-600 hidden"></p>
                             <button onclick="saveSchedule()" id="saveBtn" class="bg-zinc-900 text-white w-full sm:w-auto px-10 py-3.5 rounded-xl hover:bg-zinc-800 font-bold transition-all shadow-[0_4px_14px_0_rgba(0,0,0,0.1)] flex justify-center items-center sm:ml-auto">
-                                <span id="saveBtnText">儲存班表至雲端</span>
+                                <span id="saveBtnText">送出班表變更審核</span>
                                 <div id="saveLoader" class="loader loader-white hidden ml-2"></div>
                             </button>
                         </div>
                     </div>
 
-                    <!-- 區塊 B：派單與回報 -->
+                    <!-- 區塊 C：派單與回報 -->
                     <div id="portalSectionAppointments" class="hidden">
                         <div class="flex flex-col sm:flex-row items-start sm:items-end justify-between mb-6 gap-4">
                             <div>
@@ -371,7 +358,7 @@
     <script>
         const API_URL = "https://script.google.com/macros/s/AKfycbxC4Pk1v6rkdmd96cR_2r_xPhbcNjrQ0bNdikGKyqbR9OMMeCwN9L5t9mE1j-AoS-ie/exec"; 
         
-        let globalDB = { therapists: {}, schedules: {}, appointments: {}, customers: {} };
+        let globalDB = { therapists: {}, schedules: {}, appointments: {}, customers: {}, approvals: {} };
         let currentUserId = null;
         let currentYear = new Date().getFullYear();
         let currentMonth = new Date().getMonth(); 
@@ -385,7 +372,15 @@
         let currentApptViewMode = 'list'; 
 
         const cleanPin = (value = "") => String(value ?? "").replace(/^'/, "").trim();
+        const sheetText = (value = "") => {
+            const text = cleanPin(value);
+            return /^0\d+/.test(text) ? `'${text}` : text;
+        };
         const cleanStaffCode = (value = "") => String(value ?? "").replace(/^'/, "").trim();
+        const APPROVAL_PREFIX = "SYS_APPROVAL_";
+        const approvalKey = (id) => `${APPROVAL_PREFIX}${id}`;
+        const approvalTypeLabel = (type) => ({ profile: "人事資料", schedule: "班表", password: "密碼" }[type] || type);
+        const approvalStatusLabel = (status) => ({ pending: "待審核", approved: "已核可", rejected: "已退回" }[status] || status);
         const findTherapistId = (enteredId = "") => {
             const exact = cleanStaffCode(enteredId);
             if (globalDB.therapists[exact]) return exact;
@@ -429,6 +424,9 @@
             therapist.height ? `${therapist.height}cm` : "",
             therapist.weight ? `${therapist.weight}kg` : ""
         ].filter(Boolean).join(" / ");
+        const ownApprovals = () => Object.values(globalDB.approvals || {})
+            .filter((item) => item.therapistId === currentUserId)
+            .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
 
         // 載入最新的課程價格與抽成模型
         const COURSE_CATALOG = {
@@ -548,6 +546,7 @@
                 if (!globalDB.therapists) globalDB.therapists = {};
                 if (!globalDB.appointments) globalDB.appointments = {};
                 if (!globalDB.customers) globalDB.customers = {};
+                globalDB.approvals = {};
 
                 Object.keys(globalDB.customers).forEach(key => {
                     if (!key.startsWith('SYS_THERAPIST_PROFILE_')) return;
@@ -558,6 +557,13 @@
                 });
                 Object.keys(globalDB.therapists).forEach(id => {
                     globalDB.therapists[id] = normalizeTherapistProfile(globalDB.therapists[id]);
+                });
+                Object.keys(globalDB.customers).forEach(key => {
+                    if (!key.startsWith(APPROVAL_PREFIX)) return;
+                    try {
+                        const approval = JSON.parse(globalDB.customers[key].notes || "{}");
+                        if (approval.id) globalDB.approvals[approval.id] = approval;
+                    } catch(e) {}
                 });
                 
                 Object.keys(globalDB.appointments).forEach(key => {
@@ -597,103 +603,151 @@
             }
         }
 
+        async function createApprovalRequest(type, data, before = {}) {
+            if (!currentUserId) throw new Error("尚未登入");
+            const id = `REQ-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`.toUpperCase();
+            const request = {
+                id,
+                type,
+                status: "pending",
+                therapistId: currentUserId,
+                therapistName: therapistName(currentUserId),
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                data,
+                before
+            };
+            globalDB.approvals[id] = request;
+            globalDB.customers[approvalKey(id)] = {
+                name: `待審核-${approvalTypeLabel(type)}-${therapistName(currentUserId)}`,
+                notes: JSON.stringify(request),
+                records: []
+            };
+            await postToDatabase({ action: 'saveCustomer', data: { phone: approvalKey(id), ...globalDB.customers[approvalKey(id)] } });
+            await fetchDatabase();
+            renderApprovalStatusBlocks();
+            return request;
+        }
+
+        function renderApprovalStatusBlocks() {
+            const list = ownApprovals().slice(0, 8);
+            const html = list.length ? `
+                <div class="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+                    <h4 class="mb-3 text-sm font-black text-zinc-800">審核狀態</h4>
+                    <div class="space-y-2">${list.map((item) => {
+                        const color = item.status === "approved" ? "bg-teal-50 text-teal-700" : item.status === "rejected" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700";
+                        return `<div class="flex flex-col justify-between gap-1 rounded-xl bg-white px-4 py-3 text-sm font-bold sm:flex-row sm:items-center">
+                            <span>${approvalTypeLabel(item.type)}｜${new Date(item.createdAt).toLocaleString('zh-TW', { hour12: false })}</span>
+                            <span class="rounded-full px-3 py-1 text-xs ${color}">${approvalStatusLabel(item.status)}</span>
+                        </div>`;
+                    }).join("")}</div>
+                </div>` : `<div class="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 p-4 text-sm font-bold text-zinc-400">目前沒有送審紀錄。</div>`;
+            const profile = document.getElementById('profileApprovalStatus');
+            const schedule = document.getElementById('scheduleApprovalStatus');
+            if (profile) profile.innerHTML = html;
+            if (schedule) schedule.innerHTML = html;
+        }
+
         // ================= 雙模態視圖切換 =================
         window.switchTab = function(tabName) {
-            ['query', 'personnel', 'edit'].forEach(n => {
+            ['query', 'edit'].forEach(n => {
                 const el = document.getElementById(`tab${n.charAt(0).toUpperCase() + n.slice(1)}`);
                 if(n === tabName) el.className = "px-8 py-2.5 rounded-xl tab-active transition-all text-sm tracking-wide flex items-center gap-2";
                 else el.className = "px-8 py-2.5 rounded-xl tab-inactive transition-all text-sm tracking-wide flex items-center gap-2";
                 document.getElementById(`view${n.charAt(0).toUpperCase() + n.slice(1)}`).classList[n === tabName ? 'remove' : 'add']('hidden');
             });
-            if(tabName === 'personnel') renderPersonnelDirectory();
         };
 
-        window.renderPersonnelDirectory = async function(force = false) {
-            const body = document.getElementById('personnelDirectoryBody');
-            const summary = document.getElementById('personnelDirectorySummary');
-            const btn = document.getElementById('personnelRefreshBtn');
-            if (!body || !summary) return;
+        function profileFieldsHtml(profile = {}) {
+            return `
+                <input type="hidden" name="id" value="${esc(currentUserId)}">
+                <div><label class="block text-xs font-bold text-zinc-500 mb-1.5">暱稱</label><input name="nickname" class="w-full px-4 py-3 soft-input rounded-xl outline-none font-bold" value="${esc(profile.nickname || "")}"></div>
+                <div><label class="block text-xs font-bold text-zinc-500 mb-1.5">姓名</label><input name="name" class="w-full px-4 py-3 soft-input rounded-xl outline-none font-bold" value="${esc(profile.name || "")}"></div>
+                <div><label class="block text-xs font-bold text-zinc-500 mb-1.5">聯絡方式</label><input name="contact" class="w-full px-4 py-3 soft-input rounded-xl outline-none font-bold" value="${esc(profile.contact || "")}"></div>
+                <div><label class="block text-xs font-bold text-zinc-500 mb-1.5">年齡</label><input name="age" inputmode="numeric" class="w-full px-4 py-3 soft-input rounded-xl outline-none font-bold" value="${esc(profile.age || "")}"></div>
+                <div><label class="block text-xs font-bold text-zinc-500 mb-1.5">身高 cm</label><input name="height" inputmode="numeric" class="w-full px-4 py-3 soft-input rounded-xl outline-none font-bold" value="${esc(profile.height || "")}"></div>
+                <div><label class="block text-xs font-bold text-zinc-500 mb-1.5">體重 kg</label><input name="weight" inputmode="numeric" class="w-full px-4 py-3 soft-input rounded-xl outline-none font-bold" value="${esc(profile.weight || "")}"></div>
+                <div class="md:col-span-2"><label class="block text-xs font-bold text-zinc-500 mb-1.5">專長</label><input name="specialties" class="w-full px-4 py-3 soft-input rounded-xl outline-none font-bold" value="${esc(profile.specialties || "")}"></div>
+                <div class="md:col-span-2"><label class="block text-xs font-bold text-zinc-500 mb-1.5">備註</label><textarea name="notes" rows="3" class="w-full px-4 py-3 soft-input rounded-xl outline-none font-bold">${esc(profile.notes || "")}</textarea></div>
+                <div class="md:col-span-2"><label class="block text-xs font-bold text-zinc-500 mb-1.5">介紹詞</label><textarea name="bio" rows="4" class="w-full px-4 py-3 soft-input rounded-xl outline-none font-bold">${esc(profile.bio || "")}</textarea></div>`;
+        }
 
-            if (force || Object.keys(globalDB.therapists || {}).length === 0) {
-                if (btn) { btn.disabled = true; btn.innerText = "同步中..."; }
-                summary.innerText = "正在同步後台人事資料...";
-                body.innerHTML = `<div class="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 p-8 text-center text-sm font-bold text-zinc-400">載入中...</div>`;
-                try {
-                    await fetchDatabase();
-                } catch (e) {
-                    summary.innerText = "同步失敗";
-                    body.innerHTML = `<div class="rounded-2xl border border-rose-100 bg-rose-50 p-8 text-center text-sm font-bold text-rose-600">無法連線至後台資料庫，請稍後再試。</div>`;
-                    if (btn) { btn.disabled = false; btn.innerText = "重新同步"; }
-                    return;
-                } finally {
-                    if (btn) { btn.disabled = false; btn.innerText = "同步資料"; }
-                }
-            }
+        function collectProfile(form) {
+            const data = Object.fromEntries(new FormData(form).entries());
+            Object.keys(THERAPIST_PROFILE_DEFAULTS).forEach((key) => data[key] = String(data[key] || "").trim());
+            data.id = currentUserId;
+            return data;
+        }
 
-            const rows = Object.entries(globalDB.therapists || {}).sort(([a], [b]) => a.localeCompare(b, 'zh-Hant', { numeric: true }));
-            summary.innerText = `已同步 ${rows.length} 位人員｜${new Date().toLocaleString('zh-TW', { hour12: false })}`;
-
-            if (!rows.length) {
-                body.innerHTML = `<div class="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 p-8 text-center text-sm font-bold text-zinc-400">目前後台尚未建立師傅資料。</div>`;
-                return;
-            }
-
-            const cards = rows.map(([id, therapist]) => {
-                const stats = compactStats(therapist);
-                const contact = therapist.contact || "未填";
-                const realName = therapist.name && therapist.nickname && therapist.name !== therapist.nickname ? therapist.name : "";
-                return `
-                    <article class="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_2px_10px_-5px_rgba(0,0,0,0.08)]">
-                        <div class="mb-4 flex items-start justify-between gap-3">
-                            <div>
-                                <p class="text-xs font-black uppercase tracking-widest text-zinc-400">ID ${esc(id)}</p>
-                                <h3 class="mt-1 text-xl font-black text-zinc-900">${esc(therapistName(id))}</h3>
-                                ${realName ? `<p class="mt-1 text-sm font-bold text-zinc-500">${esc(realName)}</p>` : ""}
-                            </div>
-                            <span class="rounded-full bg-teal-50 px-3 py-1 text-xs font-black text-teal-700">在職</span>
+        window.renderMyProfile = function() {
+            const container = document.getElementById('profileFormContainer');
+            if (!container || !currentUserId) return;
+            const profile = globalDB.therapists[currentUserId] || {};
+            container.innerHTML = `
+                <div class="grid gap-5 lg:grid-cols-[1fr_340px]">
+                    <form id="profileEditForm" class="rounded-3xl border border-zinc-200 bg-white p-5">
+                        <div class="mb-5 border-b border-zinc-100 pb-4">
+                            <h3 class="text-xl font-black text-zinc-900">我的人事資料</h3>
+                            <p class="mt-1 text-sm font-medium text-zinc-500">修改後會送交後台審核，核可後才會更新正式資料。</p>
                         </div>
-                        <div class="grid gap-2 text-sm font-bold text-zinc-600">
-                            <p><span class="text-zinc-400">基本資料：</span>${esc([contact, stats].filter(Boolean).join(" · ") || "未填")}</p>
-                            <p><span class="text-zinc-400">專長：</span>${esc(therapist.specialties || "未填")}</p>
-                            ${therapist.bio ? `<p class="line-clamp-3 font-medium leading-relaxed text-zinc-500">${esc(therapist.bio)}</p>` : ""}
+                        <div class="grid gap-4 md:grid-cols-2">${profileFieldsHtml(profile)}</div>
+                        <div class="mt-5 flex justify-end"><button class="bg-teal-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-teal-700">送出人事資料審核</button></div>
+                    </form>
+                    <form id="passwordChangeForm" class="rounded-3xl border border-zinc-200 bg-zinc-50 p-5 h-fit">
+                        <h3 class="text-lg font-black text-zinc-900">變更登入密碼</h3>
+                        <p class="mt-1 mb-4 text-sm font-medium text-zinc-500">新密碼限 4 位數字，送出後需管理員核可。</p>
+                        <div class="space-y-3">
+                            <input name="currentPin" type="password" inputmode="numeric" maxlength="8" class="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none font-bold" placeholder="目前 PIN">
+                            <input name="newPin" type="password" inputmode="numeric" maxlength="4" class="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none font-bold" placeholder="新 PIN，4 位數字">
+                            <input name="confirmPin" type="password" inputmode="numeric" maxlength="4" class="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none font-bold" placeholder="再次輸入新 PIN">
+                            <button class="w-full bg-zinc-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-zinc-800">送出密碼變更審核</button>
                         </div>
-                    </article>`;
-            }).join("");
-
-            const tableRows = rows.map(([id, therapist]) => `
-                <tr class="border-b border-zinc-100 align-top last:border-0">
-                    <td class="px-4 py-3 font-mono text-sm font-black text-zinc-800">${esc(id)}</td>
-                    <td class="px-4 py-3">
-                        <div class="font-black text-zinc-900">${esc(therapistName(id))}</div>
-                        ${therapist.name && therapist.nickname && therapist.name !== therapist.nickname ? `<div class="mt-1 text-xs font-bold text-zinc-400">${esc(therapist.name)}</div>` : ""}
-                    </td>
-                    <td class="px-4 py-3 text-sm font-bold text-zinc-600">${esc(therapist.contact || "未填")}</td>
-                    <td class="px-4 py-3 text-sm font-bold text-zinc-600">${esc(compactStats(therapist) || "未填")}</td>
-                    <td class="px-4 py-3 text-sm font-bold text-zinc-600">${esc(therapist.specialties || "未填")}</td>
-                    <td class="max-w-sm px-4 py-3 text-sm font-medium leading-relaxed text-zinc-500">${esc(therapist.bio || therapist.notes || "未填")}</td>
-                </tr>`).join("");
-
-            body.innerHTML = `
-                <div class="grid gap-4 md:hidden">${cards}</div>
-                <div class="hidden overflow-x-auto rounded-2xl border border-zinc-200 bg-white md:block">
-                    <table class="w-full min-w-[900px] text-left">
-                        <thead class="bg-zinc-50 text-xs font-black uppercase tracking-widest text-zinc-400">
-                            <tr>
-                                <th class="px-4 py-3">代碼</th>
-                                <th class="px-4 py-3">姓名</th>
-                                <th class="px-4 py-3">聯絡方式</th>
-                                <th class="px-4 py-3">基本資料</th>
-                                <th class="px-4 py-3">專長</th>
-                                <th class="px-4 py-3">介紹 / 備註</th>
-                            </tr>
-                        </thead>
-                        <tbody>${tableRows}</tbody>
-                    </table>
+                        <p id="passwordChangeMsg" class="mt-3 hidden text-sm font-bold text-rose-600"></p>
+                    </form>
                 </div>`;
+            document.getElementById('profileEditForm').onsubmit = async (event) => {
+                event.preventDefault();
+                const btn = event.currentTarget.querySelector('button');
+                btn.disabled = true; btn.innerText = "送審中...";
+                try {
+                    await createApprovalRequest("profile", collectProfile(event.currentTarget), profile);
+                    showSnackbar("✅ 人事資料變更已送出審核。", "success");
+                } catch(e) {
+                    showSnackbar("❌ 送審失敗，請稍後再試。", "error");
+                } finally {
+                    btn.disabled = false; btn.innerText = "送出人事資料審核";
+                }
+            };
+            document.getElementById('passwordChangeForm').onsubmit = async (event) => {
+                event.preventDefault();
+                const data = Object.fromEntries(new FormData(event.currentTarget).entries());
+                const msg = document.getElementById('passwordChangeMsg');
+                msg.classList.add('hidden');
+                if (!pinMatches(profile.pin, data.currentPin)) {
+                    msg.innerText = "目前 PIN 不正確。"; msg.classList.remove('hidden'); return;
+                }
+                if (!/^\d{4}$/.test(String(data.newPin || ""))) {
+                    msg.innerText = "新 PIN 必須是 4 位數字。"; msg.classList.remove('hidden'); return;
+                }
+                if (data.newPin !== data.confirmPin) {
+                    msg.innerText = "兩次輸入的新 PIN 不一致。"; msg.classList.remove('hidden'); return;
+                }
+                const btn = event.currentTarget.querySelector('button');
+                btn.disabled = true; btn.innerText = "送審中...";
+                try {
+                    await createApprovalRequest("password", { pin: cleanPin(data.newPin) }, { pin: profile.pin });
+                    event.currentTarget.reset();
+                    showSnackbar("✅ 密碼變更已送出審核。", "success");
+                } catch(e) {
+                    showSnackbar("❌ 送審失敗，請稍後再試。", "error");
+                } finally {
+                    btn.disabled = false; btn.innerText = "送出密碼變更審核";
+                }
+            };
         };
 
         window.switchPortalTab = function(tabName) {
-            ['schedule', 'appointments'].forEach(n => {
+            ['profile', 'schedule', 'appointments'].forEach(n => {
                 const el = document.getElementById(`portalTab${n.charAt(0).toUpperCase() + n.slice(1)}`);
                 if(n === tabName) el.className = "pb-3 px-1 portal-tab-active text-base transition-all";
                 else el.className = "pb-3 px-1 portal-tab-inactive text-base transition-all";
@@ -702,6 +756,8 @@
                 if (n === tabName) section.classList.remove('hidden');
                 else section.classList.add('hidden');
             });
+            if(tabName === 'profile') { renderApprovalStatusBlocks(); renderMyProfile(); }
+            if(tabName === 'schedule') renderApprovalStatusBlocks();
             if(tabName === 'appointments') renderMyAppointments();
         };
 
@@ -799,7 +855,7 @@
                     document.getElementById('loggedInName').innerText = therapistName(id);
                     populateWeekSelector();
                     renderEditInputs();
-                    switchPortalTab('schedule');
+                    switchPortalTab('profile');
                     document.getElementById('loginForm').classList.add('hidden');
                     document.getElementById('editForm').classList.remove('hidden');
                 } else { err.innerText = "身分驗證失敗，請檢查編號或密碼。"; err.classList.remove('hidden'); }
@@ -843,22 +899,23 @@
             const loader = document.getElementById('saveLoader');
             const btnText = document.getElementById('saveBtnText');
 
-            btn.disabled = true; btnText.innerText = "寫入中..."; loader.classList.remove('hidden'); msg.classList.add('hidden');
+            btn.disabled = true; btnText.innerText = "送審中..."; loader.classList.remove('hidden'); msg.classList.add('hidden');
 
             const weekIdx = document.getElementById('weekSelector').value;
             const weekDays = monthWeeksList[weekIdx] || [];
-            let payloadData = { id: currentUserId, schedule: {} };
+            let payloadData = { schedule: {}, weekLabel: document.getElementById('weekSelector').selectedOptions[0]?.textContent || "" };
             
             weekDays.forEach(d => { payloadData.schedule[d.key] = document.getElementById(`input_${d.key}`).value.trim() || "休假"; });
 
             try {
-                await postToDatabase({ action: 'saveSchedule', data: payloadData });
-                await fetchDatabase(); 
-                showSnackbar("✅ 班表變更已安全儲存。", "success");
+                const before = {};
+                weekDays.forEach(d => { before[d.key] = (globalDB.schedules[currentUserId] || {})[d.key] || "休假"; });
+                await createApprovalRequest("schedule", payloadData, before);
+                showSnackbar("✅ 班表變更已送出審核。", "success");
             } catch (e) {
-                showSnackbar("❌ 儲存失敗，請檢查網路連線。", "error");
+                showSnackbar("❌ 送審失敗，請檢查網路連線。", "error");
             } finally {
-                btn.disabled = false; btnText.innerText = "儲存班表至雲端"; loader.classList.add('hidden');
+                btn.disabled = false; btnText.innerText = "送出班表變更審核"; loader.classList.add('hidden');
             }
         };
 
