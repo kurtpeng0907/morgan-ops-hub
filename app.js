@@ -1300,7 +1300,7 @@ function renderOverview() {
               <button id="businessSummaryBtn" class="btn-light border-slate-700 bg-white px-4 py-2 text-slate-900 hover:bg-slate-100">營業總表</button>
               <button id="changeHistoryBtn" class="btn-light border-slate-700 bg-white/10 px-4 py-2 text-white hover:bg-white/15">修改紀錄</button>
               <button id="downloadBackupBtn" class="btn-light border-slate-700 bg-white/10 px-4 py-2 text-white hover:bg-white/15">下載備份</button>
-              <button class="btn-teal" data-jump-tab="dispatch">預約作業台</button>
+              <button class="btn-teal" data-jump-tab="dispatch">預約系統</button>
               <button class="btn-light border-slate-700 bg-slate-900 px-4 py-2 text-white hover:bg-slate-800" data-jump-tab="personnel" data-personnel-panel="schedule">修改班表</button>
               <button id="refreshOverviewBtn" class="btn-light border-slate-700 bg-white/10 px-4 py-2 text-white hover:bg-white/15">更新資料</button>
             </div>
@@ -1351,7 +1351,7 @@ function renderOverview() {
     </div>
     <div class="grid gap-5 xl:grid-cols-[1.15fr_.85fr]">
       <div class="card overflow-hidden">
-        <div class="flex items-center justify-between border-b bg-white px-5 py-4"><div><h3 class="font-black">今日流程</h3><p class="text-xs font-bold text-slate-500">點任一筆可進入預約作業台修改</p></div><span class="badge bg-teal-50 text-teal-700">${todayAppts.length} 筆</span></div>
+        <div class="flex items-center justify-between border-b bg-white px-5 py-4"><div><h3 class="font-black">今日流程</h3><p class="text-xs font-bold text-slate-500">點任一筆可進入預約系統修改</p></div><span class="badge bg-teal-50 text-teal-700">${todayAppts.length} 筆</span></div>
         <div>${todayTimeline}</div>
       </div>
       <div class="space-y-5">${taskCards}</div>
@@ -2028,7 +2028,7 @@ function bookingWorkbenchIntroHtml(monthAppts, pendingSelections) {
     <div class="border-b bg-slate-950 p-5 text-white">
       <div class="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
         <div>
-          <p class="text-xs font-black uppercase tracking-widest text-teal-300">預約作業台</p>
+          <p class="text-xs font-black uppercase tracking-widest text-teal-300">預約系統</p>
           <h3 class="mt-2 text-2xl font-black">查時段 → 給客選 → 確認預約 → 行前通知</h3>
           <p class="mt-1 text-sm font-bold text-slate-300">每一筆預約都先在這裡完成媒合，再進入通知與回款紀錄。</p>
         </div>
