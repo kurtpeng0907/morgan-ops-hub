@@ -15,6 +15,19 @@ const COURSE_CATALOG = {
   OUT_NIGHT: { name: "外出 (22:00後)", duration: 120, price: 3500, therapistCut: 2200 }
 };
 
+const ADMIN_NAV_ITEMS = [
+  { tab: "overview", label: "總覽", title: "總覽" },
+  { tab: "dispatch", label: "預約", title: "預約系統", accentClass: "text-teal-300" },
+  { tab: "customer", label: "顧客", title: "顧客", accentClass: "text-indigo-300" },
+  { tab: "personnel", label: "人事", title: "人事" },
+  { tab: "report", label: "財務", title: "財務", accentClass: "text-amber-300" },
+  { tab: "system", label: "系統", title: "系統" }
+];
+
+const THERAPIST_NAV_ITEMS = [
+  { tab: "portal", label: "我的預約與班表", title: "個人中樞" }
+];
+
 let currentYear = new Date().getFullYear();
 let currentMonth = new Date().getMonth();
 let monthDates = [];
@@ -98,6 +111,7 @@ const therapistProfileKey = (id) => `SYS_THERAPIST_PROFILE_${id}`;
 const APPROVAL_PREFIX = "SYS_APPROVAL_";
 const CLIENT_SELECTION_PREFIX = "SYS_CLIENT_SELECTION_";
 const APPOINTMENT_META_PREFIX = "SYS_APPT_META_";
+const ADMIN_LOGIN_LOG_KEY = "SYS_ADMIN_LOGIN_LOG";
 const approvalKey = (id) => `${APPROVAL_PREFIX}${id}`;
 const clientSelectionKey = (id) => `${CLIENT_SELECTION_PREFIX}${id}`;
 const appointmentMetaKey = (id) => `${APPOINTMENT_META_PREFIX}${id}`;
@@ -619,6 +633,40 @@ function downloadCurrentBackup() {
   showSnackbar("資料備份已下載");
 }
 
+function adminLoginLogStore() {
+  db.customers[ADMIN_LOGIN_LOG_KEY] ||= { name: "後台管理登入紀錄", notes: "", records: [] };
+  db.customers[ADMIN_LOGIN_LOG_KEY].records ||= [];
+  return db.customers[ADMIN_LOGIN_LOG_KEY];
+}
+
+function adminLoginRecords(limit = 80) {
+  return [...(db.customers[ADMIN_LOGIN_LOG_KEY]?.records || [])]
+    .sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")))
+    .slice(0, limit);
+}
+
+async function recordAdminLogin(id) {
+  const store = adminLoginLogStore();
+  store.records.push({
+    id: `LOGIN-${Date.now().toString(36).toUpperCase()}`,
+    at: new Date().toISOString(),
+    adminId: id,
+    adminName: db.admins[id]?.name || id,
+    source: location.hostname || "local",
+    path: location.pathname || "",
+    device: navigator.userAgent || "",
+    width: window.innerWidth || 0
+  });
+  store.records = store.records.slice(-200);
+  try {
+    suppressPersistBackup = true;
+    await postCloud("saveCustomer", { phone: ADMIN_LOGIN_LOG_KEY, ...store });
+  } finally {
+    suppressPersistBackup = false;
+  }
+  if ($("view-system") && !$("view-system").classList.contains("hidden")) renderSystem();
+}
+
 function downloadBackupEntry(key) {
   const entry = listLocalBackups().find((item) => item.key === key);
   if (!entry) return showSnackbar("找不到該筆修改紀錄");
@@ -1009,7 +1057,8 @@ async function createLineTrialRequest(form) {
     records: []
   };
   await saveCloudActions([{ action: "saveCustomer", data: { phone: clientSelectionKey(id), ...db.customers[clientSelectionKey(id)] } }], "LINE 測試需求已寫入待處理");
-  renderDispatch();
+  if (!$("view-dispatch")?.classList.contains("hidden")) renderDispatch();
+  if (!$("view-system")?.classList.contains("hidden")) renderSystem();
 }
 
 function lineTrialPanelHtml() {
@@ -1122,6 +1171,45 @@ function responsiveTableHtml(headers, rowsHtml, emptyColspan, extraClass = "") {
   return `<div class="table-wrap mobile-card-table ${extraClass}"><table><thead><tr>${headerHtml}</tr></thead><tbody>${labeledRows || `<tr><td colspan="${emptyColspan || headers.length}" class="py-10 text-center font-bold text-slate-400">無資料</td></tr>`}</tbody></table></div>`;
 }
 
+function collapsibleCardHtml({ title, desc = "", badge = "", body = "", open = true, className = "" }) {
+  return `<details class="collapsible-card card ${className}" ${open ? "open" : ""}>
+    <summary>
+      <span>
+        <span class="collapsible-title">${esc(title)}</span>
+        ${desc ? `<span class="collapsible-desc">${esc(desc)}</span>` : ""}
+      </span>
+      <span class="flex items-center gap-2">${badge || ""}<span class="collapsible-chevron">⌄</span></span>
+    </summary>
+    <div class="collapsible-body">${body}</div>
+  </details>`;
+}
+
+function navItemHtml(item, attr = "data-tab") {
+  const activeClass = item.tab === activeTab ? " active" : "";
+  const accentClass = item.accentClass ? ` ${item.accentClass}` : "";
+  return `<button type="button" ${attr}="${esc(item.tab)}" class="nav-btn${activeClass}${accentClass}">${esc(item.label)}</button>`;
+}
+
+function tabTitle(tab) {
+  return [...ADMIN_NAV_ITEMS, ...THERAPIST_NAV_ITEMS].find((item) => item.tab === tab)?.title || "管理中樞";
+}
+
+function renderAppShellNavigation() {
+  const adminNav = $("adminNav");
+  if (adminNav) adminNav.innerHTML = ADMIN_NAV_ITEMS.map((item) => navItemHtml(item)).join("");
+  const therapistNav = $("therapistNav");
+  if (therapistNav) {
+    therapistNav.innerHTML = `<p class="px-2 py-2 text-xs font-black uppercase tracking-widest text-slate-500">師傅專屬中樞</p>${THERAPIST_NAV_ITEMS.map((item) => navItemHtml(item)).join("")}`;
+  }
+  const mobileNav = $("mobileBottomNav");
+  if (mobileNav) mobileNav.innerHTML = ADMIN_NAV_ITEMS.map((item) => navItemHtml(item, "data-mobile-tab")).join("");
+}
+
+function closestFromEvent(event, selector) {
+  const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+  return target?.closest(selector) || null;
+}
+
 function renderAll() {
   generateMonthData();
   renderOverview();
@@ -1129,6 +1217,7 @@ function renderAll() {
   renderCustomers();
   renderPersonnel();
   renderReport();
+  renderSystem();
   renderPortal();
   hydrateResponsiveTables();
 }
@@ -1201,10 +1290,13 @@ function switchTab(tab, options = {}) {
   activeTab = tab;
   document.querySelectorAll(".view").forEach((el) => el.classList.add("hidden"));
   $(`view-${tab}`)?.classList.remove("hidden");
-  document.querySelectorAll(".nav-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === tab));
+  document.querySelectorAll(".nav-btn").forEach((btn) => {
+    const isActive = btn.dataset.tab === tab;
+    btn.classList.toggle("active", isActive);
+    if (btn.dataset.tab) btn.setAttribute("aria-current", isActive ? "page" : "false");
+  });
   syncMobileBottomNav();
-  const titles = { overview: "總覽", dispatch: "預約", customer: "顧客", personnel: "人事", report: "財務", portal: "個人中樞" };
-  $("pageTitle").textContent = titles[tab] || "管理中樞";
+  $("pageTitle").textContent = tabTitle(tab);
   hideSidebar();
   renderAll();
   if (tab === "dispatch") focusDispatchTarget();
@@ -1227,10 +1319,6 @@ function renderOverview() {
   const appts = Object.values(db.appointments);
   const todayAppts = appts.filter((a) => a.date === today).sort(sortByTime);
   const pendingApprovals = approvalsList("pending");
-  const thisWeekKeys = weekKeys(today, 0);
-  const nextWeekScheduleKeys = weekKeys(today, 1);
-  const thisWeekScheduled = Object.keys(db.therapists).filter((id) => thisWeekKeys.some((key) => isWorking((db.schedules[id] || {})[key]))).length;
-  const nextWeekScheduled = Object.keys(db.therapists).filter((id) => nextWeekScheduleKeys.some((key) => isWorking((db.schedules[id] || {})[key]))).length;
   const now = new Date();
   const currentMins = now.getHours() * 60 + now.getMinutes();
   const todayRevenue = todayAppts.reduce((s, a) => s + Number(a.price || 0), 0);
@@ -1268,10 +1356,12 @@ function renderOverview() {
     { title: "行前通知", items: preNoticeDue, tone: "teal", empty: "目前沒有行前通知" },
     { title: "完成但未回款", items: needsCollection, tone: "amber", empty: "回款資料完整" },
     { title: "缺服務紀錄", items: noRecordNotes, tone: "slate", empty: "服務紀錄完整" }
-  ].map((group) => `<div class="rounded-2xl border border-slate-200 bg-white p-4">
-    <div class="mb-3 flex items-center justify-between"><h4 class="font-black">${group.title}</h4><span class="badge bg-slate-100 text-slate-600">${group.items.length}</span></div>
-    <div class="space-y-2">${group.items.length ? group.items.map((a) => compactApptLine(a, group.tone)).join("") : `<p class="rounded-xl bg-slate-50 p-4 text-center text-sm font-bold text-slate-400">${group.empty}</p>`}</div>
-  </div>`).join("");
+  ].map((group) => collapsibleCardHtml({
+    title: group.title,
+    badge: `<span class="badge bg-slate-100 text-slate-600">${group.items.length}</span>`,
+    body: `<div class="space-y-2">${group.items.length ? group.items.map((a) => compactApptLine(a, group.tone)).join("") : `<p class="rounded-xl bg-slate-50 p-4 text-center text-sm font-bold text-slate-400">${group.empty}</p>`}</div>`,
+    className: "p-0"
+  })).join("");
   const approvalAlert = pendingApprovals.length ? `
     <div class="rounded-3xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
       <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -1290,70 +1380,74 @@ function renderOverview() {
     </div>` : "";
   $("view-overview").innerHTML = `
     ${approvalAlert}
-    <div class="grid gap-5 xl:grid-cols-[1.35fr_.9fr]">
+    <div class="overview-top-grid grid gap-5">
       <div class="card overflow-hidden">
         <div class="border-b bg-slate-950 p-6 text-white">
           <p class="text-xs font-black uppercase tracking-widest text-teal-300">今日營運指揮台</p>
           <div class="mt-2 flex flex-col justify-between gap-4 md:flex-row md:items-end">
             <div><h3 class="text-2xl font-black">${today.replaceAll("-", "/")}</h3><p class="mt-1 text-sm font-bold text-slate-300">${nextAppt ? `下一筆 ${nextAppt.time} · ${customerDisplay(nextAppt.phone, nextAppt.customerName)}` : "今日沒有後續預約"}</p></div>
             <div class="flex flex-wrap gap-2">
-              <button id="businessSummaryBtn" class="btn-light border-slate-700 bg-white px-4 py-2 text-slate-900 hover:bg-slate-100">營業總表</button>
-              <button id="changeHistoryBtn" class="btn-light border-slate-700 bg-white/10 px-4 py-2 text-white hover:bg-white/15">修改紀錄</button>
-              <button id="downloadBackupBtn" class="btn-light border-slate-700 bg-white/10 px-4 py-2 text-white hover:bg-white/15">下載備份</button>
               <button class="btn-teal" data-jump-tab="dispatch">預約系統</button>
-              <button class="btn-light border-slate-700 bg-slate-900 px-4 py-2 text-white hover:bg-slate-800" data-jump-tab="personnel" data-personnel-panel="schedule">修改班表</button>
+              <button id="businessSummaryBtn" class="btn-light border-slate-700 bg-white px-4 py-2 text-slate-900 hover:bg-slate-100">營業總表</button>
               <button id="refreshOverviewBtn" class="btn-light border-slate-700 bg-white/10 px-4 py-2 text-white hover:bg-white/15">更新資料</button>
             </div>
           </div>
           <p id="overviewSyncStatus" class="mt-4 text-xs font-black text-slate-400">${syncStatusText()}</p>
         </div>
-        <div class="grid grid-cols-2 gap-px bg-slate-200 xl:grid-cols-6">
-          <div class="bg-white p-5"><p class="text-xs font-black text-slate-500">今日預約</p><p class="mt-1 text-3xl font-black text-teal-700">${todayAppts.length}</p><p class="mt-1 text-xs font-bold text-slate-400">完成 ${finishedToday} 筆</p></div>
-          <div class="bg-white p-5"><p class="text-xs font-black text-slate-500">現場進行中</p><p class="mt-1 text-3xl font-black text-indigo-700">${ongoing.length}</p><p class="mt-1 text-xs font-bold text-slate-400">${ongoing[0] ? customerDisplay(ongoing[0].phone, ongoing[0].customerName) : "目前空檔"}</p></div>
-          <div class="bg-white p-5"><p class="text-xs font-black text-slate-500">即將到來</p><p class="mt-1 text-3xl font-black text-amber-700">${upcomingAll.length}</p><p class="mt-1 text-xs font-bold text-slate-400">${nextAppt ? `${nextAppt.time} ${customerDisplay(nextAppt.phone, nextAppt.customerName)}` : "今日無後續"}</p></div>
-          <div class="bg-white p-5"><p class="text-xs font-black text-slate-500">今日預估營收</p><p class="mt-1 text-3xl font-black text-rose-700">${money(todayRevenue)}</p><p class="mt-1 text-xs font-bold text-slate-400">平均 ${money(todayAppts.length ? Math.round(todayRevenue / todayAppts.length) : 0)}</p></div>
-          <div class="bg-white p-5"><p class="text-xs font-black text-slate-500">今日預估店抽</p><p class="mt-1 text-3xl font-black text-slate-900">${money(todayCompanyCut)}</p><p class="mt-1 text-xs font-bold text-slate-400">師傅抽成 ${money(todayRevenue - todayCompanyCut)}</p></div>
-          <div class="bg-white p-5">
+        <div class="overview-metric-stack grid grid-cols-1 gap-px bg-slate-200 md:grid-cols-2 xl:grid-cols-[1fr_1fr_.95fr]">
+          <div class="overview-booking-metric bg-white p-5">
+            <p class="text-xs font-black text-slate-500">今日預約</p>
+            <p class="mt-1 text-3xl font-black text-teal-700">${todayAppts.length}</p>
+            <p class="mt-1 text-xs font-bold text-slate-400">完成 ${finishedToday} 筆 · 未確認 ${todayUnconfirmed.length}</p>
+          </div>
+          <div class="overview-status-metric bg-white p-5">
+            <p class="text-xs font-black text-slate-500">現場狀態</p>
+            <p class="mt-1 text-3xl font-black text-indigo-700">${ongoing.length}</p>
+            <p class="mt-1 text-xs font-bold text-slate-400">${ongoing[0] ? `進行中 ${customerDisplay(ongoing[0].phone, ongoing[0].customerName)}` : (nextAppt ? `下一筆 ${nextAppt.time}` : "目前空檔")}</p>
+          </div>
+          <div class="overview-door-metric bg-white p-5 md:row-span-2">
             <div class="mb-2 flex items-center justify-between gap-2"><p class="text-xs font-black text-slate-500">大門密碼</p><span id="liveClock" class="rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-black text-slate-700"></span></div>
             <input id="doorPassword" class="input py-2 text-2xl" value="${esc(db.customers.SYS_DOOR_PWD?.notes || "")}">
             <div class="mt-2 grid grid-cols-3 gap-1.5"><button id="randomDoorBtn" class="btn-light px-2 py-2 text-[11px]">隨機</button><button id="doorHistoryBtn" class="btn-light px-2 py-2 text-[11px]">紀錄</button><button id="saveDoorBtn" class="btn-teal px-2 py-2 text-[11px]">儲存</button></div>
           </div>
-        </div>
-      </div>
-      <div class="grid gap-5">
-        <div class="card p-5">
-          <div class="mb-4 flex items-center justify-between gap-3">
-            <div><h3 class="font-black">今日確認狀態</h3><p class="text-xs font-bold text-slate-500">含客選待確認與正式預約進度</p></div>
-            <button class="btn-light px-3 py-2 text-xs" data-jump-tab="dispatch" data-dispatch-focus="board">處理</button>
+          <div class="overview-revenue-metric bg-white p-5">
+            <p class="text-xs font-black text-slate-500">今日營收</p>
+            <p class="mt-1 text-3xl font-black text-rose-700">${money(todayRevenue)}</p>
+            <p class="mt-1 text-xs font-bold text-slate-400">平均 ${money(todayAppts.length ? Math.round(todayRevenue / todayAppts.length) : 0)}</p>
           </div>
-          <div class="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border bg-slate-200">
-            <div class="bg-white p-4"><p class="text-xs font-black text-slate-500">未確認</p><p class="mt-1 text-3xl font-black text-amber-700">${todayUnconfirmed.length}</p></div>
-            <div class="bg-white p-4"><p class="text-xs font-black text-slate-500">已確認</p><p class="mt-1 text-3xl font-black text-teal-700">${todayConfirmed.length}</p></div>
-            <div class="bg-white p-4"><p class="text-xs font-black text-slate-500">客選待處理</p><p class="mt-1 text-3xl font-black text-indigo-700">${todayPendingSelections.length}</p></div>
-            <div class="bg-white p-4"><p class="text-xs font-black text-slate-500">行前已通知</p><p class="mt-1 text-3xl font-black text-violet-700">${todayPreNoticeDone.length}</p></div>
+          <div class="overview-remittance-metric bg-white p-5">
+            <p class="text-xs font-black text-slate-500">今日回帳</p>
+            <p class="mt-1 text-3xl font-black text-slate-900">${money(todayCompanyCut)}</p>
+            <p class="mt-1 text-xs font-bold text-slate-400">師傅抽成 ${money(todayRevenue - todayCompanyCut)}</p>
           </div>
-        </div>
-        <div class="card p-5">
-          <div class="mb-4 flex items-center justify-between gap-3">
-            <div><h3 class="font-black">排班概況</h3><p class="text-xs font-bold text-slate-500">以有填班表的人員計算</p></div>
-            <button class="btn-light px-3 py-2 text-xs" data-jump-tab="personnel" data-personnel-panel="schedule">班表</button>
-          </div>
-          <div class="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border bg-slate-200">
-            <div class="bg-white p-4"><p class="text-xs font-black text-slate-500">本週</p><p class="mt-1 text-3xl font-black text-slate-900">${thisWeekScheduled}</p></div>
-            <div class="bg-white p-4"><p class="text-xs font-black text-slate-500">下週</p><p class="mt-1 text-3xl font-black text-slate-900">${nextWeekScheduled}</p></div>
+          <div class="overview-confirm-strip bg-slate-50 p-4 md:col-span-2 xl:col-span-3">
+            <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div class="flex flex-wrap gap-2 text-xs font-black">
+                <span class="rounded-full bg-amber-50 px-3 py-1 text-amber-700">未確認 ${todayUnconfirmed.length}</span>
+                <span class="rounded-full bg-teal-50 px-3 py-1 text-teal-700">已確認 ${todayConfirmed.length}</span>
+                <span class="rounded-full bg-indigo-50 px-3 py-1 text-indigo-700">客選待處理 ${todayPendingSelections.length}</span>
+                <span class="rounded-full bg-violet-50 px-3 py-1 text-violet-700">行前已通知 ${todayPreNoticeDone.length}</span>
+              </div>
+              <button class="btn-light px-3 py-2 text-xs" data-jump-tab="dispatch" data-dispatch-focus="board">處理今日預約</button>
+            </div>
           </div>
         </div>
       </div>
     </div>
-    <div class="card p-5">
-      <div class="mb-4 flex items-center justify-between"><div><h3 class="font-black">當日排班按摩師</h3><p class="text-xs font-bold text-slate-500">11:00 到隔日 02:00，紅線為目前時間</p></div><span class="badge bg-teal-50 text-teal-700">${Object.keys(db.therapists).filter((id) => isWorking((db.schedules[id] || {})[today])).length} 人</span></div>
-      ${dailyScheduleBoardHtml(today)}
-    </div>
+    ${collapsibleCardHtml({
+      title: "當日排班按摩師",
+      desc: "11:00 到隔日 02:00，紅線為目前時間",
+      badge: `<span class="badge bg-teal-50 text-teal-700">${Object.keys(db.therapists).filter((id) => isWorking((db.schedules[id] || {})[today])).length} 人</span>`,
+      body: dailyScheduleBoardHtml(today)
+    })}
     <div class="grid gap-5 xl:grid-cols-[1.15fr_.85fr]">
-      <div class="card overflow-hidden">
-        <div class="flex items-center justify-between border-b bg-white px-5 py-4"><div><h3 class="font-black">今日流程</h3><p class="text-xs font-bold text-slate-500">點任一筆可進入預約系統修改</p></div><span class="badge bg-teal-50 text-teal-700">${todayAppts.length} 筆</span></div>
-        <div>${todayTimeline}</div>
-      </div>
+      ${collapsibleCardHtml({
+        title: "今日流程",
+        desc: "點任一筆可進入預約系統修改",
+        badge: `<span class="badge bg-teal-50 text-teal-700">${todayAppts.length} 筆</span>`,
+        body: todayTimeline,
+        className: "overflow-hidden"
+      })}
       <div class="space-y-5">${taskCards}</div>
     </div>
     `;
@@ -1381,8 +1475,6 @@ function renderOverview() {
   };
   $("view-overview").querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => openAppointmentDetailPage(btn.dataset.openAppt));
   $("businessSummaryBtn").onclick = () => openDailyBusinessSummary();
-  $("changeHistoryBtn").onclick = openChangeHistoryModal;
-  $("downloadBackupBtn").onclick = downloadCurrentBackup;
   $("refreshOverviewBtn").onclick = refreshDashboardData;
   renderLiveStatus();
 }
@@ -1970,13 +2062,6 @@ function renderAppointmentDetail() {
   section.querySelectorAll("[data-quick-confirm-selection]").forEach((btn) => btn.onclick = () => {
     confirmAction("快速確認預約？", "系統會直接建立已確認預約，並自動帶入課程價格、時長與房型。需要調整細節時請改用「編輯建立」。", () => quickConfirmClientSelection(btn.dataset.quickConfirmSelection), "快速確認");
   });
-  const lineTrialForm = $("lineTrialForm");
-  if (lineTrialForm) {
-    lineTrialForm.onsubmit = (event) => {
-      event.preventDefault();
-      createLineTrialRequest(lineTrialForm);
-    };
-  }
   section.querySelectorAll("[data-mark-stage]").forEach((btn) => btn.onclick = () => updateAppointmentStage(btn.dataset.markStage, btn.dataset.stage));
   section.querySelectorAll("[data-copy-notice]").forEach((btn) => btn.onclick = async () => {
     const target = $(btn.dataset.copyNotice);
@@ -2208,7 +2293,7 @@ function renderAppointmentListPage(appts) {
       </td>
     </tr>`;
   }).join("") : `<tr><td colspan="10" class="py-10 text-center font-bold text-slate-400">${appointmentRecordScope === "month" ? "本月無預約資料" : "今日無預約資料"}</td></tr>`;
-  return `${bookingWorkbenchIntroHtml(monthAppts, pendingSelections)}${lineTrialPanelHtml()}${appointmentQueryPanelHtml()}${pendingSelectionPanel}${bookingStageBoardHtml(monthAppts)}<div id="appointmentRecordsPanel" class="card scroll-mt-20 p-5">
+  return `${bookingWorkbenchIntroHtml(monthAppts, pendingSelections)}${appointmentQueryPanelHtml()}${pendingSelectionPanel}${bookingStageBoardHtml(monthAppts)}<div id="appointmentRecordsPanel" class="card scroll-mt-20 p-5">
     <div class="mb-5 flex flex-col justify-between gap-4 border-b pb-5 sm:flex-row sm:items-center">
       <div><h3 class="text-lg font-black">${listTitle}</h3><p class="text-sm font-bold text-slate-500">${listDesc}</p></div>
       <button class="btn-light" data-toggle-appointment-scope>${toggleText}</button>
@@ -2695,7 +2780,10 @@ function renderPersonnel() {
     </div>
     <div class="card overflow-hidden">
       <div class="border-b bg-slate-50 p-5"><h3 class="font-black">在職人員資料庫</h3></div>
-      <div class="table-wrap rounded-none border-0">
+      <div class="staff-mobile-grid hidden p-4">
+        ${staffMobileCardsHtml()}
+      </div>
+      <div class="staff-desktop-table table-wrap rounded-none border-0">
         <table>
           <thead><tr><th>編號</th><th>暱稱 / 姓名</th><th>基本資料</th><th>專長</th><th>密碼</th><th>操作</th></tr></thead>
           <tbody>${Object.entries(db.therapists).map(([id, t]) => `<tr>
@@ -2724,9 +2812,14 @@ function renderPersonnel() {
     </div>`;
   const adminPanel = `
     <div class="card overflow-hidden">
-      <div class="border-b bg-slate-50 p-5"><h3 class="font-black">系統管理員</h3><p class="mt-1 text-sm font-bold text-slate-500">新增權限與名單管理整併於同一區塊。</p></div>
-      <div class="border-b p-5"><form id="adminForm" class="grid gap-4 md:grid-cols-[1fr_1fr_1fr_1fr_auto] md:items-end"><input name="id" class="input" placeholder="帳號"><input name="name" class="input" placeholder="姓名"><input name="email" class="input" placeholder="Email"><input name="pin" class="input" inputmode="numeric" autocomplete="off" placeholder="密碼 PIN"><button class="btn-primary px-5 py-3">建立</button></form></div>
-      <div class="table-wrap rounded-none border-0"><table><thead><tr><th>帳號</th><th>姓名</th><th>密碼</th><th>Email</th><th>操作</th></tr></thead><tbody>${Object.entries(db.admins).map(([id, a]) => `<tr><td class="font-black">${esc(id)}</td><td>${esc(a.name)}</td><td><span class="badge bg-slate-100 text-slate-700">${esc(cleanPin(a.pin))}</span></td><td>${esc(a.email || "無")}</td><td class="space-x-2"><button data-edit-admin="${esc(id)}" class="btn-light px-3 py-1 text-xs">編輯</button>${id === "admin" ? `<span class="text-xs font-bold text-slate-400">預設不可刪</span>` : `<button data-delete-admin="${esc(id)}" class="rounded-lg bg-rose-50 px-3 py-1 text-xs font-black text-rose-700">刪除</button>`}</td></tr>`).join("")}</tbody></table></div>
+      <div class="flex flex-col justify-between gap-3 border-b bg-slate-50 p-5 sm:flex-row sm:items-center">
+        <div><h3 class="font-black">系統管理員</h3><p class="mt-1 text-sm font-bold text-slate-500">管理後台登入權限，需要新增時再開啟表單。</p></div>
+        <button id="openAdminCreateBtn" class="btn-teal">新增管理員</button>
+      </div>
+      <div class="admin-mobile-grid hidden p-4">
+        ${adminMobileCardsHtml()}
+      </div>
+      <div class="admin-desktop-table table-wrap rounded-none border-0"><table><thead><tr><th>帳號</th><th>姓名</th><th>密碼</th><th>Email</th><th>操作</th></tr></thead><tbody>${Object.entries(db.admins).map(([id, a]) => `<tr><td class="font-black">${esc(id)}</td><td>${esc(a.name)}</td><td><span class="badge bg-slate-100 text-slate-700">${esc(cleanPin(a.pin))}</span></td><td>${esc(a.email || "無")}</td><td class="space-x-2"><button data-edit-admin="${esc(id)}" class="btn-light px-3 py-1 text-xs">編輯</button>${id === "admin" ? `<span class="text-xs font-bold text-slate-400">預設不可刪</span>` : `<button data-delete-admin="${esc(id)}" class="rounded-lg bg-rose-50 px-3 py-1 text-xs font-black text-rose-700">刪除</button>`}</td></tr>`).join("")}</tbody></table></div>
     </div>`;
   section.innerHTML = `
     <div class="card p-5">
@@ -2766,20 +2859,7 @@ function renderPersonnel() {
     return;
   }
   if (activePersonnelPanel === "admins") {
-    $("adminForm").onsubmit = async (e) => {
-      e.preventDefault();
-      const data = Object.fromEntries(new FormData(e.currentTarget).entries());
-      data.id = String(data.id || "").trim();
-      data.name = String(data.name || "").trim();
-      data.email = String(data.email || "").trim();
-      data.pin = cleanPin(data.pin);
-      if (!data.id || !data.name || !data.pin) return showSnackbar("管理員資料必填");
-      setFormBusy(e.currentTarget, true);
-      db.admins[data.id] = { name: data.name, pin: data.pin, email: data.email };
-      await saveCloudActions([{ action: "saveCustomer", data: { phone: `SYS_ADMIN_${data.id}`, name: data.name, notes: sheetText(data.pin), records: [{ email: data.email }] } }], "管理員權限已寫入雲端");
-      setFormBusy(e.currentTarget, false);
-      renderAll();
-    };
+    $("openAdminCreateBtn").onclick = openAdminCreator;
     section.querySelectorAll("[data-edit-admin]").forEach((btn) => btn.onclick = () => openAdminEditor(btn.dataset.editAdmin));
     section.querySelectorAll("[data-delete-admin]").forEach((btn) => btn.onclick = () => confirmAction("刪除管理員", "此帳號將無法登入。", async () => {
       const id = btn.dataset.deleteAdmin;
@@ -2842,6 +2922,32 @@ function openTherapistEditor(id) {
   wireTherapistBioGenerator("therapistEditForm");
 }
 
+async function saveAdminForm(form, { closeAfter = false } = {}) {
+  const data = Object.fromEntries(new FormData(form).entries());
+  data.id = String(data.id || "").trim();
+  data.name = String(data.name || "").trim();
+  data.email = String(data.email || "").trim();
+  data.pin = cleanPin(data.pin);
+  if (!data.id || !data.name || !data.pin) {
+    showSnackbar("管理員資料必填");
+    return;
+  }
+  setFormBusy(form, true);
+  db.admins[data.id] = { name: data.name, pin: data.pin, email: data.email };
+  await saveCloudActions([{ action: "saveCustomer", data: { phone: `SYS_ADMIN_${data.id}`, name: data.name, notes: sheetText(data.pin), records: [{ email: data.email }] } }], "管理員權限已寫入雲端");
+  setFormBusy(form, false);
+  if (closeAfter) closeModal();
+  renderAll();
+}
+
+function openAdminCreator() {
+  showModal(`<div class="modal max-w-lg"><h3 class="mb-5 border-b pb-4 text-xl font-black">新增管理員權限</h3><form id="adminCreateForm" class="space-y-4"><div><label class="label">帳號</label><input name="id" class="input" placeholder="帳號"></div><div><label class="label">姓名</label><input name="name" class="input" placeholder="姓名"></div><div><label class="label">Email</label><input name="email" class="input" placeholder="Email"></div><div><label class="label">密碼 PIN</label><input name="pin" class="input" inputmode="numeric" autocomplete="off" placeholder="4位數字"><p class="mt-2 text-xs font-bold text-slate-500">PIN 會以文字保存，開頭 0 不會被移除。</p></div><div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">建立</button></div></form></div>`);
+  $("adminCreateForm").onsubmit = async (event) => {
+    event.preventDefault();
+    await saveAdminForm(event.currentTarget, { closeAfter: true });
+  };
+}
+
 function openAdminEditor(id) {
   const admin = db.admins[id];
   if (!admin) return;
@@ -2866,6 +2972,50 @@ function openAdminEditor(id) {
     closeModal();
     renderAll();
   };
+}
+
+function adminMobileCardsHtml() {
+  return Object.entries(db.admins).map(([id, a]) => `<article class="admin-mobile-card">
+    <div class="flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <p class="font-mono text-xs font-black text-slate-400">${esc(id)}</p>
+        <h4 class="mt-1 truncate text-lg font-black text-slate-900">${esc(a.name || "未填寫")}</h4>
+        <p class="mt-0.5 truncate text-xs font-bold text-slate-500">${esc(a.email || "無 Email")}</p>
+      </div>
+      <span class="badge bg-slate-100 text-slate-700">PIN ${esc(cleanPin(a.pin))}</span>
+    </div>
+    <div class="mt-4 grid ${id === "admin" ? "grid-cols-1" : "grid-cols-2"} gap-2">
+      <button data-edit-admin="${esc(id)}" class="btn-light px-3 py-2 text-xs">編輯</button>
+      ${id === "admin" ? `<span class="rounded-lg bg-slate-50 px-3 py-2 text-center text-xs font-black text-slate-400">預設不可刪</span>` : `<button data-delete-admin="${esc(id)}" class="rounded-lg bg-rose-50 px-3 py-2 text-xs font-black text-rose-700">刪除</button>`}
+    </div>
+  </article>`).join("");
+}
+
+function staffMobileCardsHtml() {
+  return Object.entries(db.therapists).map(([id, t]) => `<article class="staff-mobile-card">
+    <div class="flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <p class="font-mono text-xs font-black text-slate-400">${esc(id)}</p>
+        <h4 class="mt-1 truncate text-lg font-black text-slate-900">${esc(t.nickname || t.name || "未填寫")}</h4>
+        <p class="mt-0.5 truncate text-xs font-bold text-slate-500">${esc(t.name || "未填真實姓名")}</p>
+      </div>
+      <span class="badge bg-slate-100 text-slate-700">PIN ${esc(cleanPin(t.pin))}</span>
+    </div>
+    <div class="mt-4 grid gap-3 text-sm">
+      <div>
+        <p class="text-[11px] font-black text-slate-400">基本資料</p>
+        <p class="mt-1 font-bold text-slate-700">${esc(therapistDisplayMeta(t) || "未填寫")}</p>
+      </div>
+      <div>
+        <p class="text-[11px] font-black text-slate-400">專長</p>
+        <p class="mt-1 font-bold text-slate-700">${esc(t.specialties || "未填寫")}</p>
+      </div>
+    </div>
+    <div class="mt-4 grid grid-cols-2 gap-2">
+      <button data-edit-therapist="${esc(id)}" class="btn-light px-3 py-2 text-xs">編輯</button>
+      <button data-delete-therapist="${esc(id)}" class="rounded-lg bg-rose-50 px-3 py-2 text-xs font-black text-rose-700">刪除</button>
+    </div>
+  </article>`).join("");
 }
 
 function renderReport() {
@@ -2983,6 +3133,115 @@ function exportReportCSV() {
     });
   }
   downloadCSV(csv, `報表_${activeReportPanel}_${start}_至_${end}.csv`);
+}
+
+function renderSystem() {
+  const section = $("view-system");
+  if (!section) return;
+  const stats = dbStats();
+  const backups = listLocalBackups().slice(0, 8);
+  const loginRows = adminLoginRecords(80);
+  const doorRows = [...(db.customers.SYS_DOOR_PWD?.records || [])].reverse().slice(0, 20);
+  const courseRows = Object.entries(COURSE_CATALOG).map(([key, course]) => `<tr>
+    <td class="font-mono font-black">${esc(key)}</td>
+    <td class="font-black">${esc(course.name)}</td>
+    <td class="text-right font-black">${course.duration} 分</td>
+    <td class="text-right font-black text-rose-700">${money(course.price)}</td>
+    <td class="text-right font-black text-indigo-700">${money(course.therapistCut)}</td>
+    <td class="text-right font-black text-teal-700">${money(course.price - course.therapistCut)}</td>
+  </tr>`).join("");
+  const backupRows = backups.length ? backups.map((item) => `<tr>
+    <td class="font-mono font-black">${esc(backupLabelTime(item.at))}</td>
+    <td><div class="font-black">${esc(item.reason || "資料修改前")}</div><div class="mt-1 text-xs font-bold text-slate-400">${esc(item.key.replace(`${LOCAL_BACKUP_PREFIX}-`, ""))}</div></td>
+    <td class="text-right font-black">${item.stats.appointments}</td>
+    <td class="text-right font-black">${item.stats.customers}</td>
+    <td class="text-right"><button class="btn-light px-3 py-1 text-xs" data-download-backup="${esc(item.key)}">下載</button></td>
+  </tr>`).join("") : `<tr><td colspan="5" class="py-10 text-center font-bold text-slate-400">尚無本機修改快照</td></tr>`;
+  const loginTableRows = loginRows.length ? loginRows.map((item) => `<tr>
+    <td class="font-mono font-black">${esc(backupLabelTime(item.at))}</td>
+    <td><div class="font-black">${esc(item.adminName || item.adminId || "未知管理員")}</div><div class="mt-1 font-mono text-xs font-bold text-slate-400">${esc(item.adminId || "")}</div></td>
+    <td class="font-bold text-slate-600">${esc(item.source || "local")}</td>
+    <td class="max-w-[360px] truncate text-xs font-bold text-slate-500">${esc(item.device || "未記錄")}</td>
+  </tr>`).join("") : `<tr><td colspan="4" class="py-10 text-center font-bold text-slate-400">尚無後台管理登入紀錄</td></tr>`;
+  const doorTableRows = doorRows.length ? doorRows.map((item) => `<tr>
+    <td class="font-mono font-black">${esc(item.at || "")}</td>
+    <td class="font-mono text-lg font-black">${esc(item.value || "")}</td>
+    <td class="font-bold text-slate-600">${esc(item.reason || "未記錄")}</td>
+  </tr>`).join("") : `<tr><td colspan="3" class="py-10 text-center font-bold text-slate-400">尚無大門密碼修改紀錄</td></tr>`;
+
+  section.innerHTML = `
+    <div class="grid gap-5 xl:grid-cols-[1.15fr_.85fr]">
+      <div class="card p-5">
+        <div class="mb-5 flex flex-col justify-between gap-4 border-b pb-5 lg:flex-row lg:items-start">
+          <div>
+            <span class="badge bg-slate-100 text-slate-700">系統維護</span>
+            <h3 class="mt-2 text-2xl font-black">資料與同步</h3>
+            <p class="mt-1 text-sm font-bold text-slate-500">集中管理備份、修改紀錄、同步狀態與系統資料。</p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button id="systemRefreshDataBtn" class="btn-light">重新同步</button>
+            <button id="systemOpenHistoryBtn" class="btn-light">修改紀錄</button>
+            <button id="systemDownloadBackupBtn" class="btn-teal">下載備份</button>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
+          ${metric("按摩師", stats.therapists)}
+          ${metric("預約", stats.appointments, "text-teal-700")}
+          ${metric("顧客", stats.customers, "text-indigo-700")}
+          ${metric("班表人員", stats.schedules, "text-amber-700")}
+        </div>
+        <div class="mt-5 grid gap-4 lg:grid-cols-3">
+          <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">同步狀態</p><p class="mt-2 text-lg font-black ${syncMeta.pending ? "text-amber-700" : "text-teal-700"}">${syncMeta.pending ? "本機待同步" : "雲端同步"}</p></div>
+          <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">最後同步</p><p class="mt-2 text-sm font-black text-slate-700">${esc(syncMeta.lastSync ? backupLabelTime(syncMeta.lastSync) : "尚未更新")}</p></div>
+          <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">資料來源</p><p class="mt-2 text-sm font-black text-slate-700">${esc(syncMeta.source || "local")}${syncMeta.reason ? ` · ${esc(syncMeta.reason)}` : ""}</p></div>
+        </div>
+      </div>
+      <div class="card p-5">
+        <div class="mb-4 flex items-center justify-between gap-3 border-b pb-4">
+          <div><h3 class="font-black">後台管理登入紀錄</h3><p class="text-xs font-bold text-slate-500">僅記錄管理員登入，不含師傅前台。</p></div>
+          <span class="badge bg-slate-100 text-slate-700">${loginRows.length}</span>
+        </div>
+        <div class="table-wrap"><table><thead><tr><th>時間</th><th>管理員</th><th>來源</th><th>裝置</th></tr></thead><tbody>${loginTableRows}</tbody></table></div>
+      </div>
+    </div>
+    <div class="grid gap-5 xl:grid-cols-2">
+      ${lineTrialPanelHtml()}
+      <div class="card p-5">
+        <div class="mb-4 flex items-center justify-between gap-3 border-b pb-4">
+          <div><h3 class="font-black">最近修改紀錄</h3><p class="text-xs font-bold text-slate-500">更完整的復原流程請按「修改紀錄」。</p></div>
+          <button class="btn-light px-3 py-2 text-xs" id="systemOpenHistoryBtn2">查看全部</button>
+        </div>
+        <div class="table-wrap"><table><thead><tr><th>時間</th><th>來源</th><th class="text-right">預約</th><th class="text-right">顧客</th><th class="text-right">操作</th></tr></thead><tbody>${backupRows}</tbody></table></div>
+      </div>
+      <div class="card p-5">
+        <div class="mb-4 flex items-center justify-between gap-3 border-b pb-4">
+          <div><h3 class="font-black">大門密碼紀錄</h3><p class="text-xs font-bold text-slate-500">目前密碼仍在總覽快速設定。</p></div>
+          <span class="badge bg-teal-50 text-teal-700">${esc(db.customers.SYS_DOOR_PWD?.notes || "未設定")}</span>
+        </div>
+        <div class="table-wrap"><table><thead><tr><th>時間</th><th>密碼</th><th>來源</th></tr></thead><tbody>${doorTableRows}</tbody></table></div>
+      </div>
+    </div>
+    <div class="card p-5">
+      <div class="mb-4 border-b pb-4">
+        <h3 class="font-black">營運規則檢視</h3>
+        <p class="text-xs font-bold text-slate-500">目前先集中顯示課程、金額與抽成；下一階段可改成可編輯設定。</p>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>代碼</th><th>課程</th><th class="text-right">時長</th><th class="text-right">金額</th><th class="text-right">師傅抽成</th><th class="text-right">店家應收</th></tr></thead><tbody>${courseRows}</tbody></table></div>
+    </div>`;
+
+  $("systemRefreshDataBtn").onclick = refreshDashboardData;
+  $("systemOpenHistoryBtn").onclick = openChangeHistoryModal;
+  $("systemOpenHistoryBtn2").onclick = openChangeHistoryModal;
+  $("systemDownloadBackupBtn").onclick = downloadCurrentBackup;
+  const lineTrialForm = $("lineTrialForm");
+  if (lineTrialForm) {
+    lineTrialForm.onsubmit = (event) => {
+      event.preventDefault();
+      createLineTrialRequest(lineTrialForm);
+    };
+  }
+  section.querySelectorAll("[data-download-backup]").forEach((btn) => btn.onclick = () => downloadBackupEntry(btn.dataset.downloadBackup));
+  hydrateResponsiveTables(section);
 }
 
 function renderPortal() {
@@ -3114,6 +3373,7 @@ async function handleLogin() {
     $("therapistNav").classList.add("hidden");
     $("roleLabel").textContent = "管理員";
     enterDashboard("overview");
+    recordAdminLogin(id);
     if (cleanPin(db.admins[id]?.pin) !== cleanPin(pin)) showSnackbar("已用舊格式密碼登入，請至人事頁編輯後重新儲存 PIN");
   } else if (pinMatches(db.therapists[id]?.pin, pin)) {
     currentUser = { id, name: therapistName(id), role: "therapist" };
@@ -3157,6 +3417,7 @@ function changeMonth(offset) {
 }
 
 function bindEvents() {
+  renderAppShellNavigation();
   $("loginBtn").addEventListener("click", handleLogin);
   $("adminPin").addEventListener("keydown", (e) => { if (e.key === "Enter") handleLogin(); });
   $("logoutBtn").addEventListener("click", logout);
@@ -3165,21 +3426,27 @@ function bindEvents() {
   $("openSidebarBtn").addEventListener("click", showSidebar);
   $("closeSidebarBtn").addEventListener("click", hideSidebar);
   $("sidebarOverlay").addEventListener("click", hideSidebar);
-  document.querySelectorAll("[data-tab]").forEach((tabButton) => {
-    tabButton.addEventListener("click", () => switchTab(tabButton.dataset.tab, { clearAppointment: tabButton.dataset.tab === "dispatch" }));
-  });
-  document.querySelectorAll("[data-mobile-tab]").forEach((tabButton) => {
-    tabButton.addEventListener("click", () => switchTab(tabButton.dataset.mobileTab, { clearAppointment: tabButton.dataset.mobileTab === "dispatch" }));
-  });
   document.addEventListener("click", (event) => {
-    const jumpButton = event.target.closest?.("[data-jump-tab]");
+    const tabButton = closestFromEvent(event, "[data-tab]");
+    if (tabButton) {
+      event.preventDefault();
+      switchTab(tabButton.dataset.tab, { clearAppointment: tabButton.dataset.tab === "dispatch" });
+      return;
+    }
+    const mobileTabButton = closestFromEvent(event, "[data-mobile-tab]");
+    if (mobileTabButton) {
+      event.preventDefault();
+      switchTab(mobileTabButton.dataset.mobileTab, { clearAppointment: mobileTabButton.dataset.mobileTab === "dispatch" });
+      return;
+    }
+    const jumpButton = closestFromEvent(event, "[data-jump-tab]");
     if (jumpButton) {
       event.preventDefault();
       if (jumpButton.dataset.personnelPanel) activePersonnelPanel = jumpButton.dataset.personnelPanel;
       switchTab(jumpButton.dataset.jumpTab, { clearAppointment: jumpButton.dataset.jumpTab === "dispatch", focus: jumpButton.dataset.dispatchFocus || "" });
       return;
     }
-    const addButton = event.target.closest?.("[data-add-appointment]");
+    const addButton = closestFromEvent(event, "[data-add-appointment]");
     if (!addButton) return;
     event.preventDefault();
     openAppointmentModal({ therapistId: addButton.dataset.therapist, date: addButton.dataset.date, time: addButton.dataset.time || "" });
