@@ -716,6 +716,80 @@ function clientSelectionUrl({ date, time, service, therapistIds = [] }) {
   return url.href;
 }
 
+function parseLineTrialMessage(text = "") {
+  const body = String(text || "").trim();
+  const today = todayKey();
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  let date = body.includes("明天") ? toDateKey(tomorrow) : today;
+  const dateMatch = body.match(/(\d{1,2})[/-](\d{1,2})/);
+  if (dateMatch) date = `${currentYear}-${String(dateMatch[1]).padStart(2, "0")}-${String(dateMatch[2]).padStart(2, "0")}`;
+  const colonTime = body.match(/(?:上午|下午|晚上|晚間|今晚|中午)?\s*(\d{1,2})[:：](\d{2})/);
+  const pointTime = body.match(/(?:上午|下午|晚上|晚間|今晚|中午)?\s*(\d{1,2})\s*點\s*(半|(\d{1,2})分?)?/);
+  const timeMatch = colonTime || pointTime;
+  let time = "";
+  if (timeMatch) {
+    let hour = Number(timeMatch[1]);
+    const minute = timeMatch[2] === "半" ? "30" : String(timeMatch[2] || timeMatch[3] || "00").replace(/\D/g, "").padStart(2, "0");
+    if (/(下午|晚上|晚間|今晚)/.test(body) && hour < 12) hour += 12;
+    time = `${String(hour).padStart(2, "0")}:${minute.slice(0, 2)}`;
+  }
+  const serviceKey = Object.entries(COURSE_CATALOG).find(([, course]) => body.includes(course.name.split(" ")[0]) || body.includes(String(course.duration)))?.[0] || "C120";
+  return { date, time, service: serviceKey, rawText: body };
+}
+
+async function createLineTrialRequest(form) {
+  const data = Object.fromEntries(new FormData(form).entries());
+  const parsed = parseLineTrialMessage(data.message);
+  const id = `LINE-${Date.now().toString(36).toUpperCase()}`;
+  const selection = {
+    id,
+    source: "line-trial",
+    status: "pending",
+    date: data.date || parsed.date,
+    time: data.time || parsed.time,
+    service: data.service || parsed.service,
+    customerName: String(data.customerName || "").trim(),
+    customerContact: String(data.contact || `LINE-${id}`).trim(),
+    customerNote: parsed.rawText,
+    selectedTherapistId: "",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  if (!selection.time) {
+    $("lineTrialError").textContent = "請至少在訊息或欄位中提供預約時間。";
+    $("lineTrialError").classList.remove("hidden");
+    return;
+  }
+  db.clientSelections[id] = selection;
+  db.customers[clientSelectionKey(id)] = {
+    name: `LINE測試-${selection.customerName || selection.customerContact}`,
+    notes: JSON.stringify(selection),
+    records: []
+  };
+  await saveCloudActions([{ action: "saveCustomer", data: { phone: clientSelectionKey(id), ...db.customers[clientSelectionKey(id)] } }], "LINE 測試需求已寫入待處理");
+  renderDispatch();
+}
+
+function lineTrialPanelHtml() {
+  const serviceOptions = Object.entries(COURSE_CATALOG).map(([key, course]) => `<option value="${key}">${esc(course.name)}</option>`).join("");
+  return `<div class="card p-5">
+    <div class="mb-4 flex flex-col justify-between gap-3 border-b pb-4 sm:flex-row sm:items-start">
+      <div><span class="badge bg-emerald-50 text-emerald-700">LINE 測試版</span><h3 class="mt-2 font-black">模擬 LINE 預約需求</h3><p class="mt-1 text-sm font-bold text-slate-500">先不用正式串 token，測試客人訊息進後台後會長什麼樣子。</p></div>
+    </div>
+    <form id="lineTrialForm" class="grid gap-3 lg:grid-cols-[1.3fr_.7fr_.7fr_.8fr_auto] lg:items-end">
+      <div><label class="label">客人訊息</label><input name="message" class="input" placeholder="例：想預約今晚 20:00 C課程120分"></div>
+      <div><label class="label">聯絡 / LINE ID</label><input name="contact" class="input" placeholder="LINE user"></div>
+      <div><label class="label">顧客姓名</label><input name="customerName" class="input" placeholder="可空白"></div>
+      <div><label class="label">課程</label><select name="service" class="input">${serviceOptions}</select></div>
+      <button class="btn-teal px-4 py-3">送入待處理</button>
+      <input name="date" type="hidden" value="">
+      <input name="time" type="hidden" value="">
+    </form>
+    <p id="lineTrialError" class="mt-3 hidden text-sm font-black text-rose-600"></p>
+  </div>`;
+}
+
 function appointmentQueryBoardHtml(dateKey, queryTime = "") {
   const total = SCHEDULE_WINDOW_END - SCHEDULE_WINDOW_START;
   const queryNorm = normalizedQueryMinute(queryTime);
@@ -729,13 +803,13 @@ function appointmentQueryBoardHtml(dateKey, queryTime = "") {
   })).filter((row) => isWorking(row.shift)).sort((a, b) => a.shift.localeCompare(b.shift));
   if (!working.length) return `<div class="rounded-xl bg-white py-12 text-center font-bold text-slate-400">當日無排班</div>`;
   const axis = ["11:00", "14:00", "17:00", "20:00", "23:00", "02:00"].map((label, index) => `<span class="absolute -translate-x-1/2" style="left:${(index / 5) * 100}%">${label}</span>`).join("");
-  return `<div class="card p-5">
+  return `<div class="card p-5 appointment-time-board">
     <div class="mb-4 flex flex-col justify-between gap-3 lg:flex-row lg:items-end">
       <div><h3 class="font-black">當日師傅時段</h3><p class="text-xs font-bold text-slate-500">綠色為上班時段，橘色為已有預約；點綠色空檔可新增預約，點橘色預約可修改紀錄。</p></div>
       <div class="flex flex-wrap gap-2 text-xs font-black text-slate-500"><span class="badge bg-teal-50 text-teal-700">上班</span><span class="badge bg-amber-50 text-amber-700">已有預約</span>${queryTime ? `<span class="badge bg-indigo-50 text-indigo-700">查詢 ${esc(queryTime)}</span>` : ""}</div>
     </div>
     <div class="space-y-3">
-      <div class="grid grid-cols-[116px_1fr_92px] gap-3 px-1 text-[10px] font-black text-slate-400">
+      <div class="appointment-time-head grid grid-cols-[116px_1fr_92px] gap-3 px-1 text-[10px] font-black text-slate-400">
         <span>按摩師</span><div class="relative h-5">${axis}</div><span class="text-right">狀態</span>
       </div>
       ${working.map((row) => {
@@ -765,10 +839,10 @@ function appointmentQueryBoardHtml(dateKey, queryTime = "") {
         }).join("");
         const queryLine = queryPercent === null || queryPercent < 0 || queryPercent > 100 ? "" : `<span class="absolute -top-1 bottom-0 z-20 w-px bg-indigo-500" style="left:${queryPercent}%"><span class="absolute -top-5 -translate-x-1/2 rounded bg-indigo-600 px-1.5 py-0.5 text-[10px] font-black text-white">${esc(queryTime)}</span></span>`;
         const nowLine = todayPercent === null ? "" : `<span class="absolute -top-1 bottom-0 z-20 w-px bg-rose-500" style="left:${todayPercent}%"></span>`;
-        return `<div class="grid grid-cols-[116px_1fr_92px] items-center gap-3 rounded-xl border border-slate-100 bg-white p-3">
-          <div><p class="truncate text-sm font-black">${esc(row.name)}</p><p class="text-[10px] font-bold text-teal-700">${esc(row.shift)}</p></div>
-          <div class="relative h-11 rounded-xl bg-slate-100">${shiftBlocks}${appointmentBlocks}${nowLine}${queryLine}</div>
-          <div class="text-right"><span class="badge ${statusClass}">${status}</span></div>
+        return `<div class="appointment-time-row grid grid-cols-[116px_1fr_92px] items-center gap-3 rounded-xl border border-slate-100 bg-white p-3">
+          <div class="appointment-time-person"><p class="truncate text-sm font-black">${esc(row.name)}</p><p class="text-[10px] font-bold text-teal-700">${esc(row.shift)}</p></div>
+          <div class="appointment-time-track relative h-11 rounded-xl bg-slate-100">${shiftBlocks}${appointmentBlocks}${nowLine}${queryLine}</div>
+          <div class="appointment-time-status text-right"><span class="badge ${statusClass}">${status}</span></div>
         </div>`;
       }).join("")}
     </div>
@@ -780,6 +854,33 @@ function doorPasswordRecordHtml() {
   return records.length ? records.slice().reverse().map((r) => `<tr><td class="font-mono font-black">${esc(r.at || "")}</td><td class="font-black">${esc(r.value || "")}</td><td>${esc(r.reason || "手動更新")}</td></tr>`).join("") : `<tr><td colspan="3" class="py-8 text-center font-bold text-slate-400">尚無修改紀錄</td></tr>`;
 }
 
+function hydrateResponsiveTables(root = document) {
+  root.querySelectorAll(".table-wrap table").forEach((table) => {
+    if (table.querySelector("#scheduleHeader")) return;
+    const headers = Array.from(table.querySelectorAll("thead th")).map((th) => th.textContent.trim());
+    if (!headers.length) return;
+    table.closest(".table-wrap")?.classList.add("mobile-card-table");
+    table.querySelectorAll("tbody tr").forEach((row) => {
+      Array.from(row.children).forEach((cell, index) => {
+        if (!cell.hasAttribute("colspan")) cell.dataset.label = headers[index] || "";
+      });
+    });
+  });
+}
+
+function responsiveTableHtml(headers, rowsHtml, emptyColspan, extraClass = "") {
+  const headerHtml = headers.map((h) => `<th>${esc(h)}</th>`).join("");
+  responsiveTableHtml._cellIndex = 0;
+  const labeledRows = String(rowsHtml || "").replace(/<td(?![^>]*colspan)([^>]*)>/g, (match, attrs = "") => {
+    const index = responsiveTableHtml._cellIndex || 0;
+    const label = headers[index % headers.length] || "";
+    responsiveTableHtml._cellIndex = index + 1;
+    return `<td${attrs} data-label="${esc(label)}"`;
+  });
+  responsiveTableHtml._cellIndex = 0;
+  return `<div class="table-wrap mobile-card-table ${extraClass}"><table><thead><tr>${headerHtml}</tr></thead><tbody>${labeledRows || `<tr><td colspan="${emptyColspan || headers.length}" class="py-10 text-center font-bold text-slate-400">無資料</td></tr>`}</tbody></table></div>`;
+}
+
 function renderAll() {
   generateMonthData();
   renderOverview();
@@ -788,6 +889,7 @@ function renderAll() {
   renderPersonnel();
   renderReport();
   renderPortal();
+  hydrateResponsiveTables();
 }
 
 function focusDispatchTarget() {
@@ -809,6 +911,43 @@ function focusDispatchTarget() {
   });
 }
 
+function syncStatusText() {
+  if (syncMeta.pending) return "本機有待同步資料";
+  if (!syncMeta.lastSync) return "尚未更新";
+  const date = new Date(syncMeta.lastSync);
+  if (Number.isNaN(date.getTime())) return "尚未更新";
+  return `已更新 ${date.toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
+}
+
+async function refreshDashboardData() {
+  const button = $("refreshOverviewBtn");
+  if (button) {
+    button.disabled = true;
+    button.dataset.originalText = button.textContent;
+    button.textContent = "更新中...";
+  }
+  showSnackbar("正在更新雲端資料...");
+  await tryCloudSync();
+  renderAll();
+  showSnackbar(syncMeta.pending ? "此裝置有未同步資料，已保留本機版本" : "資料已更新");
+  if (button) {
+    button.disabled = false;
+    button.textContent = button.dataset.originalText || "更新資料";
+  }
+}
+
+function syncMobileBottomNav() {
+  const nav = $("mobileBottomNav");
+  if (!nav) return;
+  const isAdminView = currentUser?.role === "admin";
+  nav.classList.toggle("hidden", !isAdminView);
+  nav.querySelectorAll("[data-mobile-tab]").forEach((button) => {
+    const isActive = button.dataset.mobileTab === activeTab;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-current", isActive ? "page" : "false");
+  });
+}
+
 function switchTab(tab, options = {}) {
   if (tab === "schedule") {
     activePersonnelPanel = "schedule";
@@ -822,7 +961,8 @@ function switchTab(tab, options = {}) {
   document.querySelectorAll(".view").forEach((el) => el.classList.add("hidden"));
   $(`view-${tab}`)?.classList.remove("hidden");
   document.querySelectorAll(".nav-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === tab));
-  const titles = { overview: "總覽", dispatch: "預約作業台", customer: "顧客 CRM", personnel: "人事權限", report: "財務報表", portal: "個人中樞" };
+  syncMobileBottomNav();
+  const titles = { overview: "總覽", dispatch: "預約", customer: "顧客", personnel: "人事", report: "財務", portal: "個人中樞" };
   $("pageTitle").textContent = titles[tab] || "管理中樞";
   hideSidebar();
   renderAll();
@@ -915,8 +1055,13 @@ function renderOverview() {
           <p class="text-xs font-black uppercase tracking-widest text-teal-300">今日營運指揮台</p>
           <div class="mt-2 flex flex-col justify-between gap-4 md:flex-row md:items-end">
             <div><h3 class="text-2xl font-black">${today.replaceAll("-", "/")}</h3><p class="mt-1 text-sm font-bold text-slate-300">${nextAppt ? `下一筆 ${nextAppt.time} · ${customerDisplay(nextAppt.phone, nextAppt.customerName)}` : "今日沒有後續預約"}</p></div>
-            <div class="flex flex-wrap gap-2"><button class="btn-teal" data-jump-tab="dispatch">預約作業台</button><button class="btn-light border-slate-700 bg-slate-900 px-4 py-2 text-white hover:bg-slate-800" data-jump-tab="personnel" data-personnel-panel="schedule">修改班表</button></div>
+            <div class="flex flex-wrap gap-2">
+              <button class="btn-teal" data-jump-tab="dispatch">預約作業台</button>
+              <button class="btn-light border-slate-700 bg-slate-900 px-4 py-2 text-white hover:bg-slate-800" data-jump-tab="personnel" data-personnel-panel="schedule">修改班表</button>
+              <button id="refreshOverviewBtn" class="btn-light border-slate-700 bg-white/10 px-4 py-2 text-white hover:bg-white/15">更新資料</button>
+            </div>
           </div>
+          <p id="overviewSyncStatus" class="mt-4 text-xs font-black text-slate-400">${syncStatusText()}</p>
         </div>
         <div class="grid grid-cols-2 gap-px bg-slate-200 xl:grid-cols-6">
           <div class="bg-white p-5"><p class="text-xs font-black text-slate-500">今日預約</p><p class="mt-1 text-3xl font-black text-teal-700">${todayAppts.length}</p><p class="mt-1 text-xs font-bold text-slate-400">完成 ${finishedToday} 筆</p></div>
@@ -991,6 +1136,7 @@ function renderOverview() {
     showModal(`<div class="modal max-w-2xl"><h3 class="mb-5 border-b pb-4 text-xl font-black">大門密碼修改紀錄</h3><div class="table-wrap"><table><thead><tr><th>時間</th><th>密碼</th><th>來源</th></tr></thead><tbody>${doorPasswordRecordHtml()}</tbody></table></div><div class="mt-5 flex justify-end border-t pt-4"><button class="btn-light" data-close-modal>關閉</button></div></div>`);
   };
   $("view-overview").querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => openAppointmentDetailPage(btn.dataset.openAppt));
+  $("refreshOverviewBtn").onclick = refreshDashboardData;
   renderLiveStatus();
 }
 
@@ -1564,6 +1710,11 @@ function renderAppointmentDetail() {
       selectionId: selection.id
     });
   });
+  section.querySelectorAll("[data-line-selection-query]").forEach((btn) => btn.onclick = () => {
+    const selection = db.clientSelections[btn.dataset.lineSelectionQuery];
+    if (!selection) return;
+    openClientSelectionLinkModal(selection.date, selection.time, selection.service);
+  });
   section.querySelectorAll("[data-reject-selection]").forEach((btn) => btn.onclick = () => {
     const selection = db.clientSelections[btn.dataset.rejectSelection];
     if (!selection) return;
@@ -1572,6 +1723,13 @@ function renderAppointmentDetail() {
   section.querySelectorAll("[data-quick-confirm-selection]").forEach((btn) => btn.onclick = () => {
     confirmAction("快速確認預約？", "系統會直接建立已確認預約，並自動帶入課程價格、時長與房型。需要調整細節時請改用「編輯建立」。", () => quickConfirmClientSelection(btn.dataset.quickConfirmSelection), "快速確認");
   });
+  const lineTrialForm = $("lineTrialForm");
+  if (lineTrialForm) {
+    lineTrialForm.onsubmit = (event) => {
+      event.preventDefault();
+      createLineTrialRequest(lineTrialForm);
+    };
+  }
   section.querySelectorAll("[data-mark-stage]").forEach((btn) => btn.onclick = () => updateAppointmentStage(btn.dataset.markStage, btn.dataset.stage));
   section.querySelectorAll("[data-copy-notice]").forEach((btn) => btn.onclick = async () => {
     const target = $(btn.dataset.copyNotice);
@@ -1613,6 +1771,7 @@ function renderAppointmentDetail() {
       saveAppointmentDetailForm(form);
     };
   }
+  hydrateResponsiveTables(section);
 }
 
 function bookingWorkbenchIntroHtml(monthAppts, pendingSelections) {
@@ -1719,22 +1878,25 @@ function renderAppointmentListPage(appts) {
     </div>
     <div class="grid gap-3 lg:grid-cols-2">
       ${pendingSelections.map((selection) => {
-        const profile = db.therapists[selection.selectedTherapistId] || {};
+        const hasTherapist = Boolean(selection.selectedTherapistId);
+        const profile = hasTherapist ? db.therapists[selection.selectedTherapistId] || {} : {};
+        const displayName = hasTherapist ? therapistName(selection.selectedTherapistId) : "尚未媒合師傅";
         return `<article class="rounded-xl border border-amber-100 bg-white p-4">
           <div class="flex justify-between gap-4">
             <div class="flex min-w-0 gap-3">
-              ${therapistPhotoHtml(profile, therapistName(selection.selectedTherapistId))}
+              ${hasTherapist ? therapistPhotoHtml(profile, displayName) : `<div class="flex h-16 w-16 items-center justify-center rounded-xl bg-amber-50 text-xl font-black text-amber-700">?</div>`}
               <div class="min-w-0">
                 <p class="text-xs font-black text-slate-400">${esc(selection.date)} ${esc(selection.time)} · ${esc(courseName(selection.service))}</p>
-                <h4 class="mt-1 truncate font-black">${esc(therapistName(selection.selectedTherapistId))}</h4>
+                <h4 class="mt-1 truncate font-black">${esc(displayName)}</h4>
                 <p class="mt-1 text-sm font-bold text-slate-500">${esc(selection.customerName || "未留姓名")} ${selection.customerContact ? `｜${esc(selection.customerContact)}` : ""}</p>
+                ${selection.source === "line-trial" ? `<p class="mt-2 line-clamp-2 text-xs font-bold text-amber-700">LINE訊息：${esc(selection.customerNote || "")}</p>` : ""}
               </div>
             </div>
-            <span class="badge bg-amber-50 text-amber-700">待確認</span>
+            <span class="badge ${hasTherapist ? "bg-amber-50 text-amber-700" : "bg-indigo-50 text-indigo-700"}">${hasTherapist ? "待確認" : "待媒合"}</span>
           </div>
           <div class="mt-4 flex justify-end gap-2">
-            <button class="btn-teal px-3 py-2 text-sm" data-quick-confirm-selection="${esc(selection.id)}">快速確認</button>
-            <button class="btn-light px-3 py-2 text-sm" data-create-from-selection="${esc(selection.id)}">編輯建立</button>
+            ${hasTherapist ? `<button class="btn-teal px-3 py-2 text-sm" data-quick-confirm-selection="${esc(selection.id)}">快速確認</button>` : `<button class="btn-teal px-3 py-2 text-sm" data-line-selection-query="${esc(selection.id)}">查可接師傅</button>`}
+            <button class="btn-light px-3 py-2 text-sm" data-create-from-selection="${esc(selection.id)}">${hasTherapist ? "編輯建立" : "手動建立"}</button>
             <button class="rounded-xl bg-slate-100 px-3 py-2 text-sm font-black text-slate-600" data-reject-selection="${esc(selection.id)}">略過</button>
           </div>
         </article>`;
@@ -1761,7 +1923,7 @@ function renderAppointmentListPage(appts) {
       </td>
     </tr>`;
   }).join("") : `<tr><td colspan="10" class="py-10 text-center font-bold text-slate-400">${appointmentRecordScope === "month" ? "本月無預約資料" : "今日無預約資料"}</td></tr>`;
-  return `${bookingWorkbenchIntroHtml(monthAppts, pendingSelections)}${appointmentQueryPanelHtml()}${pendingSelectionPanel}${bookingStageBoardHtml(monthAppts)}<div id="appointmentRecordsPanel" class="card scroll-mt-20 p-5">
+  return `${bookingWorkbenchIntroHtml(monthAppts, pendingSelections)}${lineTrialPanelHtml()}${appointmentQueryPanelHtml()}${pendingSelectionPanel}${bookingStageBoardHtml(monthAppts)}<div id="appointmentRecordsPanel" class="card scroll-mt-20 p-5">
     <div class="mb-5 flex flex-col justify-between gap-4 border-b pb-5 sm:flex-row sm:items-center">
       <div><h3 class="text-lg font-black">${listTitle}</h3><p class="text-sm font-bold text-slate-500">${listDesc}</p></div>
       <button class="btn-light" data-toggle-appointment-scope>${toggleText}</button>
@@ -1784,7 +1946,7 @@ function renderAppointmentDetailForm(appt, allAppts) {
   const sameCustomer = allAppts.filter((a) => a.phone && a.phone === appt.phone).length;
   const serviceOptions = [`<option value="">自訂/其他項目</option>`].concat(Object.entries(COURSE_CATALOG).map(([key, course]) => `<option value="${key}" ${appt.service === key ? "selected" : ""}>${esc(course.name)} (${money(course.price)})</option>`)).join("");
   return `<div class="grid gap-5 xl:grid-cols-[1fr_360px]">
-    <form id="appointmentDetailForm" class="card p-5">
+    <form id="appointmentDetailForm" class="card p-5 appointment-detail-form">
       <div class="mb-5 flex flex-col justify-between gap-4 border-b pb-5 sm:flex-row sm:items-center">
         <div><p class="text-xs font-black uppercase tracking-widest text-slate-500">預約資料</p><h3 class="text-xl font-black">${esc(customerDisplay(appt.phone, appt.customerName))}</h3><p class="text-xs font-bold text-slate-500">ID：${esc(appt.id)}</p></div>
         <div class="flex gap-2"><button id="backToAppointmentListBtn" type="button" class="btn-light">返回清單</button><button data-delete-appt="${esc(appt.id)}" type="button" class="rounded-xl bg-rose-50 px-4 py-2 font-black text-rose-700">刪除</button></div>
@@ -1807,7 +1969,7 @@ function renderAppointmentDetailForm(appt, allAppts) {
         <div class="md:col-span-2"><label class="label">服務紀錄 / 顧客反饋</label><textarea name="recordNotes" class="input min-h-28">${esc(record.notes || "")}</textarea></div>
       </div>
       <p id="appointmentDetailError" class="mt-4 hidden text-sm font-black text-rose-600"></p>
-      <div class="mt-5 flex justify-end gap-3 border-t pt-4"><button id="cancelAppointmentDetailBtn" type="button" class="btn-light">取消</button><button class="btn-teal">儲存預約資料</button></div>
+      <div class="appointment-detail-actions mt-5 flex justify-end gap-3 border-t pt-4"><button id="cancelAppointmentDetailBtn" type="button" class="btn-light">取消</button><button class="btn-teal">儲存預約資料</button></div>
     </form>
     <aside class="space-y-4">
       <div class="card p-5"><h4 class="mb-4 font-black">帳務摘要</h4><div class="space-y-3">${metric("應收金額", money(appt.price), "text-rose-700")}${metric("店家應收", money(companyCut), "text-teal-700")}${metric("師傅抽成", money(cut), "text-indigo-700")}</div></div>
@@ -2469,7 +2631,7 @@ function renderReport() {
         <div class="flex flex-col gap-2 sm:flex-row"><input id="reportStartDate" type="date" class="input py-2" value="${start}"><input id="reportEndDate" type="date" class="input py-2" value="${end}"><button id="queryReportBtn" class="btn-primary px-5 py-3">查詢</button><button id="exportReportBtn" class="btn-teal">輸出報表</button></div>
       </div>
       <div class="mb-5 grid grid-cols-2 gap-4 xl:grid-cols-4">${metric("來客數", rows.length)}${metric("總營業額", money(total))}${metric("已回帳", money(collected), "text-emerald-700")}${metric("師傅抽成", money(therapistCut), "text-indigo-700")}</div>
-      <div class="mb-5 flex flex-wrap rounded-xl bg-slate-100 p-1">${reportTab("revenue", "營收明細")}${reportTab("guests", "來客數")}${reportTab("retention", "師傅回客率")}${reportTab("commission", "抽成回帳")}</div>
+      <div class="report-tabs mb-5 flex flex-wrap rounded-xl bg-slate-100 p-1">${reportTab("revenue", "營收明細")}${reportTab("guests", "來客數")}${reportTab("retention", "師傅回客率")}${reportTab("commission", "抽成回帳")}</div>
       ${panelContent}
     </div>`;
   $("queryReportBtn").onclick = renderReport;
@@ -2479,6 +2641,7 @@ function renderReport() {
     renderReport();
   });
   $("view-report").querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => openAppointmentDetailPage(btn.dataset.openAppt));
+  hydrateResponsiveTables($("view-report"));
 }
 
 function exportReportCSV() {
@@ -2612,6 +2775,7 @@ function sortByTime(a, b) {
 function showModal(html) {
   $("modalRoot").innerHTML = `<div class="modal-backdrop">${html}</div>`;
   $("modalRoot").querySelectorAll("[data-close-modal]").forEach((el) => el.onclick = closeModal);
+  hydrateResponsiveTables($("modalRoot"));
 }
 
 function closeModal() {
@@ -2683,6 +2847,7 @@ function enterDashboard(tab) {
 
 function logout() {
   currentUser = null;
+  syncMobileBottomNav();
   clearInterval(liveTimer);
   $("adminDashboard").classList.add("hidden");
   $("loginView").classList.remove("hidden");
@@ -2707,6 +2872,9 @@ function bindEvents() {
   $("sidebarOverlay").addEventListener("click", hideSidebar);
   document.querySelectorAll("[data-tab]").forEach((tabButton) => {
     tabButton.addEventListener("click", () => switchTab(tabButton.dataset.tab, { clearAppointment: tabButton.dataset.tab === "dispatch" }));
+  });
+  document.querySelectorAll("[data-mobile-tab]").forEach((tabButton) => {
+    tabButton.addEventListener("click", () => switchTab(tabButton.dataset.mobileTab, { clearAppointment: tabButton.dataset.mobileTab === "dispatch" }));
   });
   document.addEventListener("click", (event) => {
     const jumpButton = event.target.closest?.("[data-jump-tab]");

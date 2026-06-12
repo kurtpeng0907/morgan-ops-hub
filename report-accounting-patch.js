@@ -93,7 +93,7 @@
           <div class="flex flex-col gap-2 sm:flex-row"><input id="reportStartDate" type="date" class="input py-2" value="${start}"><input id="reportEndDate" type="date" class="input py-2" value="${end}"><button id="queryReportBtn" class="btn-primary px-5 py-3">查詢</button><button id="exportReportBtn" class="btn-teal">輸出報表</button></div>
         </div>
         <div class="mb-5 grid grid-cols-2 gap-4 xl:grid-cols-4">${metric("來客數", rows.length)}${metric("應收總額", money(total), "text-rose-700")}${metric("應回帳金額", money(due), "text-teal-700")}${metric("未回帳金額", money(unremitted), "text-amber-700")}</div>
-        <div class="mb-5 flex flex-wrap rounded-xl bg-slate-100 p-1">${reportTab("revenue", "營收明細")}${reportTab("guests", "來客數")}${reportTab("retention", "師傅回客率")}${reportTab("commission", "回帳總表")}</div>
+        <div class="report-tabs mb-5 flex flex-wrap rounded-xl bg-slate-100 p-1">${reportTab("revenue", "營收明細")}${reportTab("guests", "來客數")}${reportTab("retention", "師傅回客率")}${reportTab("commission", "回帳總表")}</div>
         ${panelContent}
       </div>`;
     $("queryReportBtn").onclick = renderReport;
@@ -103,6 +103,7 @@
       renderReport();
     });
     $("view-report").querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => openAppointmentDetailPage(btn.dataset.openAppt));
+    if (typeof hydrateResponsiveTables === "function") hydrateResponsiveTables($("view-report"));
   };
 
   exportReportCSV = function exportReportCSV() {

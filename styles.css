@@ -1,6 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700;900&display=swap');
 
 * { box-sizing: border-box; }
+html, body { height: 100%; }
 :root {
   --surface: #ffffff;
   --surface-soft: #f8fafc;
@@ -10,6 +11,10 @@
   --brand: #0f766e;
 }
 body { font-family: 'Noto Sans TC', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #eef3f8; color: var(--ink); letter-spacing: 0; }
+body.h-screen { height: 100vh; }
+@supports (height: 100dvh) {
+  body.h-screen { height: 100dvh; }
+}
 .glass-panel { background: rgba(255,255,255,.96); backdrop-filter: blur(12px); }
 .loader { display: inline-block; width: 18px; height: 18px; margin-left: 8px; border: 3px solid rgba(255,255,255,.4); border-top-color: white; border-radius: 999px; animation: spin 1s linear infinite; vertical-align: middle; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -42,7 +47,295 @@ tr:hover td { background:#f8fafc; }
 .view { max-width: 1440px; margin: 0 auto; }
 .rounded-2xl { border-radius: 8px !important; }
 .rounded-xl { border-radius: 10px !important; }
+.mobile-bottom-nav {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 45;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+  padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
+  border-top: 1px solid rgba(203, 213, 225, .9);
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 -10px 28px rgba(15, 23, 42, .08);
+  backdrop-filter: blur(14px);
+}
+.mobile-bottom-nav.hidden { display: none !important; }
+.mobile-bottom-nav button {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 900;
+  transition: background .15s ease, color .15s ease, transform .15s ease;
+}
+.mobile-bottom-nav button.active {
+  background: #0f172a;
+  color: white;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, .18);
+}
+@media (min-width: 1024px) {
+  .mobile-bottom-nav { display: none !important; }
+}
+@media (min-width: 1280px) {
+  .overview-top-grid { align-items: start; }
+  .overview-side-column {
+    gap: 16px;
+  }
+  .overview-schedule-card {
+    min-height: 0;
+  }
+  .overview-metric-stack {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  .overview-metric-stack > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 96px;
+  }
+  .overview-metric-stack > div > p:first-child {
+    min-width: 120px;
+  }
+  .overview-metric-stack > div > p:nth-child(2) {
+    min-width: 140px;
+    text-align: right;
+  }
+  .overview-metric-stack > div > p:last-child {
+    min-width: 120px;
+    text-align: right;
+  }
+}
 @media (max-width: 640px) {
-  td, th { padding: 12px; }
-  .metric { padding: 16px; }
+  body { font-size: 15px; }
+  #loginView { padding: 12px; }
+  #loginView > div { padding: 22px !important; }
+  #adminDashboard main > header {
+    height: 56px;
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+  #pageTitle {
+    font-size: 16px;
+    line-height: 1.2;
+  }
+  #currentDateRange {
+    min-width: 94px;
+    padding-right: 8px;
+    padding-left: 8px;
+    font-size: 13px;
+  }
+  .month-btn { padding: 6px 8px; }
+  #mainContent {
+    padding: 12px 12px calc(84px + env(safe-area-inset-bottom));
+  }
+  .view { max-width: none; }
+  .view.space-y-6 > :not([hidden]) + :not([hidden]) { margin-top: 14px; }
+  .card {
+    box-shadow: 0 8px 20px rgba(15, 23, 42, .055);
+  }
+  .card.p-4,
+  .card.p-5,
+  .card.p-6,
+  .card.p-8 {
+    padding: 14px !important;
+  }
+  .metric {
+    padding: 12px;
+  }
+  .metric .text-3xl {
+    font-size: 1.55rem !important;
+    line-height: 1.1 !important;
+  }
+  .input {
+    min-height: 44px;
+    padding: 10px 12px;
+    font-size: 16px;
+  }
+  .btn-primary,
+  .btn-teal,
+  .btn-light {
+    min-height: 44px;
+    padding: 10px 12px;
+  }
+  .label {
+    margin-bottom: 5px;
+    font-size: 11px;
+  }
+  .table-wrap {
+    border-radius: 10px;
+  }
+  td, th {
+    padding: 10px;
+    font-size: 13px;
+  }
+  .table-wrap.mobile-card-table {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+  .table-wrap.mobile-card-table table,
+  .table-wrap.mobile-card-table thead,
+  .table-wrap.mobile-card-table tbody,
+  .table-wrap.mobile-card-table tr,
+  .table-wrap.mobile-card-table td {
+    display: block;
+    width: 100%;
+  }
+  .table-wrap.mobile-card-table thead {
+    display: none;
+  }
+  .table-wrap.mobile-card-table tbody {
+    display: grid;
+    gap: 10px;
+  }
+  .table-wrap.mobile-card-table tr {
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: white;
+    box-shadow: 0 6px 16px rgba(15, 23, 42, .045);
+  }
+  .table-wrap.mobile-card-table td {
+    display: grid;
+    grid-template-columns: 92px minmax(0, 1fr);
+    gap: 10px;
+    border-bottom: 1px solid #edf2f7;
+    padding: 9px 12px;
+    text-align: left !important;
+    white-space: normal;
+  }
+  .table-wrap.mobile-card-table td::before {
+    content: attr(data-label);
+    color: #64748b;
+    font-size: 11px;
+    font-weight: 900;
+  }
+  .table-wrap.mobile-card-table td:last-child {
+    border-bottom: 0;
+  }
+  .table-wrap.mobile-card-table td .flex {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  .table-wrap.mobile-card-table td[colspan] {
+    display: block;
+    text-align: center !important;
+  }
+  .table-wrap.mobile-card-table td[colspan]::before {
+    content: none;
+  }
+  .report-tabs {
+    display: flex;
+    flex-wrap: nowrap !important;
+    gap: 4px;
+    overflow-x: auto;
+    padding: 4px;
+    scroll-snap-type: x proximity;
+  }
+  .report-tabs button {
+    min-width: max-content;
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+  }
+  .appointment-detail-form {
+    padding-bottom: calc(92px + env(safe-area-inset-bottom)) !important;
+  }
+  .appointment-detail-actions {
+    position: sticky;
+    bottom: calc(65px + env(safe-area-inset-bottom));
+    z-index: 30;
+    margin-right: -14px;
+    margin-left: -14px;
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line);
+    background: rgba(255, 255, 255, .96);
+    box-shadow: 0 -10px 22px rgba(15, 23, 42, .08);
+    backdrop-filter: blur(12px);
+  }
+  .appointment-detail-actions .btn-light,
+  .appointment-detail-actions .btn-teal {
+    flex: 1;
+  }
+  .badge {
+    padding: 3px 7px;
+    font-size: 10px;
+  }
+  .modal-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .modal {
+    max-height: 92dvh;
+    border-radius: 16px 16px 0 0;
+    padding: 16px;
+  }
+  #snackbar {
+    bottom: calc(76px + env(safe-area-inset-bottom));
+    border-radius: 14px;
+    white-space: normal;
+  }
+  .timeline-block {
+    right: 4px;
+    left: 4px;
+  }
+  .appointment-time-board {
+    padding: 14px !important;
+  }
+  .appointment-time-head {
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 0;
+    padding-right: 4px;
+    padding-left: 4px;
+  }
+  .appointment-time-head > span {
+    display: none;
+  }
+  .appointment-time-head > div {
+    height: 24px;
+  }
+  .appointment-time-head > div > span {
+    font-size: 10px;
+  }
+  .appointment-time-row {
+    grid-template-columns: minmax(0, 1fr) !important;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px !important;
+  }
+  .appointment-time-person {
+    display: flex;
+    min-width: 0;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .appointment-time-person p:first-child {
+    min-width: 0;
+    font-size: 15px;
+  }
+  .appointment-time-person p:last-child {
+    flex-shrink: 0;
+    max-width: 48%;
+    text-align: right;
+    white-space: normal;
+  }
+  .appointment-time-track {
+    width: 100%;
+    min-width: 0;
+    height: 48px !important;
+  }
+  .appointment-time-status {
+    text-align: left !important;
+  }
+  .appointment-time-status .badge {
+    width: 100%;
+    justify-content: center;
+  }
 }
