@@ -31,6 +31,8 @@ let editingAppointmentId = null;
 let activeAppointmentId = null;
 let pendingClientSelectionId = null;
 let liveTimer = null;
+let pendingBackupReason = "";
+let suppressPersistBackup = false;
 
 const $ = (id) => document.getElementById(id);
 const esc = (value = "") => String(value).replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
@@ -362,8 +364,27 @@ function assignCustomerCodes(data) {
   });
 }
 
-function persist() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+function saveBackupSnapshot(reason, snapshotText) {
+  try {
+    if (!snapshotText) return;
+    const snapshot = JSON.parse(snapshotText);
+    const key = `${LOCAL_BACKUP_PREFIX}-${Date.now()}`;
+    localStorage.setItem(key, JSON.stringify({
+      reason: reason || "資料修改前",
+      at: new Date().toISOString(),
+      db: snapshot
+    }));
+  } catch {}
+}
+
+function persist(reason = "") {
+  const next = JSON.stringify(db);
+  const previous = localStorage.getItem(STORAGE_KEY);
+  if (!suppressPersistBackup && previous && previous !== next) {
+    saveBackupSnapshot(reason || pendingBackupReason || "資料修改前", previous);
+  }
+  localStorage.setItem(STORAGE_KEY, next);
+  pendingBackupReason = "";
 }
 
 function loadSyncMeta() {
@@ -386,11 +407,7 @@ function saveSyncMeta() {
 
 function backupLocalDb(reason) {
   try {
-    localStorage.setItem(`${LOCAL_BACKUP_PREFIX}-${Date.now()}`, JSON.stringify({
-      reason,
-      at: new Date().toISOString(),
-      db
-    }));
+    saveBackupSnapshot(reason, JSON.stringify(db));
   } catch {}
 }
 
@@ -448,6 +465,7 @@ async function postCloud(action, data) {
 
 async function saveCloudActions(actions, successMessage = "已儲存到雲端") {
   showSnackbar("正在寫入雲端...");
+  pendingBackupReason = successMessage;
   const results = [];
   for (const item of actions) {
     results.push(await postCloud(item.action, item.data));
@@ -548,8 +566,135 @@ function isRemittancePaid(appt) {
   return String(appt.remittancePaid) === "true" || Number(appt.collectedPrice || 0) > 0;
 }
 
-function openDailyBusinessSummary() {
-  const day = todayKey();
+function dbStats(data = db) {
+  return {
+    therapists: Object.keys(data.therapists || {}).length,
+    appointments: Object.keys(data.appointments || {}).length,
+    customers: Object.keys(data.customers || {}).filter((key) => !isSystemCustomerKey(key)).length,
+    schedules: Object.keys(data.schedules || {}).length
+  };
+}
+
+function listLocalBackups() {
+  try {
+    return Object.keys(localStorage)
+      .filter((key) => key.startsWith(`${LOCAL_BACKUP_PREFIX}-`))
+      .map((key) => {
+        try {
+          const item = JSON.parse(localStorage.getItem(key) || "{}");
+          return { key, ...item, stats: dbStats(item.db || {}) };
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+      .sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")));
+  } catch {
+    return [];
+  }
+}
+
+function backupLabelTime(value = "") {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-TW", { hour12: false });
+}
+
+function downloadJSON(payload, filename) {
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" }));
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+function downloadCurrentBackup() {
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    app: "morgan-ops-hub",
+    version: "v2",
+    syncMeta,
+    db
+  };
+  downloadJSON(payload, `morgan-ops-backup-${todayKey()}-${Date.now()}.json`);
+  showSnackbar("資料備份已下載");
+}
+
+function downloadBackupEntry(key) {
+  const entry = listLocalBackups().find((item) => item.key === key);
+  if (!entry) return showSnackbar("找不到該筆修改紀錄");
+  downloadJSON({ exportedAt: new Date().toISOString(), backup: entry }, `morgan-ops-change-${entry.at || Date.now()}.json`);
+  showSnackbar("修改紀錄已下載");
+}
+
+function restoreActionsFor(targetDb, currentDb) {
+  const actions = [];
+  Object.keys(currentDb.appointments || {}).forEach((id) => {
+    if (!targetDb.appointments?.[id]) actions.push({ action: "deleteAppointment", data: { appId: id } });
+  });
+  Object.values(targetDb.appointments || {}).forEach((appt) => actions.push({ action: "addAppointment", data: { ...appt, appId: appt.id } }));
+  Object.keys(currentDb.customers || {}).forEach((phone) => {
+    if (!targetDb.customers?.[phone]) actions.push({ action: "deleteCustomer", data: { phone } });
+  });
+  Object.entries(targetDb.customers || {}).forEach(([phone, customer]) => actions.push({ action: "saveCustomer", data: { phone, ...customer } }));
+  Object.entries(targetDb.schedules || {}).forEach(([id, schedule]) => actions.push({ action: "saveSchedule", data: { id, schedule } }));
+  Object.entries(targetDb.therapists || {}).forEach(([id, therapist]) => actions.push({ action: "addTherapist", data: { ...therapist, id, pin: sheetText(therapist.pin) } }));
+  Object.entries(targetDb.admins || {}).forEach(([id, admin]) => {
+    if (id === "admin") return;
+    actions.push({ action: "saveCustomer", data: { phone: `SYS_ADMIN_${id}`, name: admin.name || id, notes: sheetText(admin.pin || ""), records: [{ email: admin.email || "" }] } });
+  });
+  return actions;
+}
+
+async function restoreBackup(key) {
+  const entry = listLocalBackups().find((item) => item.key === key);
+  if (!entry?.db) return showSnackbar("找不到可復原的資料");
+  const currentDb = JSON.parse(JSON.stringify(db));
+  const targetDb = normalizeDb(JSON.parse(JSON.stringify(entry.db)));
+  backupLocalDb("restore-before-current-state");
+  db = targetDb;
+  suppressPersistBackup = true;
+  persist("復原修改紀錄");
+  suppressPersistBackup = false;
+  const actions = restoreActionsFor(targetDb, currentDb);
+  await saveCloudActions(actions, "已依修改紀錄復原並寫回雲端");
+  closeModal();
+  renderAll();
+}
+
+function openChangeHistoryModal() {
+  const backups = listLocalBackups();
+  const rows = backups.length ? backups.slice(0, 40).map((item) => `<tr>
+    <td class="font-mono font-black">${esc(backupLabelTime(item.at))}</td>
+    <td><div class="font-black">${esc(item.reason || "資料修改前")}</div><div class="mt-1 text-xs font-bold text-slate-400">${esc(item.key.replace(`${LOCAL_BACKUP_PREFIX}-`, ""))}</div></td>
+    <td class="text-right font-black">${item.stats.appointments}</td>
+    <td class="text-right font-black">${item.stats.customers}</td>
+    <td class="text-right">
+      <div class="flex justify-end gap-2">
+        <button class="btn-light px-3 py-1 text-xs" data-download-backup="${esc(item.key)}">下載</button>
+        <button class="rounded-lg bg-amber-50 px-3 py-1 text-xs font-black text-amber-700" data-restore-backup="${esc(item.key)}">復原</button>
+      </div>
+    </td>
+  </tr>`).join("") : `<tr><td colspan="5" class="py-10 text-center font-bold text-slate-400">尚無修改紀錄；下一次儲存前會自動建立快照。</td></tr>`;
+  showModal(`<div class="modal max-w-5xl">
+    <div class="mb-5 flex flex-col justify-between gap-4 border-b pb-4 lg:flex-row lg:items-start">
+      <div>
+        <span class="badge bg-amber-50 text-amber-700">安全紀錄</span>
+        <h3 class="mt-2 text-2xl font-black">修改紀錄查詢</h3>
+        <p class="mt-1 text-sm font-bold text-slate-500">顯示此瀏覽器保存的寫入前快照；復原會把該份資料重新寫回雲端。</p>
+      </div>
+      <div class="flex gap-2"><button id="downloadCurrentBackupBtn" class="btn-teal">下載目前資料</button><button class="btn-light" data-close-modal>關閉</button></div>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>時間</th><th>來源</th><th class="text-right">預約</th><th class="text-right">顧客</th><th class="text-right">操作</th></tr></thead><tbody>${rows}</tbody></table></div>
+  </div>`);
+  $("downloadCurrentBackupBtn").onclick = downloadCurrentBackup;
+  $("modalRoot").querySelectorAll("[data-download-backup]").forEach((btn) => btn.onclick = () => downloadBackupEntry(btn.dataset.downloadBackup));
+  $("modalRoot").querySelectorAll("[data-restore-backup]").forEach((btn) => btn.onclick = () => {
+    const key = btn.dataset.restoreBackup;
+    confirmAction("復原此筆修改紀錄？", "系統會先備份目前狀態，再把此筆快照重新寫回雲端。這可能會覆蓋目前預約、顧客與班表資料。", () => restoreBackup(key), "確認復原");
+  });
+}
+
+function openDailyBusinessSummary(day = todayKey()) {
   const rows = Object.values(db.appointments).filter((appt) => appt.date === day).sort(sortByTime);
   const totalRevenue = rows.reduce((sum, appt) => sum + Number(appt.price || 0), 0);
   const totalCompany = rows.reduce((sum, appt) => sum + remittanceDueFor(appt), 0);
@@ -591,9 +736,13 @@ function openDailyBusinessSummary() {
       <div>
         <span class="badge bg-teal-50 text-teal-700">當日營業狀況</span>
         <h3 class="mt-2 text-2xl font-black">營業總表</h3>
-        <p class="mt-1 text-sm font-bold text-slate-500">${esc(day.replaceAll("-", "/"))}，彙整預約進度、營收、店家應回帳與師傅營業狀況。</p>
+        <p class="mt-1 text-sm font-bold text-slate-500">彙整預約進度、營收、店家應回帳與師傅營業狀況。</p>
       </div>
-      <button class="btn-light" data-close-modal>關閉</button>
+      <div class="flex flex-col gap-2 sm:flex-row">
+        <input id="businessSummaryDate" type="date" class="input py-2" value="${esc(day)}">
+        <button id="queryBusinessSummaryBtn" class="btn-primary px-5 py-3">查詢</button>
+        <button class="btn-light" data-close-modal>關閉</button>
+      </div>
     </div>
     <div class="mb-5 grid grid-cols-2 gap-3 xl:grid-cols-6">
       ${metric("今日預約", rows.length)}
@@ -628,6 +777,7 @@ function openDailyBusinessSummary() {
       openAppointmentDetailPage(id);
     };
   });
+  $("queryBusinessSummaryBtn").onclick = () => openDailyBusinessSummary($("businessSummaryDate").value || todayKey());
 }
 
 function weekKeys(anchorKey = todayKey(), offsetWeeks = 0) {
@@ -1148,6 +1298,8 @@ function renderOverview() {
             <div><h3 class="text-2xl font-black">${today.replaceAll("-", "/")}</h3><p class="mt-1 text-sm font-bold text-slate-300">${nextAppt ? `下一筆 ${nextAppt.time} · ${customerDisplay(nextAppt.phone, nextAppt.customerName)}` : "今日沒有後續預約"}</p></div>
             <div class="flex flex-wrap gap-2">
               <button id="businessSummaryBtn" class="btn-light border-slate-700 bg-white px-4 py-2 text-slate-900 hover:bg-slate-100">營業總表</button>
+              <button id="changeHistoryBtn" class="btn-light border-slate-700 bg-white/10 px-4 py-2 text-white hover:bg-white/15">修改紀錄</button>
+              <button id="downloadBackupBtn" class="btn-light border-slate-700 bg-white/10 px-4 py-2 text-white hover:bg-white/15">下載備份</button>
               <button class="btn-teal" data-jump-tab="dispatch">預約作業台</button>
               <button class="btn-light border-slate-700 bg-slate-900 px-4 py-2 text-white hover:bg-slate-800" data-jump-tab="personnel" data-personnel-panel="schedule">修改班表</button>
               <button id="refreshOverviewBtn" class="btn-light border-slate-700 bg-white/10 px-4 py-2 text-white hover:bg-white/15">更新資料</button>
@@ -1228,7 +1380,9 @@ function renderOverview() {
     showModal(`<div class="modal max-w-2xl"><h3 class="mb-5 border-b pb-4 text-xl font-black">大門密碼修改紀錄</h3><div class="table-wrap"><table><thead><tr><th>時間</th><th>密碼</th><th>來源</th></tr></thead><tbody>${doorPasswordRecordHtml()}</tbody></table></div><div class="mt-5 flex justify-end border-t pt-4"><button class="btn-light" data-close-modal>關閉</button></div></div>`);
   };
   $("view-overview").querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => openAppointmentDetailPage(btn.dataset.openAppt));
-  $("businessSummaryBtn").onclick = openDailyBusinessSummary;
+  $("businessSummaryBtn").onclick = () => openDailyBusinessSummary();
+  $("changeHistoryBtn").onclick = openChangeHistoryModal;
+  $("downloadBackupBtn").onclick = downloadCurrentBackup;
   $("refreshOverviewBtn").onclick = refreshDashboardData;
   renderLiveStatus();
 }
