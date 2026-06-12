@@ -1981,13 +1981,14 @@ function renderAppointmentDetail() {
   section.querySelectorAll("[data-copy-notice]").forEach((btn) => btn.onclick = async () => {
     const target = $(btn.dataset.copyNotice);
     if (!target) return;
+    const label = btn.dataset.copyNotice === "customerNoticeText" ? "給顧客" : "給師傅";
     try {
       await navigator.clipboard.writeText(target.value);
-      showSnackbar("通知內容已複製");
+      showSnackbar(`${label}通知已複製`);
     } catch {
       target.select();
       document.execCommand("copy");
-      showSnackbar("通知內容已複製");
+      showSnackbar(`${label}通知已複製`);
     }
   });
   const backBtn = $("backToAppointmentListBtn");
@@ -2097,14 +2098,51 @@ function bookingStageRailHtml(currentStage = "confirmed") {
 function therapistNoticeText(appt, companyCut) {
   return [
     `預約通知`,
-    `時間：${appt.date || ""} ${appt.time || ""}`,
-    `房型：${appt.room === "OUT" ? "外出" : `${appt.room || "-"}房`}`,
-    `大門密碼：${db.customers.SYS_DOOR_PWD?.notes || "未設定"}`,
-    `課程：${courseName(appt.service)} / ${appt.duration || 60} 分`,
+    `時間：${appointmentNoticeDateTime(appt)}`,
+    `課程：${noticeCourseName(appt)}`,
     `應收金額：${money(appt.price)}`,
-    `應回款金額：${money(companyCut)}`,
-    appt.notes ? `備註：${appt.notes}` : ""
+    `回款金額：${money(companyCut)}`
   ].filter(Boolean).join("\n");
+}
+
+function noticeCourseName(appt) {
+  const base = courseName(appt.service);
+  return base.replace(/(\d+)\s*分\b/g, "$1分鐘");
+}
+
+function appointmentNoticeDateTime(appt) {
+  const date = normalizeDateField(appt.date || "");
+  const parts = date.split("-");
+  const dayText = parts.length === 3 ? `${parts[1]} / ${parts[2]}` : date;
+  return `${dayText} ${appt.time || ""}`.trim();
+}
+
+function stableNoticeIndex(seed = "", length = 1) {
+  const text = String(seed || "");
+  let total = 0;
+  for (let i = 0; i < text.length; i += 1) total += text.charCodeAt(i);
+  return length ? total % length : 0;
+}
+
+function customerNoticeClosing(appt) {
+  const closings = [
+    "感謝您的預約，摩根SPA是您最優質的身體療癒第一選擇。",
+    "感謝您的預約，摩根SPA期待為您帶來安心而細緻的身體療癒體驗。",
+    "感謝您的預約，摩根SPA將用專業服務陪您好好放鬆、恢復狀態。",
+    "感謝您的預約，摩根SPA很榮幸陪伴您享受一段舒適的療癒時光。"
+  ];
+  return closings[stableNoticeIndex(appt.id || appt.phone || appt.date, closings.length)];
+}
+
+function customerNoticeText(appt) {
+  return [
+    "預約成功",
+    `師傅：${therapistName(appt.therapistId)}`,
+    `時間：${appointmentNoticeDateTime(appt)}`,
+    `課程：${noticeCourseName(appt)}`,
+    `金額：${money(appt.price)}`,
+    customerNoticeClosing(appt)
+  ].join("\n");
 }
 
 function renderAppointmentListPage(appts) {
@@ -2189,7 +2227,8 @@ function renderAppointmentDetailForm(appt, allAppts) {
   const record = appointmentRecord(appt) || {};
   const cut = COURSE_CATALOG[appt.service]?.therapistCut || 0;
   const companyCut = Number(appt.price || 0) - cut;
-  const noticeText = therapistNoticeText(appt, companyCut);
+  const therapistText = therapistNoticeText(appt, companyCut);
+  const customerText = customerNoticeText(appt);
   const sameCustomer = allAppts.filter((a) => a.phone && a.phone === appt.phone).length;
   const serviceOptions = [`<option value="">自訂/其他項目</option>`].concat(Object.entries(COURSE_CATALOG).map(([key, course]) => `<option value="${key}" ${appt.service === key ? "selected" : ""}>${esc(course.name)} (${money(course.price)})</option>`)).join("");
   return `<div class="grid gap-5 xl:grid-cols-[1fr_360px]">
@@ -2221,7 +2260,7 @@ function renderAppointmentDetailForm(appt, allAppts) {
     <aside class="space-y-4">
       <div class="card p-5"><h4 class="mb-4 font-black">帳務摘要</h4><div class="space-y-3">${metric("應收金額", money(appt.price), "text-rose-700")}${metric("店家應收", money(companyCut), "text-teal-700")}${metric("師傅抽成", money(cut), "text-indigo-700")}</div></div>
       <div class="card p-5">
-        <div class="mb-3 flex items-center justify-between gap-3"><h4 class="font-black">行前通知</h4><span class="badge ${bookingStageClass(appt.bookingStage)}">${esc(bookingStageLabel(appt.bookingStage))}</span></div>
+        <div class="mb-3 flex items-center justify-between gap-3"><h4 class="font-black">複製通知訊息</h4><span class="badge ${bookingStageClass(appt.bookingStage)}">${esc(bookingStageLabel(appt.bookingStage))}</span></div>
         <div class="space-y-2 rounded-xl bg-slate-50 p-4 text-sm font-bold text-slate-600">
           <p>師傅：<b class="text-slate-900">${esc(therapistName(appt.therapistId))}</b></p>
           <p>時間：<b class="text-slate-900">${esc(appt.date)} ${esc(appt.time)}</b></p>
@@ -2230,10 +2269,19 @@ function renderAppointmentDetailForm(appt, allAppts) {
           <p>課程：<b class="text-slate-900">${esc(courseName(appt.service))}</b></p>
           <p>應收：<b class="text-rose-700">${money(appt.price)}</b>，應回款：<b class="text-teal-700">${money(companyCut)}</b></p>
         </div>
-        <label class="label mt-3">給師傅通知文字</label>
-        <textarea id="therapistNoticeText" readonly class="input min-h-40 bg-white text-sm">${esc(noticeText)}</textarea>
-        <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <button type="button" class="btn-light" data-copy-notice="therapistNoticeText">複製通知</button>
+        <div class="mt-4 space-y-4">
+          <div class="rounded-xl border bg-white p-3">
+            <div class="mb-2 flex items-center justify-between gap-3"><label class="label mb-0">給師傅</label><span class="badge bg-teal-50 text-teal-700">內部</span></div>
+            <textarea id="therapistNoticeText" readonly class="input min-h-36 bg-slate-50 text-sm">${esc(therapistText)}</textarea>
+            <button type="button" class="btn-light mt-2 w-full" data-copy-notice="therapistNoticeText">複製給師傅</button>
+          </div>
+          <div class="rounded-xl border bg-white p-3">
+            <div class="mb-2 flex items-center justify-between gap-3"><label class="label mb-0">給顧客</label><span class="badge bg-indigo-50 text-indigo-700">客訊</span></div>
+            <textarea id="customerNoticeText" readonly class="input min-h-40 bg-slate-50 text-sm">${esc(customerText)}</textarea>
+            <button type="button" class="btn-light mt-2 w-full" data-copy-notice="customerNoticeText">複製給顧客</button>
+          </div>
+        </div>
+        <div class="mt-3 grid grid-cols-1 gap-2">
           <button type="button" class="btn-teal" data-mark-stage="${esc(appt.id)}" data-stage="pre_notice">標記已通知</button>
         </div>
       </div>
