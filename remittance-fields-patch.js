@@ -53,11 +53,13 @@
       appId: old.id,
       duration: Number(data.duration || 60),
       price: Number(data.price || 0),
-      isCompleted: data.isCompleted === "on",
+      bookingStage: normalizeBookingStage(data.bookingStage || old.bookingStage || "confirmed", old),
+      isCompleted: data.isCompleted === "on" || data.bookingStage === "completed",
       phone: String(data.phone || "").trim(),
       customerName: String(data.customerName || "").trim(),
       notes: String(data.notes || "").trim()
     };
+    if (draft.isCompleted) draft.bookingStage = "completed";
     const due = remittanceDueAmount(draft);
     const paid = data.remittancePaid === "on";
     draft.remittanceDue = due;
@@ -107,10 +109,13 @@
       if (idx >= 0) customer.records[idx] = { ...customer.records[idx], ...record };
       else customer.records.push(record);
       db.customers[draft.phone] = customer;
-      await saveCloudActions([
+      const actions = [
         { action: "addAppointment", data: draft },
-        { action: "saveCustomer", data: { phone: draft.phone, ...customer } }
-      ], "預約與回帳狀態已寫入雲端");
+        { action: "saveCustomer", data: { phone: draft.phone, ...customer } },
+        syncAppointmentMeta(draft)
+      ].filter(Boolean);
+      if (old.phone && old.phone !== draft.phone && db.customers[old.phone]) actions.push({ action: "saveCustomer", data: { phone: old.phone, ...db.customers[old.phone] } });
+      await saveCloudActions(actions, "預約與回帳狀態已寫入雲端");
       setFormBusy(form, false);
       renderAll();
       activeAppointmentId = draft.id;
@@ -137,7 +142,6 @@
 
     $("therapistReportForm").onsubmit = async (event) => {
       event.preventDefault();
-      setFormBusy(event.currentTarget, true);
       const data = Object.fromEntries(new FormData(event.currentTarget).entries());
       const reportPaid = data.remittancePaid === "on";
       const method = reportPaid ? String(data.remittanceMethod || "").trim() : "";
@@ -147,11 +151,14 @@
         err.classList.remove("hidden");
         return;
       }
+      err.classList.add("hidden");
+      setFormBusy(event.currentTarget, true);
       appt.remittanceDue = due;
       appt.remittancePaid = reportPaid;
       appt.remittanceMethod = method;
       appt.collectedPrice = reportPaid ? String(due) : "";
       appt.isCompleted = data.isCompleted === "on";
+      appt.bookingStage = appt.isCompleted ? "completed" : (appt.bookingStage === "completed" ? "pre_notice" : normalizeBookingStage(appt.bookingStage, appt));
 
       const customer = db.customers[appt.phone] || { name: appt.customerName || "", notes: "", records: [] };
       if (!customer.code) {
@@ -177,8 +184,9 @@
       db.customers[appt.phone] = customer;
       await saveCloudActions([
         { action: "addAppointment", data: appt },
-        { action: "saveCustomer", data: { phone: appt.phone, ...customer } }
-      ], "服務紀錄與回帳狀態已寫入雲端");
+        { action: "saveCustomer", data: { phone: appt.phone, ...customer } },
+        syncAppointmentMeta(appt)
+      ].filter(Boolean), "服務紀錄與回帳狀態已寫入雲端");
       setFormBusy(event.currentTarget, false);
       closeModal();
       renderAll();

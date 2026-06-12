@@ -95,8 +95,10 @@ const THERAPIST_PROFILE_DEFAULTS = {
 const therapistProfileKey = (id) => `SYS_THERAPIST_PROFILE_${id}`;
 const APPROVAL_PREFIX = "SYS_APPROVAL_";
 const CLIENT_SELECTION_PREFIX = "SYS_CLIENT_SELECTION_";
+const APPOINTMENT_META_PREFIX = "SYS_APPT_META_";
 const approvalKey = (id) => `${APPROVAL_PREFIX}${id}`;
 const clientSelectionKey = (id) => `${CLIENT_SELECTION_PREFIX}${id}`;
+const appointmentMetaKey = (id) => `${APPOINTMENT_META_PREFIX}${id}`;
 const approvalTypeLabel = (type) => ({ profile: "人事資料", schedule: "班表", password: "密碼" }[type] || type);
 const approvalStatusLabel = (status) => ({ pending: "待審核", approved: "已核可", rejected: "已退回" }[status] || status);
 const BOOKING_STAGES = [
@@ -121,6 +123,43 @@ const bookingStageClass = (stage) => ({
 const bookingStageOptions = (selected = "confirmed") => BOOKING_STAGES.map((item) => `<option value="${item.key}" ${item.key === selected ? "selected" : ""}>${item.label}</option>`).join("");
 const isBookingConfirmed = (appt = {}) => ["confirmed", "pre_notice", "completed"].includes(appt.bookingStage) || String(appt.isCompleted) === "true";
 const isBookingUnconfirmed = (appt = {}) => !isBookingConfirmed(appt);
+const isKnownBookingStage = (stage = "") => BOOKING_STAGES.some((item) => item.key === stage);
+
+function normalizeBookingStage(stage = "", appt = {}) {
+  const value = String(stage || "").trim();
+  if (isKnownBookingStage(value)) return value;
+  return String(appt.isCompleted) === "true" || appt.isCompleted === true ? "completed" : "confirmed";
+}
+
+function appointmentMetaFromAppointment(appt = {}) {
+  const id = appt.id || appt.appId;
+  if (!id) return null;
+  const bookingStage = normalizeBookingStage(appt.bookingStage, appt);
+  return {
+    id,
+    bookingStage,
+    isCompleted: bookingStage === "completed",
+    collectedPrice: cleanPin(appt.collectedPrice || ""),
+    remittanceDue: cleanPin(appt.remittanceDue || ""),
+    remittancePaid: appt.remittancePaid === true || String(appt.remittancePaid) === "true",
+    remittanceMethod: String(appt.remittanceMethod || "").trim(),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function syncAppointmentMeta(appt = {}) {
+  const meta = appointmentMetaFromAppointment(appt);
+  if (!meta?.id) return null;
+  db.appointmentMeta ||= {};
+  db.appointmentMeta[meta.id] = meta;
+  const key = appointmentMetaKey(meta.id);
+  db.customers[key] = {
+    name: `預約狀態-${meta.bookingStage}-${meta.id}`,
+    notes: JSON.stringify(meta),
+    records: []
+  };
+  return { action: "saveCustomer", data: { phone: key, ...db.customers[key] } };
+}
 
 function normalizeTherapistProfile(therapist = {}) {
   const normalized = { ...THERAPIST_PROFILE_DEFAULTS, ...therapist };
@@ -207,6 +246,7 @@ function normalizeDb(data) {
   data.customers ||= {};
   data.approvals ||= {};
   data.clientSelections ||= {};
+  data.appointmentMeta ||= {};
   Object.values(data.appointments).forEach((appt) => {
     if (!appt.phone || isSystemCustomerKey(appt.phone)) return;
     data.customers[appt.phone] ||= { name: appt.customerName || "", notes: "", records: [] };
@@ -253,6 +293,15 @@ function normalizeDb(data) {
       if (selection.id) data.clientSelections[selection.id] = selection;
     } catch {}
   });
+  data.appointmentMeta = {};
+  Object.keys(data.customers).forEach((key) => {
+    if (!key.startsWith(APPOINTMENT_META_PREFIX)) return;
+    try {
+      const meta = JSON.parse(data.customers[key].notes || "{}");
+      const id = meta.id || key.replace(APPOINTMENT_META_PREFIX, "");
+      if (id) data.appointmentMeta[id] = { ...meta, id };
+    } catch {}
+  });
   Object.keys(data.therapists).forEach((id) => {
     data.therapists[id] = normalizeTherapistProfile(data.therapists[id]);
   });
@@ -260,6 +309,15 @@ function normalizeDb(data) {
     data.admins[id].pin = cleanPin(data.admins[id].pin);
   });
   Object.entries(data.appointments).forEach(([id, appt]) => {
+    const meta = data.appointmentMeta[id] || data.appointmentMeta[appt.id] || {};
+    Object.assign(appt, {
+      bookingStage: meta.bookingStage || appt.bookingStage,
+      isCompleted: meta.isCompleted ?? appt.isCompleted,
+      collectedPrice: meta.collectedPrice || appt.collectedPrice,
+      remittanceDue: meta.remittanceDue || appt.remittanceDue,
+      remittancePaid: meta.remittancePaid ?? appt.remittancePaid,
+      remittanceMethod: meta.remittanceMethod || appt.remittanceMethod
+    });
     appt.id = appt.id || id;
     appt.date = normalizeDateField(appt.date);
     appt.time = normalizeTimeField(appt.time);
@@ -270,7 +328,8 @@ function normalizeDb(data) {
     appt.remittancePaid = String(appt.remittancePaid) === "true" || appt.remittancePaid === true;
     appt.remittanceMethod = String(appt.remittanceMethod || "").trim();
     appt.customerName = String(appt.customerName || "").trim();
-    appt.bookingStage = String(appt.bookingStage || (String(appt.isCompleted) === "true" ? "completed" : "confirmed")).trim();
+    appt.bookingStage = normalizeBookingStage(appt.bookingStage, appt);
+    appt.isCompleted = appt.bookingStage === "completed";
   });
   Object.values(data.customers).forEach((customer) => {
     (customer.records || []).forEach((record) => {
@@ -1261,8 +1320,8 @@ async function saveAppointmentFromForm(form, date) {
   data.date = date;
   data.duration = Number(data.duration || 60);
   data.price = Number(data.price || 0);
-  data.bookingStage = String(data.bookingStage || db.appointments[data.id]?.bookingStage || "confirmed");
-  data.isCompleted = data.bookingStage === "completed" || db.appointments[data.id]?.isCompleted || false;
+  data.bookingStage = normalizeBookingStage(data.bookingStage || db.appointments[data.id]?.bookingStage || "confirmed", db.appointments[data.id] || {});
+  data.isCompleted = data.bookingStage === "completed";
   data.collectedPrice = db.appointments[data.id]?.collectedPrice || "";
   data.customerName = String(data.customerName || "").trim();
   data.phone = String(data.phone || "").trim();
@@ -1288,10 +1347,12 @@ async function saveAppointmentFromForm(form, date) {
     if (recordIndex >= 0) customer.records[recordIndex] = record;
     else customer.records.push(record);
     db.customers[data.phone] = customer;
+    const metaAction = syncAppointmentMeta(data);
     const actions = [
       { action: "addAppointment", data },
-      { action: "saveCustomer", data: { phone: data.phone, ...customer } }
-    ];
+      { action: "saveCustomer", data: { phone: data.phone, ...customer } },
+      metaAction
+    ].filter(Boolean);
     if (pendingClientSelectionId && db.clientSelections[pendingClientSelectionId]) {
       const selection = {
         ...db.clientSelections[pendingClientSelectionId],
@@ -1334,17 +1395,28 @@ async function deleteAppointment(id) {
   const appt = db.appointments[id];
   delete db.appointments[id];
   if (appt && db.customers[appt.phone]?.records) db.customers[appt.phone].records = db.customers[appt.phone].records.filter((r) => r.id !== id);
+  delete db.appointmentMeta?.[id];
+  delete db.customers[appointmentMetaKey(id)];
   if (activeAppointmentId === id) activeAppointmentId = null;
-  await saveCloudActions([{ action: "deleteAppointment", data: { appId: id } }], "預約已刪除");
+  const actions = [
+    { action: "deleteAppointment", data: { appId: id } },
+    { action: "deleteCustomer", data: { phone: appointmentMetaKey(id) } }
+  ];
+  if (appt?.phone && db.customers[appt.phone]) actions.push({ action: "saveCustomer", data: { phone: appt.phone, ...db.customers[appt.phone] } });
+  await saveCloudActions(actions, "預約已刪除");
   renderAll();
 }
 
 async function updateAppointmentStage(id, stage) {
   const appt = db.appointments[id];
   if (!appt) return;
-  appt.bookingStage = stage;
-  if (stage === "completed") appt.isCompleted = true;
-  await saveCloudActions([{ action: "addAppointment", data: { ...appt, appId: id } }], "預約進度已更新");
+  appt.bookingStage = normalizeBookingStage(stage, appt);
+  appt.isCompleted = appt.bookingStage === "completed";
+  const metaAction = syncAppointmentMeta(appt);
+  await saveCloudActions([
+    { action: "addAppointment", data: { ...appt, appId: id } },
+    metaAction
+  ].filter(Boolean), "預約進度已更新");
   renderAll();
   if (activeAppointmentId === id) renderAppointmentDetail();
 }
@@ -1391,11 +1463,13 @@ async function quickConfirmClientSelection(selectionId) {
       notes: JSON.stringify(nextSelection),
       records: []
     };
+    const metaAction = syncAppointmentMeta(data);
     await saveCloudActions([
       { action: "addAppointment", data },
       { action: "saveCustomer", data: { phone: data.phone, ...customer } },
-      { action: "saveCustomer", data: { phone: clientSelectionKey(nextSelection.id), ...db.customers[clientSelectionKey(nextSelection.id)] } }
-    ], "已快速建立確認預約");
+      { action: "saveCustomer", data: { phone: clientSelectionKey(nextSelection.id), ...db.customers[clientSelectionKey(nextSelection.id)] } },
+      metaAction
+    ].filter(Boolean), "已快速建立確認預約");
     activeAppointmentId = id;
     switchTab("dispatch");
   };
@@ -1724,7 +1798,7 @@ async function saveAppointmentDetailForm(form) {
     appId: old.id,
     duration: Number(data.duration || 60),
     price: Number(data.price || 0),
-    bookingStage: String(data.bookingStage || old.bookingStage || "confirmed"),
+    bookingStage: normalizeBookingStage(data.bookingStage || old.bookingStage || "confirmed", old),
     isCompleted: data.isCompleted === "on" || data.bookingStage === "completed",
     collectedPrice: data.collectedPrice || "",
     phone: String(data.phone || "").trim(),
@@ -1756,10 +1830,13 @@ async function saveAppointmentDetailForm(form) {
     if (idx >= 0) customer.records[idx] = { ...customer.records[idx], ...record };
     else customer.records.push(record);
     db.customers[next.phone] = customer;
-    await saveCloudActions([
+    const actions = [
       { action: "addAppointment", data: next },
-      { action: "saveCustomer", data: { phone: next.phone, ...customer } }
-    ], "預約資料已寫入雲端");
+      { action: "saveCustomer", data: { phone: next.phone, ...customer } },
+      syncAppointmentMeta(next)
+    ].filter(Boolean);
+    if (old.phone && old.phone !== next.phone && db.customers[old.phone]) actions.push({ action: "saveCustomer", data: { phone: old.phone, ...db.customers[old.phone] } });
+    await saveCloudActions(actions, "預約資料已寫入雲端");
     setFormBusy(form, false);
     renderAll();
     activeAppointmentId = next.id;
@@ -2451,6 +2528,7 @@ function openTherapistReport(id) {
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
     a.collectedPrice = data.collectedPrice || "";
     a.isCompleted = data.isCompleted === "on";
+    a.bookingStage = a.isCompleted ? "completed" : (a.bookingStage === "completed" ? "pre_notice" : normalizeBookingStage(a.bookingStage, a));
     const customer = db.customers[a.phone] || { name: a.customerName || "", notes: "", records: [] };
     if (!customer.code) {
       db.customers[a.phone] = customer;
@@ -2464,8 +2542,9 @@ function openTherapistReport(id) {
     db.customers[a.phone] = customer;
     await saveCloudActions([
       { action: "addAppointment", data: a },
-      { action: "saveCustomer", data: { phone: a.phone, ...customer } }
-    ], "服務紀錄已寫入雲端");
+      { action: "saveCustomer", data: { phone: a.phone, ...customer } },
+      syncAppointmentMeta(a)
+    ].filter(Boolean), "服務紀錄已寫入雲端");
     setFormBusy(event.currentTarget, false);
     closeModal();
     renderAll();
