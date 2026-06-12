@@ -71,7 +71,8 @@
       date: params.get("date") || "",
       time: (params.get("time") || "").slice(0, 5),
       service: params.get("service") || "C120",
-      limit: Number(params.get("limit") || 5)
+      limit: Number(params.get("limit") || 5),
+      therapistIds: (params.get("therapists") || "").split(",").map((id) => id.trim()).filter(Boolean)
     };
     const CLIENT_SELECTION_PREFIX = "SYS_CLIENT_SELECTION_";
     const THERAPIST_PROFILE_PREFIX = "SYS_THERAPIST_PROFILE_";
@@ -175,7 +176,10 @@
       const start = normalizedTimelineMinute(timeToMinutes(query.time));
       const duration = COURSE_CATALOG[query.service]?.duration || 120;
       const end = start + duration;
-      return Object.entries(db.therapists).map(([id, profile]) => {
+      const allowed = new Set(query.therapistIds);
+      const order = new Map(query.therapistIds.map((id, index) => [id, index]));
+      const candidates = Object.entries(db.therapists).map(([id, profile]) => {
+        if (allowed.size && !allowed.has(id)) return null;
         const shift = (db.schedules[id] || {})[query.date] || "休假";
         if (!isRangeInShift(shift, start, duration)) return null;
         const dayAppts = Object.values(db.appointments).filter((appt) => appt.date === query.date && appt.therapistId === id);
@@ -186,13 +190,15 @@
         });
         if (conflict) return null;
         return { id, profile, shift, score: candidateCompleteness(profile) * 10 };
-      }).filter(Boolean).sort((a, b) => b.score - a.score || therapistName(a.id).localeCompare(therapistName(b.id))).slice(0, query.limit);
+      }).filter(Boolean);
+      if (allowed.size) return candidates.sort((a, b) => (order.get(a.id) ?? 999) - (order.get(b.id) ?? 999));
+      return candidates.sort((a, b) => b.score - a.score || therapistName(a.id).localeCompare(therapistName(b.id))).slice(0, query.limit);
     }
 
     function renderCandidates(candidates) {
       const list = $("candidateList");
       if (!candidates.length) {
-        list.innerHTML = `<div class="card p-8 text-center font-black text-slate-500 md:col-span-2">此時段目前沒有可選師傅，請回上一頁或聯繫店家協助安排。</div>`;
+        list.innerHTML = `<div class="card p-8 text-center font-black text-slate-500 md:col-span-2">此連結目前沒有可選師傅，請聯繫店家協助安排。</div>`;
         return;
       }
       list.innerHTML = candidates.map(({ id, profile, shift }) => {
@@ -288,7 +294,7 @@
     }
 
     async function boot() {
-      $("selectionMeta").textContent = `${query.date || "未指定日期"} ${query.time || "未指定時間"} · ${courseName(query.service)}`;
+      $("selectionMeta").textContent = `${query.date || "未指定日期"} ${query.time || "未指定時間"} · ${courseName(query.service)}${query.therapistIds.length ? ` · 店家精選 ${query.therapistIds.length} 位` : ""}`;
       if (!query.date || !query.time) {
         $("noticeBox").className = "card mb-5 p-5 text-center font-black text-rose-600";
         $("noticeBox").textContent = "缺少日期或時間參數，請使用店家提供的連結。";

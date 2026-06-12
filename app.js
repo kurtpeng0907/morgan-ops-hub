@@ -665,7 +665,7 @@ function availableTherapistCandidates({ date, time, service = "", duration = 120
   const query = normalizedQueryMinute(time);
   if (!date || query === null) return [];
   const dur = Number(duration || COURSE_CATALOG[service]?.duration || 120);
-  return Object.entries(db.therapists).map(([id, profile]) => {
+  const results = Object.entries(db.therapists).map(([id, profile]) => {
     const shift = (db.schedules[id] || {})[date] || "休假";
     if (!isRangeInShift(shift, query, dur)) return null;
     const start = query;
@@ -684,7 +684,8 @@ function availableTherapistCandidates({ date, time, service = "", duration = 120
       dayCount: dayAppts.length,
       score: candidateCompleteness(profile) * 10 - dayAppts.length
     };
-  }).filter(Boolean).sort((a, b) => b.score - a.score || a.dayCount - b.dayCount || therapistName(a.id).localeCompare(therapistName(b.id))).slice(0, limit);
+  }).filter(Boolean).sort((a, b) => b.score - a.score || a.dayCount - b.dayCount || therapistName(a.id).localeCompare(therapistName(b.id)));
+  return Number.isFinite(limit) ? results.slice(0, limit) : results;
 }
 
 function clientSelectionList(status = "") {
@@ -705,12 +706,13 @@ async function updateClientSelection(selection, status, extra = {}) {
   renderAll();
 }
 
-function clientSelectionUrl({ date, time, service }) {
+function clientSelectionUrl({ date, time, service, therapistIds = [] }) {
   const url = new URL("client-selection.html", window.location.href);
   url.searchParams.set("date", date);
   url.searchParams.set("time", time);
   if (service) url.searchParams.set("service", service);
-  url.searchParams.set("limit", "5");
+  if (therapistIds.length) url.searchParams.set("therapists", therapistIds.join(","));
+  else url.searchParams.set("limit", "5");
   return url.href;
 }
 
@@ -1130,38 +1132,81 @@ function openClientSelectionLinkModal(date, time, service) {
     return;
   }
   const course = COURSE_CATALOG[service] || {};
-  const candidates = availableTherapistCandidates({ date, time, service, duration: course.duration || 120, limit: 5 });
-  const link = clientSelectionUrl({ date, time, service });
+  const candidates = availableTherapistCandidates({ date, time, service, duration: course.duration || 120, limit: Infinity });
   showModal(`<div class="modal max-w-3xl">
     <div class="mb-5 border-b pb-4">
-      <h3 class="text-xl font-black">客人選師傅連結</h3>
-      <p class="mt-1 text-sm font-bold text-slate-500">${esc(date)} ${esc(time)} · ${esc(courseName(service))} · 推薦 ${candidates.length} 位可選師傅</p>
+      <h3 class="text-xl font-black">建立客選頁面</h3>
+      <p class="mt-1 text-sm font-bold text-slate-500">${esc(date)} ${esc(time)} · ${esc(courseName(service))} · 先勾選要給客人看的師傅</p>
     </div>
-    <div class="rounded-xl border bg-slate-50 p-3">
+    <div id="clientSelectionLinkBox" class="hidden rounded-xl border bg-slate-50 p-3">
       <label class="label">分享連結</label>
       <div class="flex flex-col gap-2 sm:flex-row">
-        <input id="clientSelectionUrlInput" class="input bg-white text-sm" readonly value="${esc(link)}">
+        <input id="clientSelectionUrlInput" class="input bg-white text-sm" readonly value="">
         <button id="copyClientSelectionUrlBtn" class="btn-teal shrink-0">複製</button>
       </div>
     </div>
-    <div class="mt-5 grid gap-3 md:grid-cols-2">
-	      ${candidates.length ? candidates.map(({ id, profile, shift }) => `<article class="rounded-xl border bg-white p-4">
-        <div class="flex gap-3">
-          ${therapistPhotoHtml(profile, therapistName(id))}
-          <div class="min-w-0">
-            <h4 class="truncate font-black">${esc(therapistName(id))}</h4>
-            <p class="mt-1 text-xs font-bold text-teal-700">${esc(shift)}</p>
-            <p class="mt-1 text-xs font-bold text-slate-500">${esc(therapistDisplayMeta(profile) || "基本資料未完整")}</p>
-          </div>
-        </div>
-        <p class="mt-3 line-clamp-3 text-sm font-bold text-slate-600">${esc(profile.bio || profile.specialties || "尚未填寫介紹詞")}</p>
-	        <div class="mt-3 flex flex-wrap gap-2 text-xs font-black"><span class="badge bg-teal-50 text-teal-700">可選</span><span class="badge bg-slate-100 text-slate-600">已篩選時段</span></div>
-      </article>`).join("") : `<div class="md:col-span-2 rounded-xl border border-dashed bg-white py-10 text-center font-bold text-slate-400">此時段沒有可推薦師傅</div>`}
+    <div class="mt-5 flex flex-col justify-between gap-3 rounded-xl border bg-white p-4 sm:flex-row sm:items-center">
+      <div><p class="font-black">可接師傅名單</p><p class="text-xs font-bold text-slate-500">客人頁只會顯示你勾選的人；客人不會看到當日筆數。</p></div>
+      <div class="flex items-center gap-2">
+        <span id="clientSelectionPickedCount" class="badge bg-teal-50 text-teal-700">已選 0 / ${candidates.length}</span>
+        <button id="clearClientSelectionCandidatesBtn" class="btn-light px-3 py-2 text-xs">清空</button>
+      </div>
     </div>
-    <div class="mt-5 flex justify-end border-t pt-4"><button class="btn-light" data-close-modal>關閉</button></div>
+    <div class="mt-3 max-h-[52vh] overflow-y-auto pr-1">
+      <div class="grid gap-3 md:grid-cols-2">
+        ${candidates.length ? candidates.map(({ id, profile, shift }) => `<label class="block cursor-pointer rounded-xl border bg-white p-4 transition hover:border-teal-200 hover:bg-teal-50/40" data-client-selection-card="${esc(id)}">
+          <div class="flex gap-3">
+            <input type="checkbox" class="mt-1 h-5 w-5 shrink-0 accent-teal-600" data-client-selection-candidate value="${esc(id)}">
+            ${therapistPhotoHtml(profile, therapistName(id))}
+            <div class="min-w-0">
+              <h4 class="truncate font-black">${esc(therapistName(id))}</h4>
+              <p class="mt-1 text-xs font-bold text-teal-700">${esc(shift)}</p>
+              <p class="mt-1 text-xs font-bold text-slate-500">${esc(therapistDisplayMeta(profile) || "基本資料未完整")}</p>
+            </div>
+          </div>
+          <p class="mt-3 line-clamp-3 text-sm font-bold text-slate-600">${esc(profile.bio || profile.specialties || "尚未填寫介紹詞")}</p>
+          <div class="mt-3 flex flex-wrap gap-2 text-xs font-black"><span class="badge bg-teal-50 text-teal-700">可接</span><span class="badge bg-slate-100 text-slate-600">會出現在客選頁</span></div>
+        </label>`).join("") : `<div class="md:col-span-2 rounded-xl border border-dashed bg-white py-10 text-center font-bold text-slate-400">此時段沒有可接師傅，請改時間或課程。</div>`}
+      </div>
+    </div>
+    <p id="clientSelectionPickError" class="mt-3 hidden text-sm font-black text-rose-600"></p>
+    <div class="mt-5 flex flex-col-reverse justify-end gap-3 border-t pt-4 sm:flex-row">
+      <button class="btn-light" data-close-modal>關閉</button>
+      <button id="buildClientSelectionUrlBtn" class="btn-teal" ${candidates.length ? "" : "disabled"}>產生客選頁面</button>
+    </div>
   </div>`);
+  const selectedIds = () => Array.from(document.querySelectorAll("[data-client-selection-candidate]:checked")).map((input) => input.value);
+  const refreshPickedState = () => {
+    const picked = new Set(selectedIds());
+    $("clientSelectionPickedCount").textContent = `已選 ${picked.size} / ${candidates.length}`;
+    $("buildClientSelectionUrlBtn").disabled = !picked.size;
+    document.querySelectorAll("[data-client-selection-card]").forEach((card) => {
+      card.classList.toggle("border-teal-500", picked.has(card.dataset.clientSelectionCard));
+      card.classList.toggle("bg-teal-50", picked.has(card.dataset.clientSelectionCard));
+    });
+    $("clientSelectionPickError").classList.add("hidden");
+  };
+  document.querySelectorAll("[data-client-selection-candidate]").forEach((input) => input.onchange = refreshPickedState);
+  $("clearClientSelectionCandidatesBtn").onclick = () => {
+    document.querySelectorAll("[data-client-selection-candidate]").forEach((input) => { input.checked = false; });
+    $("clientSelectionLinkBox").classList.add("hidden");
+    refreshPickedState();
+  };
+  $("buildClientSelectionUrlBtn").onclick = () => {
+    const picked = selectedIds();
+    if (!picked.length) {
+      $("clientSelectionPickError").textContent = "請至少勾選一位師傅。";
+      $("clientSelectionPickError").classList.remove("hidden");
+      return;
+    }
+    $("clientSelectionUrlInput").value = clientSelectionUrl({ date, time, service, therapistIds: picked });
+    $("clientSelectionLinkBox").classList.remove("hidden");
+    $("clientSelectionUrlInput").select();
+    showSnackbar(`已產生 ${picked.length} 位師傅的客選頁面`);
+  };
   $("copyClientSelectionUrlBtn").onclick = async () => {
     const input = $("clientSelectionUrlInput");
+    if (!input.value) return;
     input.select();
     try {
       await navigator.clipboard.writeText(input.value);
@@ -1171,6 +1216,7 @@ function openClientSelectionLinkModal(date, time, service) {
       showSnackbar("客選連結已複製");
     }
   };
+  refreshPickedState();
 }
 
 function apptCard(a) {
