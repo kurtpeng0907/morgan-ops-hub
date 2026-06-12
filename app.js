@@ -539,6 +539,97 @@ function companyCutFor(appt) {
   return Math.max(0, Number(appt.price || 0) - therapistCutFor(appt));
 }
 
+function remittanceDueFor(appt) {
+  const manual = String(appt.remittanceDue ?? "").trim();
+  return manual ? Math.max(0, Number(manual) || 0) : companyCutFor(appt);
+}
+
+function isRemittancePaid(appt) {
+  return String(appt.remittancePaid) === "true" || Number(appt.collectedPrice || 0) > 0;
+}
+
+function openDailyBusinessSummary() {
+  const day = todayKey();
+  const rows = Object.values(db.appointments).filter((appt) => appt.date === day).sort(sortByTime);
+  const totalRevenue = rows.reduce((sum, appt) => sum + Number(appt.price || 0), 0);
+  const totalCompany = rows.reduce((sum, appt) => sum + remittanceDueFor(appt), 0);
+  const totalTherapist = rows.reduce((sum, appt) => sum + therapistCutFor(appt), 0);
+  const paidCompany = rows.reduce((sum, appt) => sum + (isRemittancePaid(appt) ? remittanceDueFor(appt) : 0), 0);
+  const unpaidCompany = Math.max(0, totalCompany - paidCompany);
+  const completed = rows.filter((appt) => String(appt.isCompleted) === "true" || appt.bookingStage === "completed").length;
+  const confirmed = rows.filter(isBookingConfirmed).length;
+  const therapistRows = Object.keys(db.therapists).map((id) => {
+    const mine = rows.filter((appt) => appt.therapistId === id);
+    return {
+      id,
+      count: mine.length,
+      revenue: mine.reduce((sum, appt) => sum + Number(appt.price || 0), 0),
+      company: mine.reduce((sum, appt) => sum + remittanceDueFor(appt), 0),
+      paid: mine.reduce((sum, appt) => sum + (isRemittancePaid(appt) ? remittanceDueFor(appt) : 0), 0)
+    };
+  }).filter((row) => row.count > 0).sort((a, b) => b.revenue - a.revenue);
+  const therapistBody = therapistRows.length ? therapistRows.map((row) => `<tr>
+    <td class="font-black text-teal-700">${esc(therapistName(row.id))}</td>
+    <td class="text-right font-black">${row.count}</td>
+    <td class="text-right font-black text-rose-700">${money(row.revenue)}</td>
+    <td class="text-right font-black text-teal-700">${money(row.company)}</td>
+    <td class="text-right font-black ${row.company - row.paid > 0 ? "text-amber-700" : "text-emerald-700"}">${money(Math.max(0, row.company - row.paid))}</td>
+  </tr>`).join("") : `<tr><td colspan="5" class="py-8 text-center font-bold text-slate-400">今日尚無師傅營業資料</td></tr>`;
+  const detailBody = rows.length ? rows.map((appt) => `<tr>
+    <td><button data-open-appt="${esc(appt.id)}" class="font-mono font-black text-teal-700 hover:text-teal-900">${esc(appt.time || "--:--")}</button></td>
+    <td><button data-open-appt="${esc(appt.id)}" class="text-left font-black hover:text-teal-700">${esc(customerDisplay(appt.phone, appt.customerName))}</button></td>
+    <td>${esc(therapistName(appt.therapistId))}</td>
+    <td>${esc(courseName(appt.service))}</td>
+    <td><span class="badge ${bookingStageClass(appt.bookingStage)}">${esc(bookingStageLabel(appt.bookingStage))}</span></td>
+    <td class="text-right font-black text-rose-700">${money(appt.price)}</td>
+    <td class="text-right font-black text-teal-700">${money(remittanceDueFor(appt))}</td>
+    <td>${isRemittancePaid(appt) ? `<span class="badge bg-emerald-50 text-emerald-700">已回帳</span>` : `<span class="badge bg-amber-50 text-amber-700">未回帳</span>`}</td>
+  </tr>`).join("") : `<tr><td colspan="8" class="py-10 text-center font-bold text-slate-400">今日尚無預約</td></tr>`;
+
+  showModal(`<div class="modal max-w-6xl">
+    <div class="mb-5 flex flex-col justify-between gap-4 border-b pb-4 lg:flex-row lg:items-start">
+      <div>
+        <span class="badge bg-teal-50 text-teal-700">當日營業狀況</span>
+        <h3 class="mt-2 text-2xl font-black">營業總表</h3>
+        <p class="mt-1 text-sm font-bold text-slate-500">${esc(day.replaceAll("-", "/"))}，彙整預約進度、營收、店家應回帳與師傅營業狀況。</p>
+      </div>
+      <button class="btn-light" data-close-modal>關閉</button>
+    </div>
+    <div class="mb-5 grid grid-cols-2 gap-3 xl:grid-cols-6">
+      ${metric("今日預約", rows.length)}
+      ${metric("已確認", confirmed, "text-teal-700")}
+      ${metric("已完成", completed, "text-indigo-700")}
+      ${metric("應收總額", money(totalRevenue), "text-rose-700")}
+      ${metric("應回帳", money(totalCompany), "text-teal-700")}
+      ${metric("未回帳", money(unpaidCompany), "text-amber-700")}
+    </div>
+    <div class="mb-5 grid gap-4 lg:grid-cols-[.8fr_1.2fr]">
+      <div class="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+        <h4 class="mb-3 font-black">帳務摘要</h4>
+        <div class="grid gap-3 sm:grid-cols-2">
+          ${metric("已回帳", money(paidCompany), "text-emerald-700")}
+          ${metric("師傅抽成", money(totalTherapist), "text-indigo-700")}
+        </div>
+      </div>
+      <div>
+        <div class="mb-3 flex items-center justify-between gap-3"><h4 class="font-black">師傅別營業</h4><span class="badge bg-slate-100 text-slate-600">${therapistRows.length} 人</span></div>
+        <div class="table-wrap"><table><thead><tr><th>師傅</th><th class="text-right">筆數</th><th class="text-right">應收總額</th><th class="text-right">應回帳</th><th class="text-right">未回帳</th></tr></thead><tbody>${therapistBody}</tbody></table></div>
+      </div>
+    </div>
+    <div>
+      <div class="mb-3 flex items-center justify-between gap-3"><h4 class="font-black">當日預約明細</h4><span class="badge bg-slate-100 text-slate-600">${rows.length} 筆</span></div>
+      <div class="table-wrap"><table><thead><tr><th>時間</th><th>顧客</th><th>師傅</th><th>服務</th><th>狀態</th><th class="text-right">應收</th><th class="text-right">應回帳</th><th>回帳</th></tr></thead><tbody>${detailBody}</tbody></table></div>
+    </div>
+  </div>`);
+  $("modalRoot").querySelectorAll("[data-open-appt]").forEach((button) => {
+    button.onclick = () => {
+      const id = button.dataset.openAppt;
+      closeModal();
+      openAppointmentDetailPage(id);
+    };
+  });
+}
+
 function weekKeys(anchorKey = todayKey(), offsetWeeks = 0) {
   const date = new Date(`${anchorKey}T00:00:00`);
   const day = date.getDay() || 7;
@@ -1056,6 +1147,7 @@ function renderOverview() {
           <div class="mt-2 flex flex-col justify-between gap-4 md:flex-row md:items-end">
             <div><h3 class="text-2xl font-black">${today.replaceAll("-", "/")}</h3><p class="mt-1 text-sm font-bold text-slate-300">${nextAppt ? `下一筆 ${nextAppt.time} · ${customerDisplay(nextAppt.phone, nextAppt.customerName)}` : "今日沒有後續預約"}</p></div>
             <div class="flex flex-wrap gap-2">
+              <button id="businessSummaryBtn" class="btn-light border-slate-700 bg-white px-4 py-2 text-slate-900 hover:bg-slate-100">營業總表</button>
               <button class="btn-teal" data-jump-tab="dispatch">預約作業台</button>
               <button class="btn-light border-slate-700 bg-slate-900 px-4 py-2 text-white hover:bg-slate-800" data-jump-tab="personnel" data-personnel-panel="schedule">修改班表</button>
               <button id="refreshOverviewBtn" class="btn-light border-slate-700 bg-white/10 px-4 py-2 text-white hover:bg-white/15">更新資料</button>
@@ -1136,6 +1228,7 @@ function renderOverview() {
     showModal(`<div class="modal max-w-2xl"><h3 class="mb-5 border-b pb-4 text-xl font-black">大門密碼修改紀錄</h3><div class="table-wrap"><table><thead><tr><th>時間</th><th>密碼</th><th>來源</th></tr></thead><tbody>${doorPasswordRecordHtml()}</tbody></table></div><div class="mt-5 flex justify-end border-t pt-4"><button class="btn-light" data-close-modal>關閉</button></div></div>`);
   };
   $("view-overview").querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => openAppointmentDetailPage(btn.dataset.openAppt));
+  $("businessSummaryBtn").onclick = openDailyBusinessSummary;
   $("refreshOverviewBtn").onclick = refreshDashboardData;
   renderLiveStatus();
 }
