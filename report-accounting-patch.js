@@ -2,7 +2,11 @@
 
 (function patchFinanceAccounting() {
   const grossAmount = (appt) => Number(appt.price || 0);
-  const remittanceDueAmount = (appt) => Math.max(0, grossAmount(appt) - Number(COURSE_CATALOG[appt.service]?.therapistCut || 0));
+  const defaultRemittanceDueAmount = (appt) => Math.max(0, grossAmount(appt) - Number(COURSE_CATALOG[appt.service]?.therapistCut || 0));
+  const remittanceDueAmount = (appt) => {
+    const manual = String(appt.remittanceDue ?? "").trim();
+    return manual ? Math.max(0, Number(manual) || 0) : defaultRemittanceDueAmount(appt);
+  };
   const isRemitted = (appt) => String(appt.remittancePaid) === "true" || Number(appt.collectedPrice || 0) > 0;
   const remittedAmount = (appt) => isRemitted(appt) ? remittanceDueAmount(appt) : 0;
   const unremittedAmount = (appt) => isRemitted(appt) ? 0 : remittanceDueAmount(appt);
