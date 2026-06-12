@@ -22,11 +22,14 @@ let monthWeeks = [];
 let currentUser = null;
 let activeTab = "overview";
 let activeAppointmentView = "card";
+let pendingDispatchFocus = "";
+let appointmentRecordScope = "today";
 let activePersonnelPanel = "schedule";
 let activeReportPanel = "revenue";
 let currentScheduleViewDates = [];
 let editingAppointmentId = null;
 let activeAppointmentId = null;
+let pendingClientSelectionId = null;
 let liveTimer = null;
 
 const $ = (id) => document.getElementById(id);
@@ -85,14 +88,39 @@ const THERAPIST_PROFILE_DEFAULTS = {
   age: "",
   specialties: "",
   notes: "",
-  bio: ""
+  bio: "",
+  photoUrl: ""
 };
 
 const therapistProfileKey = (id) => `SYS_THERAPIST_PROFILE_${id}`;
 const APPROVAL_PREFIX = "SYS_APPROVAL_";
+const CLIENT_SELECTION_PREFIX = "SYS_CLIENT_SELECTION_";
 const approvalKey = (id) => `${APPROVAL_PREFIX}${id}`;
+const clientSelectionKey = (id) => `${CLIENT_SELECTION_PREFIX}${id}`;
 const approvalTypeLabel = (type) => ({ profile: "人事資料", schedule: "班表", password: "密碼" }[type] || type);
 const approvalStatusLabel = (status) => ({ pending: "待審核", approved: "已核可", rejected: "已退回" }[status] || status);
+const BOOKING_STAGES = [
+  { key: "inquiry", label: "詢問中" },
+  { key: "candidate_sent", label: "已給客選" },
+  { key: "therapist_match", label: "師傅媒合中" },
+  { key: "customer_confirm", label: "待顧客確認" },
+  { key: "confirmed", label: "已確認預約" },
+  { key: "pre_notice", label: "行前通知完成" },
+  { key: "completed", label: "服務完成" }
+];
+const bookingStageLabel = (stage) => BOOKING_STAGES.find((item) => item.key === stage)?.label || "已確認預約";
+const bookingStageClass = (stage) => ({
+  inquiry: "bg-slate-100 text-slate-600",
+  candidate_sent: "bg-cyan-50 text-cyan-700",
+  therapist_match: "bg-indigo-50 text-indigo-700",
+  customer_confirm: "bg-amber-50 text-amber-700",
+  confirmed: "bg-teal-50 text-teal-700",
+  pre_notice: "bg-violet-50 text-violet-700",
+  completed: "bg-slate-200 text-slate-700"
+}[stage] || "bg-teal-50 text-teal-700");
+const bookingStageOptions = (selected = "confirmed") => BOOKING_STAGES.map((item) => `<option value="${item.key}" ${item.key === selected ? "selected" : ""}>${item.label}</option>`).join("");
+const isBookingConfirmed = (appt = {}) => ["confirmed", "pre_notice", "completed"].includes(appt.bookingStage) || String(appt.isCompleted) === "true";
+const isBookingUnconfirmed = (appt = {}) => !isBookingConfirmed(appt);
 
 function normalizeTherapistProfile(therapist = {}) {
   const normalized = { ...THERAPIST_PROFILE_DEFAULTS, ...therapist };
@@ -178,6 +206,7 @@ function normalizeDb(data) {
   data.appointments ||= {};
   data.customers ||= {};
   data.approvals ||= {};
+  data.clientSelections ||= {};
   Object.values(data.appointments).forEach((appt) => {
     if (!appt.phone || isSystemCustomerKey(appt.phone)) return;
     data.customers[appt.phone] ||= { name: appt.customerName || "", notes: "", records: [] };
@@ -189,6 +218,9 @@ function normalizeDb(data) {
       record.date = normalizeDateField(record.date);
       record.time = normalizeTimeField(record.time);
       record.collectedPrice = cleanPin(record.collectedPrice || "");
+      record.remittanceDue = cleanPin(record.remittanceDue || "");
+      record.remittancePaid = String(record.remittancePaid) === "true" || record.remittancePaid === true;
+      record.remittanceMethod = String(record.remittanceMethod || "").trim();
     });
     if (!key.startsWith("SYS_ADMIN_")) return;
     const id = key.replace("SYS_ADMIN_", "");
@@ -213,6 +245,14 @@ function normalizeDb(data) {
       if (approval.id) data.approvals[approval.id] = approval;
     } catch {}
   });
+  data.clientSelections = {};
+  Object.keys(data.customers).forEach((key) => {
+    if (!key.startsWith(CLIENT_SELECTION_PREFIX)) return;
+    try {
+      const selection = JSON.parse(data.customers[key].notes || "{}");
+      if (selection.id) data.clientSelections[selection.id] = selection;
+    } catch {}
+  });
   Object.keys(data.therapists).forEach((id) => {
     data.therapists[id] = normalizeTherapistProfile(data.therapists[id]);
   });
@@ -226,7 +266,21 @@ function normalizeDb(data) {
     appt.duration = Number(appt.duration || 60);
     appt.price = Number(appt.price || 0);
     appt.collectedPrice = cleanPin(appt.collectedPrice || "");
+    appt.remittanceDue = cleanPin(appt.remittanceDue || "");
+    appt.remittancePaid = String(appt.remittancePaid) === "true" || appt.remittancePaid === true;
+    appt.remittanceMethod = String(appt.remittanceMethod || "").trim();
     appt.customerName = String(appt.customerName || "").trim();
+    appt.bookingStage = String(appt.bookingStage || (String(appt.isCompleted) === "true" ? "completed" : "confirmed")).trim();
+  });
+  Object.values(data.customers).forEach((customer) => {
+    (customer.records || []).forEach((record) => {
+      const appt = record.id ? data.appointments[record.id] : null;
+      if (!appt) return;
+      if (!appt.collectedPrice && record.collectedPrice) appt.collectedPrice = record.collectedPrice;
+      if (!appt.remittanceDue && record.remittanceDue) appt.remittanceDue = record.remittanceDue;
+      if (!appt.remittancePaid && record.remittancePaid) appt.remittancePaid = record.remittancePaid;
+      if (!appt.remittanceMethod && record.remittanceMethod) appt.remittanceMethod = record.remittanceMethod;
+    });
   });
   assignCustomerCodes(data);
   return data;
@@ -501,6 +555,165 @@ function dailyScheduleBoardHtml(dateKey) {
   </div>`;
 }
 
+function queryTimeLabel(value = "") {
+  if (!value) return "";
+  return String(value).replace(/\b(\d{1,2})(\d{2})\b/g, (_, h, m) => `${String(h).padStart(2, "0")}:${m}`).slice(0, 5);
+}
+
+function normalizedQueryMinute(value = "") {
+  const label = queryTimeLabel(value);
+  if (!label || !label.includes(":")) return null;
+  return normalizedTimelineMinute(timeToMinutes(label));
+}
+
+function isMinuteInShift(shift, normalizedMinute) {
+  if (normalizedMinute === null) return false;
+  return parseShiftSegments(shift).some((seg) => {
+    const start = normalizedTimelineMinute(seg.start);
+    const end = normalizedTimelineMinute(seg.end);
+    return normalizedMinute >= start && normalizedMinute < end;
+  });
+}
+
+function isRangeInShift(shift, normalizedStart, duration) {
+  if (normalizedStart === null) return false;
+  const normalizedEnd = normalizedStart + Number(duration || 60);
+  return parseShiftSegments(shift).some((seg) => {
+    const start = normalizedTimelineMinute(seg.start);
+    const end = normalizedTimelineMinute(seg.end);
+    return normalizedStart >= start && normalizedEnd <= end;
+  });
+}
+
+function appointmentCoversMinute(appt, normalizedMinute) {
+  if (normalizedMinute === null) return null;
+  const start = normalizedTimelineMinute(timeToMinutes(appt.time));
+  const end = start + Number(appt.duration || 60);
+  return normalizedMinute >= start && normalizedMinute < end ? appt : null;
+}
+
+function therapistPhotoHtml(profile = {}, name = "") {
+  const photo = String(profile.photoUrl || "").trim();
+  if (photo) return `<img src="${esc(photo)}" alt="${esc(name)}" class="h-16 w-16 rounded-xl object-cover">`;
+  return `<div class="flex h-16 w-16 items-center justify-center rounded-xl bg-teal-50 text-2xl font-black text-teal-700">${esc((name || "師").charAt(0))}</div>`;
+}
+
+function candidateCompleteness(profile = {}) {
+  return ["photoUrl", "bio", "specialties", "height", "weight", "age"].reduce((sum, key) => sum + (String(profile[key] || "").trim() ? 1 : 0), 0);
+}
+
+function availableTherapistCandidates({ date, time, service = "", duration = 120, limit = 5 }) {
+  const query = normalizedQueryMinute(time);
+  if (!date || query === null) return [];
+  const dur = Number(duration || COURSE_CATALOG[service]?.duration || 120);
+  return Object.entries(db.therapists).map(([id, profile]) => {
+    const shift = (db.schedules[id] || {})[date] || "休假";
+    if (!isRangeInShift(shift, query, dur)) return null;
+    const start = query;
+    const end = start + dur;
+    const dayAppts = Object.values(db.appointments).filter((appt) => appt.date === date && appt.therapistId === id);
+    const conflict = dayAppts.some((appt) => {
+      const apptStart = normalizedTimelineMinute(timeToMinutes(appt.time));
+      const apptEnd = apptStart + Number(appt.duration || 60);
+      return start < apptEnd && end > apptStart;
+    });
+    if (conflict) return null;
+    return {
+      id,
+      profile,
+      shift,
+      dayCount: dayAppts.length,
+      score: candidateCompleteness(profile) * 10 - dayAppts.length
+    };
+  }).filter(Boolean).sort((a, b) => b.score - a.score || a.dayCount - b.dayCount || therapistName(a.id).localeCompare(therapistName(b.id))).slice(0, limit);
+}
+
+function clientSelectionList(status = "") {
+  return Object.values(db.clientSelections || {})
+    .filter((item) => !status || item.status === status)
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+}
+
+async function updateClientSelection(selection, status, extra = {}) {
+  const next = { ...selection, ...extra, status, updatedAt: new Date().toISOString() };
+  db.clientSelections[next.id] = next;
+  db.customers[clientSelectionKey(next.id)] = {
+    name: `${status}-${next.customerName || next.customerContact || "客選"}-${therapistName(next.selectedTherapistId)}`,
+    notes: JSON.stringify(next),
+    records: []
+  };
+  await saveCloudActions([{ action: "saveCustomer", data: { phone: clientSelectionKey(next.id), ...db.customers[clientSelectionKey(next.id)] } }], "客選狀態已更新");
+  renderAll();
+}
+
+function clientSelectionUrl({ date, time, service }) {
+  const url = new URL("client-selection.html", window.location.href);
+  url.searchParams.set("date", date);
+  url.searchParams.set("time", time);
+  if (service) url.searchParams.set("service", service);
+  url.searchParams.set("limit", "5");
+  return url.href;
+}
+
+function appointmentQueryBoardHtml(dateKey, queryTime = "") {
+  const total = SCHEDULE_WINDOW_END - SCHEDULE_WINDOW_START;
+  const queryNorm = normalizedQueryMinute(queryTime);
+  const queryPercent = queryNorm === null ? null : ((queryNorm - SCHEDULE_WINDOW_START) / total) * 100;
+  const todayPercent = dateKey === todayKey() ? currentTimelinePercent() : null;
+  const dayAppts = Object.values(db.appointments).filter((a) => a.date === dateKey).sort(sortByTime);
+  const working = Object.entries(db.therapists).map(([id, therapist]) => ({
+    id,
+    name: therapistName(id),
+    shift: (db.schedules[id] || {})[dateKey] || "休假"
+  })).filter((row) => isWorking(row.shift)).sort((a, b) => a.shift.localeCompare(b.shift));
+  if (!working.length) return `<div class="rounded-xl bg-white py-12 text-center font-bold text-slate-400">當日無排班</div>`;
+  const axis = ["11:00", "14:00", "17:00", "20:00", "23:00", "02:00"].map((label, index) => `<span class="absolute -translate-x-1/2" style="left:${(index / 5) * 100}%">${label}</span>`).join("");
+  return `<div class="card p-5">
+    <div class="mb-4 flex flex-col justify-between gap-3 lg:flex-row lg:items-end">
+      <div><h3 class="font-black">當日師傅時段</h3><p class="text-xs font-bold text-slate-500">綠色為上班時段，橘色為已有預約；點綠色空檔可新增預約，點橘色預約可修改紀錄。</p></div>
+      <div class="flex flex-wrap gap-2 text-xs font-black text-slate-500"><span class="badge bg-teal-50 text-teal-700">上班</span><span class="badge bg-amber-50 text-amber-700">已有預約</span>${queryTime ? `<span class="badge bg-indigo-50 text-indigo-700">查詢 ${esc(queryTime)}</span>` : ""}</div>
+    </div>
+    <div class="space-y-3">
+      <div class="grid grid-cols-[116px_1fr_92px] gap-3 px-1 text-[10px] font-black text-slate-400">
+        <span>按摩師</span><div class="relative h-5">${axis}</div><span class="text-right">狀態</span>
+      </div>
+      ${working.map((row) => {
+        const mine = dayAppts.filter((a) => a.therapistId === row.id);
+        const busy = mine.find((appt) => appointmentCoversMinute(appt, queryNorm));
+        const inShift = isMinuteInShift(row.shift, queryNorm);
+        const status = queryNorm === null ? `${mine.length} 筆預約` : (busy ? "已預約" : (inShift ? "可預約" : "未上班"));
+        const statusClass = busy ? "bg-amber-50 text-amber-700" : inShift ? "bg-teal-50 text-teal-700" : "bg-slate-100 text-slate-500";
+        const shiftBlocks = parseShiftSegments(row.shift).map((seg) => {
+          const start = normalizedTimelineMinute(seg.start);
+          const end = normalizedTimelineMinute(seg.end);
+          const left = Math.max(0, Math.min(total, start - SCHEDULE_WINDOW_START));
+          const right = Math.max(0, Math.min(total, end - SCHEDULE_WINDOW_START));
+          if (right <= 0 || left >= total) return "";
+          const width = Math.max(3, right - left);
+          const addTime = queryNorm !== null && queryNorm >= start && queryNorm < end ? queryTime : minsToTime(start);
+          return `<button class="absolute top-1 h-9 rounded-lg border border-teal-200 bg-teal-100/70 transition hover:bg-teal-200" data-add-appointment data-therapist="${esc(row.id)}" data-date="${esc(dateKey)}" data-time="${esc(addTime)}" title="新增預約 ${esc(row.name)} ${esc(addTime)}" style="left:${(left / total) * 100}%;width:${(width / total) * 100}%"></button>`;
+        }).join("");
+        const appointmentBlocks = mine.map((appt) => {
+          const start = normalizedTimelineMinute(timeToMinutes(appt.time));
+          const end = start + Number(appt.duration || 60);
+          const left = Math.max(0, Math.min(total, start - SCHEDULE_WINDOW_START));
+          const right = Math.max(0, Math.min(total, end - SCHEDULE_WINDOW_START));
+          if (right <= 0 || left >= total) return "";
+          const width = Math.max(4, right - left);
+          return `<button class="absolute top-2 z-10 h-7 overflow-hidden rounded-md border border-amber-300 bg-amber-100 px-2 text-left text-[10px] font-black text-amber-900 shadow-sm transition hover:bg-amber-200" data-open-appt="${esc(appt.id)}" title="${esc(appt.time)} ${esc(customerDisplay(appt.phone, appt.customerName))}" style="left:${(left / total) * 100}%;width:${(width / total) * 100}%"><span class="truncate">${esc(appt.time)} ${esc(customerDisplay(appt.phone, appt.customerName))}</span></button>`;
+        }).join("");
+        const queryLine = queryPercent === null || queryPercent < 0 || queryPercent > 100 ? "" : `<span class="absolute -top-1 bottom-0 z-20 w-px bg-indigo-500" style="left:${queryPercent}%"><span class="absolute -top-5 -translate-x-1/2 rounded bg-indigo-600 px-1.5 py-0.5 text-[10px] font-black text-white">${esc(queryTime)}</span></span>`;
+        const nowLine = todayPercent === null ? "" : `<span class="absolute -top-1 bottom-0 z-20 w-px bg-rose-500" style="left:${todayPercent}%"></span>`;
+        return `<div class="grid grid-cols-[116px_1fr_92px] items-center gap-3 rounded-xl border border-slate-100 bg-white p-3">
+          <div><p class="truncate text-sm font-black">${esc(row.name)}</p><p class="text-[10px] font-bold text-teal-700">${esc(row.shift)}</p></div>
+          <div class="relative h-11 rounded-xl bg-slate-100">${shiftBlocks}${appointmentBlocks}${nowLine}${queryLine}</div>
+          <div class="text-right"><span class="badge ${statusClass}">${status}</span></div>
+        </div>`;
+      }).join("")}
+    </div>
+  </div>`;
+}
+
 function doorPasswordRecordHtml() {
   const records = db.customers.SYS_DOOR_PWD?.records || [];
   return records.length ? records.slice().reverse().map((r) => `<tr><td class="font-mono font-black">${esc(r.at || "")}</td><td class="font-black">${esc(r.value || "")}</td><td>${esc(r.reason || "手動更新")}</td></tr>`).join("") : `<tr><td colspan="3" class="py-8 text-center font-bold text-slate-400">尚無修改紀錄</td></tr>`;
@@ -509,28 +722,50 @@ function doorPasswordRecordHtml() {
 function renderAll() {
   generateMonthData();
   renderOverview();
-  renderAppointment();
+  renderDispatch();
   renderCustomers();
   renderPersonnel();
   renderReport();
   renderPortal();
 }
 
-function switchTab(tab) {
+function focusDispatchTarget() {
+  const targetId = {
+    query: "appointmentQueryPanel",
+    records: "appointmentRecordsPanel",
+    board: "bookingStageBoard"
+  }[pendingDispatchFocus];
+  if (!targetId) return;
+  const focusMode = pendingDispatchFocus;
+  pendingDispatchFocus = "";
+  requestAnimationFrame(() => {
+    const target = $(targetId);
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (focusMode === "query") {
+      setTimeout(() => $("appointmentTime")?.focus({ preventScroll: true }), 180);
+    }
+  });
+}
+
+function switchTab(tab, options = {}) {
   if (tab === "schedule") {
     activePersonnelPanel = "schedule";
     tab = "personnel";
   }
-  if (tab === "filter") tab = "appointment";
-  if (tab === "appointmentDetail") tab = "appointment";
+  if (tab === "filter" || tab === "appointment") tab = "dispatch";
+  if (tab === "appointmentDetail") tab = "dispatch";
+  if (tab === "dispatch" && options.clearAppointment) activeAppointmentId = null;
+  if (tab === "dispatch" && options.focus) pendingDispatchFocus = options.focus;
   activeTab = tab;
   document.querySelectorAll(".view").forEach((el) => el.classList.add("hidden"));
   $(`view-${tab}`)?.classList.remove("hidden");
   document.querySelectorAll(".nav-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === tab));
-  const titles = { overview: "總覽", appointment: "派班資料", customer: "顧客 CRM", personnel: "人事權限", report: "財務報表", portal: "個人中樞" };
+  const titles = { overview: "總覽", dispatch: "預約作業台", customer: "顧客 CRM", personnel: "人事權限", report: "財務報表", portal: "個人中樞" };
   $("pageTitle").textContent = titles[tab] || "管理中樞";
   hideSidebar();
   renderAll();
+  if (tab === "dispatch") focusDispatchTarget();
 }
 
 function showSidebar() {
@@ -549,6 +784,7 @@ function renderOverview() {
   const today = todayKey();
   const appts = Object.values(db.appointments);
   const todayAppts = appts.filter((a) => a.date === today).sort(sortByTime);
+  const pendingApprovals = approvalsList("pending");
   const thisWeekKeys = weekKeys(today, 0);
   const nextWeekScheduleKeys = weekKeys(today, 1);
   const thisWeekScheduled = Object.keys(db.therapists).filter((id) => thisWeekKeys.some((key) => isWorking((db.schedules[id] || {})[key]))).length;
@@ -562,11 +798,18 @@ function renderOverview() {
   const upcoming = todayAppts.filter((a) => timeToMinutes(a.time) >= currentMins).slice(0, 4);
   const upcomingAll = todayAppts.filter((a) => timeToMinutes(a.time) >= currentMins);
   const nextAppt = upcoming[0];
-  const pastUnfinished = appts.filter((a) => a.date < today && String(a.isCompleted) !== "true").sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 5);
+  const todayConfirmed = todayAppts.filter(isBookingConfirmed);
+  const todayUnconfirmed = todayAppts.filter(isBookingUnconfirmed);
+  const todayPreNoticeDone = todayAppts.filter((a) => ["pre_notice", "completed"].includes(a.bookingStage));
+  const todayPendingSelections = clientSelectionList("pending").filter((selection) => selection.date === today);
   const needsCollection = appts.filter((a) => String(a.isCompleted) === "true" && !String(a.collectedPrice || "").trim()).slice(0, 5);
   const noRecordNotes = appts.filter((a) => {
     const record = appointmentRecord(a);
     return String(a.isCompleted) === "true" && !String(record?.notes || "").trim();
+  }).slice(0, 5);
+  const preNoticeDue = todayAppts.filter((a) => {
+    const minsUntil = timeToMinutes(a.time) - currentMins;
+    return minsUntil >= 0 && minsUntil <= 30 && !["pre_notice", "completed"].includes(a.bookingStage);
   }).slice(0, 5);
   const todayTimeline = todayAppts.length ? todayAppts.map((a) => {
     const start = timeToMinutes(a.time);
@@ -576,25 +819,42 @@ function renderOverview() {
     return `<button data-open-appt="${esc(a.id)}" class="grid w-full grid-cols-[82px_1fr_auto] items-start gap-3 border-b border-slate-100 px-5 py-4 text-left last:border-b-0 hover:bg-teal-50/60">
       <div class="font-mono text-sm font-black text-slate-800">${esc(a.time)}<div class="mt-1 text-[11px] text-slate-400">${minsToTime(end)}</div></div>
       <div><div class="font-black">${esc(customerDisplay(a.phone, a.customerName))}</div><div class="mt-1 text-xs font-bold text-slate-500">${esc(therapistName(a.therapistId))} · ${esc(courseName(a.service))} · ${roomBadge(a.room)}</div>${a.notes ? `<div class="mt-2 line-clamp-1 text-xs font-bold text-slate-500">備註：${esc(a.notes)}</div>` : ""}</div>
-      <span class="rounded-full px-2.5 py-1 text-xs font-black ${statusClass}">${status}</span>
+      <span class="flex flex-col items-end gap-1"><span class="rounded-full px-2.5 py-1 text-xs font-black ${bookingStageClass(a.bookingStage)}">${esc(bookingStageLabel(a.bookingStage))}</span><span class="rounded-full px-2.5 py-1 text-xs font-black ${statusClass}">${status}</span></span>
     </button>`;
   }).join("") : `<div class="p-8 text-center font-bold text-slate-400">今日尚無預約</div>`;
   const taskCards = [
-    { title: "逾期未完成", items: pastUnfinished, tone: "rose", empty: "沒有逾期未完成預約" },
+    { title: "行前通知", items: preNoticeDue, tone: "teal", empty: "目前沒有行前通知" },
     { title: "完成但未回款", items: needsCollection, tone: "amber", empty: "回款資料完整" },
     { title: "缺服務紀錄", items: noRecordNotes, tone: "slate", empty: "服務紀錄完整" }
   ].map((group) => `<div class="rounded-2xl border border-slate-200 bg-white p-4">
     <div class="mb-3 flex items-center justify-between"><h4 class="font-black">${group.title}</h4><span class="badge bg-slate-100 text-slate-600">${group.items.length}</span></div>
     <div class="space-y-2">${group.items.length ? group.items.map((a) => compactApptLine(a, group.tone)).join("") : `<p class="rounded-xl bg-slate-50 p-4 text-center text-sm font-bold text-slate-400">${group.empty}</p>`}</div>
   </div>`).join("");
+  const approvalAlert = pendingApprovals.length ? `
+    <div class="rounded-3xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+      <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="rounded-full bg-amber-500 px-3 py-1 text-xs font-black text-white">待審核 ${pendingApprovals.length}</span>
+            <h3 class="font-black text-amber-950">前台有變更申請等待處理</h3>
+          </div>
+          <div class="mt-2 flex flex-wrap gap-2 text-sm font-bold text-amber-800">
+            ${pendingApprovals.slice(0, 3).map((item) => `<span class="rounded-full bg-white/80 px-3 py-1">${esc(therapistName(item.therapistId))} · ${esc(approvalTypeLabel(item.type))}</span>`).join("")}
+            ${pendingApprovals.length > 3 ? `<span class="rounded-full bg-white/80 px-3 py-1">另 ${pendingApprovals.length - 3} 筆</span>` : ""}
+          </div>
+        </div>
+        <button class="btn-teal shrink-0" data-jump-tab="personnel" data-personnel-panel="approvals">前往審核</button>
+      </div>
+    </div>` : "";
   $("view-overview").innerHTML = `
+    ${approvalAlert}
     <div class="grid gap-5 xl:grid-cols-[1.35fr_.9fr]">
       <div class="card overflow-hidden">
         <div class="border-b bg-slate-950 p-6 text-white">
           <p class="text-xs font-black uppercase tracking-widest text-teal-300">今日營運指揮台</p>
           <div class="mt-2 flex flex-col justify-between gap-4 md:flex-row md:items-end">
             <div><h3 class="text-2xl font-black">${today.replaceAll("-", "/")}</h3><p class="mt-1 text-sm font-bold text-slate-300">${nextAppt ? `下一筆 ${nextAppt.time} · ${customerDisplay(nextAppt.phone, nextAppt.customerName)}` : "今日沒有後續預約"}</p></div>
-            <div class="flex flex-wrap gap-2"><button class="btn-teal" data-jump-tab="appointment">派班資料</button></div>
+            <div class="flex flex-wrap gap-2"><button class="btn-teal" data-jump-tab="dispatch">預約作業台</button><button class="btn-light border-slate-700 bg-slate-900 px-4 py-2 text-white hover:bg-slate-800" data-jump-tab="personnel" data-personnel-panel="schedule">修改班表</button></div>
           </div>
         </div>
         <div class="grid grid-cols-2 gap-px bg-slate-200 xl:grid-cols-6">
@@ -613,6 +873,18 @@ function renderOverview() {
       <div class="grid gap-5">
         <div class="card p-5">
           <div class="mb-4 flex items-center justify-between gap-3">
+            <div><h3 class="font-black">今日確認狀態</h3><p class="text-xs font-bold text-slate-500">含客選待確認與正式預約進度</p></div>
+            <button class="btn-light px-3 py-2 text-xs" data-jump-tab="dispatch" data-dispatch-focus="board">處理</button>
+          </div>
+          <div class="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border bg-slate-200">
+            <div class="bg-white p-4"><p class="text-xs font-black text-slate-500">未確認</p><p class="mt-1 text-3xl font-black text-amber-700">${todayUnconfirmed.length}</p></div>
+            <div class="bg-white p-4"><p class="text-xs font-black text-slate-500">已確認</p><p class="mt-1 text-3xl font-black text-teal-700">${todayConfirmed.length}</p></div>
+            <div class="bg-white p-4"><p class="text-xs font-black text-slate-500">客選待處理</p><p class="mt-1 text-3xl font-black text-indigo-700">${todayPendingSelections.length}</p></div>
+            <div class="bg-white p-4"><p class="text-xs font-black text-slate-500">行前已通知</p><p class="mt-1 text-3xl font-black text-violet-700">${todayPreNoticeDone.length}</p></div>
+          </div>
+        </div>
+        <div class="card p-5">
+          <div class="mb-4 flex items-center justify-between gap-3">
             <div><h3 class="font-black">排班概況</h3><p class="text-xs font-bold text-slate-500">以有填班表的人員計算</p></div>
             <button class="btn-light px-3 py-2 text-xs" data-jump-tab="personnel" data-personnel-panel="schedule">班表</button>
           </div>
@@ -629,7 +901,7 @@ function renderOverview() {
     </div>
     <div class="grid gap-5 xl:grid-cols-[1.15fr_.85fr]">
       <div class="card overflow-hidden">
-        <div class="flex items-center justify-between border-b bg-white px-5 py-4"><div><h3 class="font-black">今日流程</h3><p class="text-xs font-bold text-slate-500">點任一筆可在派班資料內編輯</p></div><span class="badge bg-teal-50 text-teal-700">${todayAppts.length} 筆</span></div>
+        <div class="flex items-center justify-between border-b bg-white px-5 py-4"><div><h3 class="font-black">今日流程</h3><p class="text-xs font-bold text-slate-500">點任一筆可進入預約作業台修改</p></div><span class="badge bg-teal-50 text-teal-700">${todayAppts.length} 筆</span></div>
         <div>${todayTimeline}</div>
       </div>
       <div class="space-y-5">${taskCards}</div>
@@ -657,10 +929,6 @@ function renderOverview() {
   $("doorHistoryBtn").onclick = () => {
     showModal(`<div class="modal max-w-2xl"><h3 class="mb-5 border-b pb-4 text-xl font-black">大門密碼修改紀錄</h3><div class="table-wrap"><table><thead><tr><th>時間</th><th>密碼</th><th>來源</th></tr></thead><tbody>${doorPasswordRecordHtml()}</tbody></table></div><div class="mt-5 flex justify-end border-t pt-4"><button class="btn-light" data-close-modal>關閉</button></div></div>`);
   };
-  $("view-overview").querySelectorAll("[data-jump-tab]").forEach((btn) => btn.onclick = () => {
-    if (btn.dataset.personnelPanel) activePersonnelPanel = btn.dataset.personnelPanel;
-    switchTab(btn.dataset.jumpTab);
-  });
   $("view-overview").querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => openAppointmentDetailPage(btn.dataset.openAppt));
   renderLiveStatus();
 }
@@ -691,59 +959,159 @@ function renderLiveStatus() {
   rows.querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => openAppointmentDetailPage(btn.dataset.openAppt));
 }
 
-function renderAppointment() {
-  const section = $("view-appointment");
+function appointmentCandidateStripHtml(date, time, service) {
+  if (!time) return "";
+  const course = COURSE_CATALOG[service] || {};
+  const candidates = availableTherapistCandidates({ date, time, service, duration: course.duration || 120, limit: 5 });
+  return `<div id="appointmentCandidateStrip" class="card border-teal-100 bg-teal-50/40 p-5">
+    <div class="mb-4 flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+      <div><h3 class="font-black">推薦可接師傅</h3><p class="text-xs font-bold text-slate-500">${esc(date)} ${esc(time)} · ${esc(courseName(service))}，依資料完整度與當日負荷排序</p></div>
+      <span class="badge bg-white text-teal-700">${candidates.length} 位</span>
+    </div>
+    <div class="grid gap-3 xl:grid-cols-5 md:grid-cols-2">
+      ${candidates.length ? candidates.map(({ id, profile, shift }) => `<article class="rounded-2xl border border-teal-100 bg-white p-4">
+        <div class="flex gap-3">
+          ${therapistPhotoHtml(profile, therapistName(id))}
+          <div class="min-w-0">
+            <h4 class="truncate font-black">${esc(therapistName(id))}</h4>
+            <p class="mt-1 text-xs font-bold text-teal-700">${esc(shift)}</p>
+            <p class="mt-1 text-xs font-bold text-slate-500">${esc(therapistDisplayMeta(profile) || "基本資料待補")}</p>
+          </div>
+        </div>
+        <p class="mt-3 line-clamp-2 min-h-10 text-xs font-bold text-slate-500">${esc(profile.specialties || profile.bio || "尚未填寫專長介紹")}</p>
+        <button class="mt-3 w-full rounded-xl bg-teal-600 px-3 py-2 text-sm font-black text-white hover:bg-teal-700" data-add-appointment data-therapist="${esc(id)}" data-date="${esc(date)}" data-time="${esc(time)}">用此師傅新增</button>
+      </article>`).join("") : `<div class="rounded-2xl border border-dashed border-teal-200 bg-white py-10 text-center text-sm font-bold text-slate-400 md:col-span-2 xl:col-span-5">此條件沒有完全符合的師傅，可改時間、課程或看下方長條圖確認部分可用時段。</div>`}
+    </div>
+  </div>`;
+}
+
+function appointmentQueryPanelHtml() {
   const selectedDate = $("appointmentDate")?.value || todayKey();
-  section.innerHTML = `
-    <div class="card p-5">
-      <div class="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
-        <div><h3 class="text-lg font-black">派班資料</h3><p class="text-sm font-bold text-slate-500">選日期後直接從師傅看板新增派班，並在同頁管理每筆派班資料。</p></div>
-        <div class="flex flex-col gap-3 md:flex-row md:items-end">
+  const selectedTime = queryTimeLabel($("appointmentTime")?.value || "");
+  const selectedService = $("appointmentService")?.value || "C120";
+  const selectedCourse = COURSE_CATALOG[selectedService] || {};
+  const candidateCount = selectedTime ? availableTherapistCandidates({ date: selectedDate, time: selectedTime, service: selectedService, duration: selectedCourse.duration || 120, limit: 5 }).length : null;
+  const serviceOptions = Object.entries(COURSE_CATALOG).map(([key, course]) => `<option value="${key}" ${selectedService === key ? "selected" : ""}>${esc(course.name)}</option>`).join("");
+  return `
+    <div id="appointmentQueryPanel" class="card scroll-mt-20 p-5">
+      <div class="flex flex-col gap-5">
+        <div class="flex flex-col justify-between gap-3 lg:flex-row lg:items-start">
+          <div>
+            <span class="badge bg-teal-50 text-teal-700">Step 1</span>
+            <h3 class="mt-2 text-xl font-black">查時段，從這裡開始</h3>
+            <p class="mt-1 text-sm font-bold text-slate-500">選日期、時間與課程後，下方會直接標示可預約師傅與已被占用時段。</p>
+          </div>
+          <div class="rounded-2xl bg-slate-50 px-4 py-3 text-sm font-black text-slate-600">
+            ${selectedTime ? `目前條件可推薦 <span class="text-lg text-teal-700">${candidateCount}</span> 位師傅` : "先輸入時間，再產生客選連結"}
+          </div>
+        </div>
+        <div class="grid gap-3 lg:grid-cols-[1fr_1fr_1.2fr_auto] lg:items-end">
           <div><label class="label">日期</label><input id="appointmentDate" type="date" class="input py-2" value="${selectedDate}"></div>
+          <div><label class="label">時間</label><input id="appointmentTime" type="time" class="input py-2" value="${esc(selectedTime)}"></div>
+          <div><label class="label">服務</label><select id="appointmentService" class="input py-2">${serviceOptions}</select></div>
+          <div class="grid grid-cols-2 gap-2 lg:w-[280px]">
+            <button id="queryAppointmentBtn" class="btn-primary px-4 py-3">查詢</button>
+            <button id="clientSelectionLinkBtn" class="btn-teal px-4 py-3">客選連結</button>
+          </div>
+        </div>
+        <div class="flex flex-col justify-between gap-3 border-t pt-4 sm:flex-row sm:items-center">
+          <div class="text-xs font-bold text-slate-500">點綠色空檔可直接新增預約；點橘色預約可進入修改。</div>
           <div class="flex rounded-xl bg-slate-100 p-1">
-            <button id="apptCardBtn" class="rounded-lg px-4 py-2 text-sm font-black">師傅視角</button>
+            <button id="apptCardBtn" class="rounded-lg px-4 py-2 text-sm font-black">師傅時段</button>
             <button id="apptTimelineBtn" class="rounded-lg px-4 py-2 text-sm font-black">房型時程</button>
           </div>
         </div>
       </div>
     </div>
-    <div id="appointmentBoard" class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3"></div>
-    <div id="appointmentTimeline" class="hidden overflow-x-auto"></div>
-    <div id="appointmentDataPanel"></div>`;
-  $("appointmentDate").onchange = renderAppointment;
-  $("apptCardBtn").onclick = () => { activeAppointmentView = "card"; renderAppointmentBoard(selectedDate); };
-  $("apptTimelineBtn").onclick = () => { activeAppointmentView = "timeline"; renderAppointmentBoard(selectedDate); };
-  renderAppointmentBoard(selectedDate);
-  renderAppointmentDetail();
+    ${appointmentCandidateStripHtml(selectedDate, selectedTime, selectedService)}
+    <div id="appointmentBoard" class="space-y-5"></div>
+    <div id="appointmentTimeline" class="hidden overflow-x-auto"></div>`;
 }
 
-function renderAppointmentBoard(date) {
+function bindAppointmentQueryControls() {
+  if (!$("appointmentDate") || !$("appointmentBoard") || !$("appointmentTimeline")) return;
+  const getDate = () => $("appointmentDate").value || todayKey();
+  const getTime = () => queryTimeLabel($("appointmentTime")?.value || "");
+  const getService = () => $("appointmentService")?.value || "C120";
+  const selectedDate = getDate();
+  const selectedTime = getTime();
+  $("appointmentDate").onchange = () => { activeAppointmentView = "card"; renderAppointmentBoard(getDate(), getTime()); };
+  $("appointmentTime").onchange = () => { activeAppointmentView = "card"; renderAppointmentBoard(getDate(), getTime()); };
+  $("appointmentService").onchange = () => {};
+  $("queryAppointmentBtn").onclick = () => renderDispatch();
+  $("clientSelectionLinkBtn").onclick = () => openClientSelectionLinkModal(getDate(), getTime(), getService());
+  $("apptCardBtn").onclick = () => { activeAppointmentView = "card"; renderAppointmentBoard(getDate(), getTime()); };
+  $("apptTimelineBtn").onclick = () => { activeAppointmentView = "timeline"; renderAppointmentBoard(getDate(), getTime()); };
+  renderAppointmentBoard(selectedDate, selectedTime);
+}
+
+function renderAppointment() {
+  const section = $("view-appointment");
+  if (!section) return;
+  section.innerHTML = appointmentQueryPanelHtml();
+  bindAppointmentQueryControls();
+}
+
+function renderAppointmentBoard(date, queryTime = "") {
+  if (!$("appointmentBoard") || !$("appointmentTimeline")) return;
   $("appointmentBoard").classList.toggle("hidden", activeAppointmentView !== "card");
   $("appointmentTimeline").classList.toggle("hidden", activeAppointmentView !== "timeline");
   $("apptCardBtn").className = activeAppointmentView === "card" ? "rounded-lg bg-white px-4 py-2 text-sm font-black text-teal-700 shadow" : "rounded-lg px-4 py-2 text-sm font-black text-slate-500";
   $("apptTimelineBtn").className = activeAppointmentView === "timeline" ? "rounded-lg bg-white px-4 py-2 text-sm font-black text-teal-700 shadow" : "rounded-lg px-4 py-2 text-sm font-black text-slate-500";
   const appts = Object.values(db.appointments).filter((a) => a.date === date).sort(sortByTime);
   const board = $("appointmentBoard");
-  board.innerHTML = "";
-  Object.entries(db.therapists).forEach(([id, therapist]) => {
-    const shift = (db.schedules[id] || {})[date] || "休假";
-    if (!isWorking(shift)) return;
-    const mine = appts.filter((a) => a.therapistId === id);
-    board.insertAdjacentHTML("beforeend", `
-      <article class="card overflow-hidden">
-        <div class="flex items-center justify-between border-b bg-teal-50 px-5 py-4">
-          <div class="flex items-center gap-3"><div class="flex h-10 w-10 items-center justify-center rounded-full bg-teal-700 font-black text-white">${esc(therapistName(id).charAt(0) || "師")}</div><div><h4 class="font-black">${esc(therapistName(id))}</h4><p class="text-xs font-black text-teal-700">${esc(shift)}</p></div></div>
-          <button class="btn-teal add-appt" data-therapist="${id}" data-date="${date}">新增</button>
-        </div>
-        <div class="space-y-3 bg-slate-50/60 p-4">${mine.length ? mine.map(apptCard).join("") : `<p class="py-8 text-center text-sm font-bold text-slate-400">目前無排程</p>`}</div>
-      </article>`);
-  });
-  if (!board.innerHTML) board.innerHTML = `<div class="col-span-full rounded-2xl bg-white py-12 text-center font-bold text-slate-400">當日無排班</div>`;
-  board.querySelectorAll(".add-appt").forEach((btn) => btn.onclick = () => openAppointmentModal({ therapistId: btn.dataset.therapist, date: btn.dataset.date }));
+  board.innerHTML = appointmentQueryBoardHtml(date, queryTime);
   board.querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => openAppointmentDetailPage(btn.dataset.openAppt));
-  board.querySelectorAll("[data-edit-appt]").forEach((btn) => btn.onclick = () => openAppointmentDetailPage(btn.dataset.editAppt));
-  board.querySelectorAll("[data-delete-appt]").forEach((btn) => btn.onclick = () => confirmAction("刪除預約", "此動作會移除該筆預約與關聯紀錄。", () => deleteAppointment(btn.dataset.deleteAppt)));
   renderTimeline(date, appts);
+}
+
+function openClientSelectionLinkModal(date, time, service) {
+  if (!date || !time) {
+    showSnackbar("請先選擇日期與時間");
+    return;
+  }
+  const course = COURSE_CATALOG[service] || {};
+  const candidates = availableTherapistCandidates({ date, time, service, duration: course.duration || 120, limit: 5 });
+  const link = clientSelectionUrl({ date, time, service });
+  showModal(`<div class="modal max-w-3xl">
+    <div class="mb-5 border-b pb-4">
+      <h3 class="text-xl font-black">客人選師傅連結</h3>
+      <p class="mt-1 text-sm font-bold text-slate-500">${esc(date)} ${esc(time)} · ${esc(courseName(service))} · 推薦 ${candidates.length} 位可選師傅</p>
+    </div>
+    <div class="rounded-xl border bg-slate-50 p-3">
+      <label class="label">分享連結</label>
+      <div class="flex flex-col gap-2 sm:flex-row">
+        <input id="clientSelectionUrlInput" class="input bg-white text-sm" readonly value="${esc(link)}">
+        <button id="copyClientSelectionUrlBtn" class="btn-teal shrink-0">複製</button>
+      </div>
+    </div>
+    <div class="mt-5 grid gap-3 md:grid-cols-2">
+	      ${candidates.length ? candidates.map(({ id, profile, shift }) => `<article class="rounded-xl border bg-white p-4">
+        <div class="flex gap-3">
+          ${therapistPhotoHtml(profile, therapistName(id))}
+          <div class="min-w-0">
+            <h4 class="truncate font-black">${esc(therapistName(id))}</h4>
+            <p class="mt-1 text-xs font-bold text-teal-700">${esc(shift)}</p>
+            <p class="mt-1 text-xs font-bold text-slate-500">${esc(therapistDisplayMeta(profile) || "基本資料未完整")}</p>
+          </div>
+        </div>
+        <p class="mt-3 line-clamp-3 text-sm font-bold text-slate-600">${esc(profile.bio || profile.specialties || "尚未填寫介紹詞")}</p>
+	        <div class="mt-3 flex flex-wrap gap-2 text-xs font-black"><span class="badge bg-teal-50 text-teal-700">可選</span><span class="badge bg-slate-100 text-slate-600">已篩選時段</span></div>
+      </article>`).join("") : `<div class="md:col-span-2 rounded-xl border border-dashed bg-white py-10 text-center font-bold text-slate-400">此時段沒有可推薦師傅</div>`}
+    </div>
+    <div class="mt-5 flex justify-end border-t pt-4"><button class="btn-light" data-close-modal>關閉</button></div>
+  </div>`);
+  $("copyClientSelectionUrlBtn").onclick = async () => {
+    const input = $("clientSelectionUrlInput");
+    input.select();
+    try {
+      await navigator.clipboard.writeText(input.value);
+      showSnackbar("客選連結已複製");
+    } catch {
+      document.execCommand("copy");
+      showSnackbar("客選連結已複製");
+    }
+  };
 }
 
 function apptCard(a) {
@@ -796,12 +1164,33 @@ function roomBadge(room) {
   return `<span class="badge ${map[room] || "bg-slate-100 text-slate-600"}">${room === "OUT" ? "外出" : `${esc(room || "-")}房`}</span>`;
 }
 
-function openAppointmentModal({ therapistId, date, appointmentId, time = "" }) {
+function suggestedRoomFor({ date, time, duration = 60, service = "", excludeId = "" }) {
+  if (String(service || "").startsWith("OUT")) return "OUT";
+  if (!date || !time) return "R";
+  const start = normalizedTimelineMinute(timeToMinutes(time));
+  const end = start + Number(duration || 60) + 10;
+  const taken = Object.values(db.appointments).filter((a) => a.date === date && a.id !== excludeId);
+  const isAvailable = (room) => !taken.some((a) => {
+    if (a.room !== room) return false;
+    const apptStart = normalizedTimelineMinute(timeToMinutes(a.time));
+    const apptEnd = apptStart + Number(a.duration || 60) + 10;
+    return start < apptEnd && end > apptStart;
+  });
+  if (isAvailable("R")) return "R";
+  if (isAvailable("T")) return "T";
+  return "R";
+}
+
+function openAppointmentModal({ therapistId, date, appointmentId, time = "", service = "", phone = "", customerName = "", notes = "", bookingStage = "", selectionId = "" }) {
   editingAppointmentId = appointmentId || null;
+  pendingClientSelectionId = selectionId || null;
   const existing = appointmentId ? db.appointments[appointmentId] : null;
   const selectedTherapist = existing?.therapistId || therapistId;
   const selectedDate = existing?.date || date || $("appointmentDate")?.value || todayKey();
-  const serviceOptions = [`<option value="">自訂/其他項目</option>`].concat(Object.entries(COURSE_CATALOG).map(([k, c]) => `<option value="${k}" ${existing?.service === k ? "selected" : ""}>${esc(c.name)} (${money(c.price)})</option>`)).join("");
+  const selectedService = existing?.service || service || "";
+  const selectedCourse = COURSE_CATALOG[selectedService] || {};
+  const selectedStage = existing?.bookingStage || bookingStage || "confirmed";
+  const serviceOptions = [`<option value="">自訂/其他項目</option>`].concat(Object.entries(COURSE_CATALOG).map(([k, c]) => `<option value="${k}" ${selectedService === k ? "selected" : ""}>${esc(c.name)} (${money(c.price)})</option>`)).join("");
   showModal(`
     <div class="modal max-w-xl">
       <h3 class="mb-5 border-b pb-4 text-xl font-black">${existing ? "修改預約" : "新增顧客預約"} <span class="ml-2 rounded-lg bg-teal-50 px-2 py-1 text-sm text-teal-700">${esc(selectedDate)}</span></h3>
@@ -809,20 +1198,22 @@ function openAppointmentModal({ therapistId, date, appointmentId, time = "" }) {
         <div><label class="label">指定按摩師</label><select name="therapistId" class="input">${Object.keys(db.therapists).map((id) => `<option value="${id}" ${id === selectedTherapist ? "selected" : ""}>${esc(therapistName(id))}</option>`).join("")}</select></div>
         <div class="grid gap-4 sm:grid-cols-2">
           <div><label class="label">服務課程</label><select name="service" class="input">${serviceOptions}</select></div>
-          <div><label class="label">應收金額</label><input name="price" type="number" class="input" value="${esc(existing?.price || "")}"></div>
+          <div><label class="label">應收金額</label><input name="price" type="number" class="input" value="${esc(existing?.price || selectedCourse.price || "")}"></div>
           <div><label class="label">預約時間</label><input name="time" type="time" class="input" value="${esc(existing?.time || time || "")}"></div>
-          <div><label class="label">預估時長</label><input name="duration" type="number" min="10" step="10" class="input" value="${esc(existing?.duration || 60)}"></div>
+          <div><label class="label">預估時長</label><input name="duration" type="number" min="10" step="10" class="input" value="${esc(existing?.duration || selectedCourse.duration || 60)}"></div>
         </div>
         <div><label class="label">工作室安排</label><select name="room" class="input"><option value="R">Royal (R房)</option><option value="T">Tiffany (T房)</option><option value="OUT">外出</option></select><p id="roomHint" class="mt-2 hidden rounded-lg p-2 text-xs font-black"></p></div>
-        <div><label class="label">聯絡方式</label><input name="phone" class="input" value="${esc(existing?.phone || "")}"></div>
-        <div><label class="label">顧客姓名 <span class="text-slate-400">(選填)</span></label><input name="customerName" class="input" value="${esc(existing?.customerName || "")}" placeholder="未填則顯示顧客編碼"></div>
-        <div><label class="label">備註</label><textarea name="notes" class="input min-h-24" placeholder="例如：客人偏好、特殊需求、櫃檯交接事項">${esc(existing?.notes || "")}</textarea></div>
+        <div><label class="label">預約進度</label><select name="bookingStage" class="input">${bookingStageOptions(selectedStage)}</select></div>
+        <div><label class="label">聯絡方式</label><input name="phone" class="input" value="${esc(existing?.phone || phone || "")}"></div>
+        <div><label class="label">顧客姓名 <span class="text-slate-400">(選填)</span></label><input name="customerName" class="input" value="${esc(existing?.customerName || customerName || "")}" placeholder="未填則顯示顧客編碼"></div>
+        <div><label class="label">備註</label><textarea name="notes" class="input min-h-24" placeholder="例如：客人偏好、特殊需求、櫃檯交接事項">${esc(existing?.notes || notes || "")}</textarea></div>
         <p id="apptError" class="hidden text-sm font-black text-rose-600"></p>
         <div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">${existing ? "更新預約" : "儲存預約"}</button></div>
       </form>
-    </div>`);
+  </div>`);
   const form = $("apptForm");
-  form.room.value = existing?.room || "R";
+  form.room.value = existing?.room || suggestedRoomFor({ date: selectedDate, time: existing?.time || time || "", duration: existing?.duration || selectedCourse.duration || 60, service: selectedService, excludeId: existing?.id || "" });
+  form.service.value = selectedService;
   form.service.onchange = () => {
     const c = COURSE_CATALOG[form.service.value];
     if (!c) return;
@@ -870,7 +1261,8 @@ async function saveAppointmentFromForm(form, date) {
   data.date = date;
   data.duration = Number(data.duration || 60);
   data.price = Number(data.price || 0);
-  data.isCompleted = db.appointments[data.id]?.isCompleted || false;
+  data.bookingStage = String(data.bookingStage || db.appointments[data.id]?.bookingStage || "confirmed");
+  data.isCompleted = data.bookingStage === "completed" || db.appointments[data.id]?.isCompleted || false;
   data.collectedPrice = db.appointments[data.id]?.collectedPrice || "";
   data.customerName = String(data.customerName || "").trim();
   data.phone = String(data.phone || "").trim();
@@ -891,14 +1283,32 @@ async function saveAppointmentFromForm(form, date) {
     }
     customer.records ||= [];
     const recordIndex = customer.records.findIndex((r) => r.id === data.id);
-    const record = { id: data.id, date: data.date, therapistId: data.therapistId, therapistName: therapistName(data.therapistId), service: data.service, notes: customer.records[recordIndex]?.notes || "", collectedPrice: data.collectedPrice || "" };
+    const existingRecord = recordIndex >= 0 ? customer.records[recordIndex] : {};
+    const record = { ...existingRecord, id: data.id, date: data.date, therapistId: data.therapistId, therapistName: therapistName(data.therapistId), service: data.service, notes: existingRecord.notes || "", collectedPrice: data.collectedPrice || existingRecord.collectedPrice || "" };
     if (recordIndex >= 0) customer.records[recordIndex] = record;
     else customer.records.push(record);
     db.customers[data.phone] = customer;
-    await saveCloudActions([
+    const actions = [
       { action: "addAppointment", data },
       { action: "saveCustomer", data: { phone: data.phone, ...customer } }
-    ], "預約已寫入雲端");
+    ];
+    if (pendingClientSelectionId && db.clientSelections[pendingClientSelectionId]) {
+      const selection = {
+        ...db.clientSelections[pendingClientSelectionId],
+        status: "confirmed",
+        appointmentId: data.id,
+        updatedAt: new Date().toISOString()
+      };
+      db.clientSelections[selection.id] = selection;
+      db.customers[clientSelectionKey(selection.id)] = {
+        name: `confirmed-${selection.customerName || selection.customerContact || "客選"}-${therapistName(selection.selectedTherapistId)}`,
+        notes: JSON.stringify(selection),
+        records: []
+      };
+      actions.push({ action: "saveCustomer", data: { phone: clientSelectionKey(selection.id), ...db.customers[clientSelectionKey(selection.id)] } });
+    }
+    await saveCloudActions(actions, "預約已寫入雲端");
+    pendingClientSelectionId = null;
     setFormBusy(form, false);
     closeModal();
     renderAll();
@@ -929,28 +1339,142 @@ async function deleteAppointment(id) {
   renderAll();
 }
 
+async function updateAppointmentStage(id, stage) {
+  const appt = db.appointments[id];
+  if (!appt) return;
+  appt.bookingStage = stage;
+  if (stage === "completed") appt.isCompleted = true;
+  await saveCloudActions([{ action: "addAppointment", data: { ...appt, appId: id } }], "預約進度已更新");
+  renderAll();
+  if (activeAppointmentId === id) renderAppointmentDetail();
+}
+
+async function quickConfirmClientSelection(selectionId) {
+  const selection = db.clientSelections[selectionId];
+  if (!selection) return;
+  const course = COURSE_CATALOG[selection.service] || {};
+  const id = `APT-${Date.now().toString(36).toUpperCase()}`;
+  const data = {
+    id,
+    appId: id,
+    date: selection.date,
+    time: selection.time,
+    therapistId: selection.selectedTherapistId,
+    service: selection.service || "",
+    duration: Number(selection.duration || course.duration || 60),
+    price: Number(course.price || 0),
+    room: suggestedRoomFor({ date: selection.date, time: selection.time, duration: selection.duration || course.duration || 60, service: selection.service }),
+    customerName: String(selection.customerName || "").trim(),
+    phone: String(selection.customerContact || "").trim(),
+    notes: String(selection.customerNote || "").trim(),
+    bookingStage: "confirmed",
+    isCompleted: false,
+    collectedPrice: ""
+  };
+  if (!data.phone) {
+    showSnackbar("客選缺少聯絡方式，請用編輯建立補資料");
+    return;
+  }
+  const conflict = findAppointmentConflict(data);
+  const commit = async () => {
+    db.appointments[id] = data;
+    const customer = db.customers[data.phone] || { name: data.customerName, notes: "", records: [] };
+    customer.name = data.customerName;
+    db.customers[data.phone] = customer;
+    if (!customer.code) assignCustomerCodes(db);
+    customer.records ||= [];
+    customer.records.push({ id, date: data.date, therapistId: data.therapistId, therapistName: therapistName(data.therapistId), service: data.service, collectedPrice: "", notes: "" });
+    const nextSelection = { ...selection, status: "confirmed", appointmentId: id, updatedAt: new Date().toISOString() };
+    db.clientSelections[nextSelection.id] = nextSelection;
+    db.customers[clientSelectionKey(nextSelection.id)] = {
+      name: `confirmed-${nextSelection.customerName || nextSelection.customerContact || "客選"}-${therapistName(nextSelection.selectedTherapistId)}`,
+      notes: JSON.stringify(nextSelection),
+      records: []
+    };
+    await saveCloudActions([
+      { action: "addAppointment", data },
+      { action: "saveCustomer", data: { phone: data.phone, ...customer } },
+      { action: "saveCustomer", data: { phone: clientSelectionKey(nextSelection.id), ...db.customers[clientSelectionKey(nextSelection.id)] } }
+    ], "已快速建立確認預約");
+    activeAppointmentId = id;
+    switchTab("dispatch");
+  };
+  if (conflict) confirmAction("仍要快速確認？", conflict, commit, "確認建立");
+  else commit();
+}
+
 function openAppointmentDetailPage(id) {
   activeAppointmentId = id || null;
-  switchTab("appointment");
+  switchTab("dispatch");
 }
 
 function appointmentRecord(appt) {
   return db.customers[appt.phone]?.records?.find((r) => r.id === appt.id);
 }
 
+function renderDispatch() {
+  renderAppointmentDetail();
+}
+
 function renderAppointmentDetail() {
-  const section = $("appointmentDataPanel") || $("view-appointmentDetail");
+  const section = $("view-dispatch") || $("appointmentDataPanel") || $("view-appointmentDetail");
   if (!section) return;
   const appts = Object.values(db.appointments).sort((a, b) => a.date === b.date ? sortByTime(a, b) : String(b.date).localeCompare(String(a.date)));
   const active = activeAppointmentId ? db.appointments[activeAppointmentId] : null;
   section.innerHTML = active ? renderAppointmentDetailForm(active, appts) : renderAppointmentListPage(appts);
+  bindAppointmentQueryControls();
   section.querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => openAppointmentDetailPage(btn.dataset.openAppt));
   section.querySelectorAll("[data-delete-appt]").forEach((btn) => btn.onclick = () => confirmAction("刪除預約", "此動作會移除該筆預約與關聯紀錄。", () => deleteAppointment(btn.dataset.deleteAppt)));
+  section.querySelectorAll("[data-workbench-focus]").forEach((btn) => btn.onclick = () => {
+    pendingDispatchFocus = btn.dataset.workbenchFocus;
+    focusDispatchTarget();
+  });
+  section.querySelectorAll("[data-create-from-selection]").forEach((btn) => btn.onclick = () => {
+    const selection = db.clientSelections[btn.dataset.createFromSelection];
+    if (!selection) return;
+    openAppointmentModal({
+      therapistId: selection.selectedTherapistId,
+      date: selection.date,
+      time: selection.time,
+      service: selection.service,
+      phone: selection.customerContact || "",
+      customerName: selection.customerName || "",
+      notes: selection.customerNote || "",
+      bookingStage: "therapist_match",
+      selectionId: selection.id
+    });
+  });
+  section.querySelectorAll("[data-reject-selection]").forEach((btn) => btn.onclick = () => {
+    const selection = db.clientSelections[btn.dataset.rejectSelection];
+    if (!selection) return;
+    confirmAction("略過客選", "此筆客人選擇會標記為已略過，不會建立預約。", () => updateClientSelection(selection, "rejected"), "標記略過");
+  });
+  section.querySelectorAll("[data-quick-confirm-selection]").forEach((btn) => btn.onclick = () => {
+    confirmAction("快速確認預約？", "系統會直接建立已確認預約，並自動帶入課程價格、時長與房型。需要調整細節時請改用「編輯建立」。", () => quickConfirmClientSelection(btn.dataset.quickConfirmSelection), "快速確認");
+  });
+  section.querySelectorAll("[data-mark-stage]").forEach((btn) => btn.onclick = () => updateAppointmentStage(btn.dataset.markStage, btn.dataset.stage));
+  section.querySelectorAll("[data-copy-notice]").forEach((btn) => btn.onclick = async () => {
+    const target = $(btn.dataset.copyNotice);
+    if (!target) return;
+    try {
+      await navigator.clipboard.writeText(target.value);
+      showSnackbar("通知內容已複製");
+    } catch {
+      target.select();
+      document.execCommand("copy");
+      showSnackbar("通知內容已複製");
+    }
+  });
   const backBtn = $("backToAppointmentListBtn");
   if (backBtn) backBtn.onclick = () => { activeAppointmentId = null; renderAppointmentDetail(); };
   const cancelBtn = $("cancelAppointmentDetailBtn");
   if (cancelBtn) cancelBtn.onclick = () => { activeAppointmentId = null; renderAppointmentDetail(); };
-  section.querySelectorAll("[data-reset-appointment-data]").forEach((btn) => btn.onclick = () => { activeAppointmentId = null; renderAppointmentDetail(); });
+  section.querySelectorAll("[data-toggle-appointment-scope]").forEach((btn) => btn.onclick = () => {
+    appointmentRecordScope = appointmentRecordScope === "month" ? "today" : "month";
+    renderAppointmentDetail();
+    pendingDispatchFocus = "records";
+    focusDispatchTarget();
+  });
   const form = $("appointmentDetailForm");
   if (form) {
     form.service.onchange = () => {
@@ -971,10 +1495,133 @@ function renderAppointmentDetail() {
   }
 }
 
+function bookingWorkbenchIntroHtml(monthAppts, pendingSelections) {
+  const unconfirmed = monthAppts.filter(isBookingUnconfirmed).length;
+  const confirmed = monthAppts.filter(isBookingConfirmed).length;
+  return `<div class="card overflow-hidden">
+    <div class="border-b bg-slate-950 p-5 text-white">
+      <div class="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
+        <div>
+          <p class="text-xs font-black uppercase tracking-widest text-teal-300">預約作業台</p>
+          <h3 class="mt-2 text-2xl font-black">查時段 → 給客選 → 確認預約 → 行前通知</h3>
+          <p class="mt-1 text-sm font-bold text-slate-300">每一筆預約都先在這裡完成媒合，再進入通知與回款紀錄。</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button type="button" class="rounded-xl bg-white px-4 py-3 text-sm font-black text-slate-950" data-workbench-focus="query">查時段</button>
+          <button type="button" class="rounded-xl bg-white/10 px-4 py-3 text-sm font-black text-white" data-workbench-focus="board">看待辦</button>
+          <button type="button" class="rounded-xl bg-white/10 px-4 py-3 text-sm font-black text-white" data-workbench-focus="records">查紀錄</button>
+        </div>
+      </div>
+    </div>
+    <div class="grid gap-px bg-slate-200 md:grid-cols-3">
+      <div class="bg-white p-4"><p class="text-xs font-black text-amber-700">客選待處理</p><p class="mt-1 text-3xl font-black text-slate-900">${pendingSelections.length}</p></div>
+      <div class="bg-white p-4"><p class="text-xs font-black text-amber-700">未確認預約</p><p class="mt-1 text-3xl font-black text-slate-900">${unconfirmed}</p></div>
+      <div class="bg-white p-4"><p class="text-xs font-black text-teal-700">已確認預約</p><p class="mt-1 text-3xl font-black text-slate-900">${confirmed}</p></div>
+    </div>
+  </div>`;
+}
+
+function bookingCardHtml(appt, tone = "slate") {
+  const toneClass = {
+    amber: "border-amber-200 bg-amber-50",
+    teal: "border-teal-200 bg-teal-50",
+    violet: "border-violet-200 bg-violet-50",
+    rose: "border-rose-200 bg-rose-50",
+    slate: "border-slate-200 bg-white"
+  }[tone] || "border-slate-200 bg-white";
+  return `<button data-open-appt="${esc(appt.id)}" class="w-full rounded-xl border ${toneClass} p-3 text-left transition hover:border-teal-400 hover:bg-teal-50">
+    <div class="flex items-start justify-between gap-3"><span class="font-mono text-sm font-black">${esc(appt.date)} ${esc(appt.time || "--:--")}</span><span class="badge ${bookingStageClass(appt.bookingStage)}">${esc(bookingStageLabel(appt.bookingStage))}</span></div>
+    <div class="mt-2 font-black text-slate-900">${esc(customerDisplay(appt.phone, appt.customerName))}</div>
+    <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs font-bold text-slate-500"><span>${esc(therapistName(appt.therapistId))}</span><span>${esc(courseName(appt.service))}</span><span>${appt.room === "OUT" ? "外出" : `${esc(appt.room || "-")}房`}</span><span>${money(appt.price)}</span></div>
+  </button>`;
+}
+
+function bookingStageBoardHtml(monthAppts) {
+  const today = todayKey();
+  const lanes = [
+    { title: "媒合 / 待確認", desc: "需要人員推進的預約", items: monthAppts.filter(isBookingUnconfirmed), tone: "amber", empty: "目前沒有未確認預約" },
+    { title: "已確認", desc: "可準備行前通知", items: monthAppts.filter((a) => a.bookingStage === "confirmed"), tone: "teal", empty: "尚無已確認預約" },
+    { title: "今日行前", desc: "今日需通知師傅房型與密碼", items: monthAppts.filter((a) => a.date === today && isBookingConfirmed(a) && !["pre_notice", "completed"].includes(a.bookingStage)), tone: "violet", empty: "今日行前通知完成或無預約" },
+    { title: "回款 / 紀錄", desc: "通知後補回款與服務紀錄", items: monthAppts.filter((a) => a.bookingStage === "pre_notice" || (String(a.isCompleted) === "true" && (!String(a.collectedPrice || "").trim() || !String(appointmentRecord(a)?.notes || "").trim()))), tone: "slate", empty: "尚無回款或紀錄待補" }
+  ];
+  return `<div id="bookingStageBoard" class="grid scroll-mt-20 gap-4 xl:grid-cols-4">
+    ${lanes.map((lane) => `<section class="card p-4">
+      <div class="mb-3 flex items-start justify-between gap-3"><div><h3 class="font-black">${lane.title}</h3><p class="text-xs font-bold text-slate-500">${lane.desc}</p></div><span class="badge bg-slate-100 text-slate-600">${lane.items.length}</span></div>
+      <div class="space-y-2">${lane.items.slice(0, 6).map((appt) => bookingCardHtml(appt, lane.tone)).join("") || `<p class="rounded-xl bg-slate-50 p-4 text-center text-sm font-bold text-slate-400">${lane.empty}</p>`}</div>
+    </section>`).join("")}
+  </div>`;
+}
+
+function bookingStageRailHtml(currentStage = "confirmed") {
+  const activeIndex = Math.max(0, BOOKING_STAGES.findIndex((stage) => stage.key === currentStage));
+  return `<div class="mb-5 rounded-2xl border bg-slate-50 p-4">
+    <div class="grid gap-3 md:grid-cols-7">
+      ${BOOKING_STAGES.map((stage, index) => {
+        const done = index <= activeIndex;
+        const active = stage.key === currentStage;
+        return `<div class="flex items-center gap-2 md:block">
+          <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-black ${active ? "bg-teal-600 text-white" : done ? "bg-teal-100 text-teal-800" : "bg-slate-200 text-slate-500"}">${index + 1}</div>
+          <p class="mt-0 text-xs font-black ${active ? "text-teal-700" : done ? "text-slate-700" : "text-slate-400"} md:mt-2">${stage.label}</p>
+        </div>`;
+      }).join("")}
+    </div>
+  </div>`;
+}
+
+function therapistNoticeText(appt, companyCut) {
+  return [
+    `預約通知`,
+    `時間：${appt.date || ""} ${appt.time || ""}`,
+    `房型：${appt.room === "OUT" ? "外出" : `${appt.room || "-"}房`}`,
+    `大門密碼：${db.customers.SYS_DOOR_PWD?.notes || "未設定"}`,
+    `課程：${courseName(appt.service)} / ${appt.duration || 60} 分`,
+    `應收金額：${money(appt.price)}`,
+    `應回款金額：${money(companyCut)}`,
+    appt.notes ? `備註：${appt.notes}` : ""
+  ].filter(Boolean).join("\n");
+}
+
 function renderAppointmentListPage(appts) {
   const monthSet = new Set(monthDates.map((d) => d.key));
   const monthAppts = appts.filter((a) => monthSet.has(a.date));
-  const rows = monthAppts.length ? monthAppts.map((a) => {
+  const pendingSelections = clientSelectionList("pending");
+  const today = todayKey();
+  const visibleAppts = appointmentRecordScope === "month" ? monthAppts : monthAppts.filter((a) => a.date === today);
+  const visibleConfirmed = visibleAppts.filter(isBookingConfirmed);
+  const visibleUnconfirmed = visibleAppts.filter(isBookingUnconfirmed);
+  const listTitle = appointmentRecordScope === "month" ? "完整預約清單" : "今日預約清單";
+  const listDesc = appointmentRecordScope === "month" ? "目前顯示本月所有預約；可切回今日，避免日常操作資訊過多。" : "日常作業先看今日預約；需要核對時再展開本月完整清單。";
+  const toggleText = appointmentRecordScope === "month" ? "只看今日" : "完整清單";
+  const pendingSelectionPanel = pendingSelections.length ? `<div class="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-5">
+    <div class="mb-4 flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+      <div><h3 class="font-black text-amber-950">客選待確認</h3><p class="text-sm font-bold text-amber-800">客人已選師傅，但尚未正式建立預約。</p></div>
+      <span class="badge bg-white text-amber-700">${pendingSelections.length} 筆</span>
+    </div>
+    <div class="grid gap-3 lg:grid-cols-2">
+      ${pendingSelections.map((selection) => {
+        const profile = db.therapists[selection.selectedTherapistId] || {};
+        return `<article class="rounded-xl border border-amber-100 bg-white p-4">
+          <div class="flex justify-between gap-4">
+            <div class="flex min-w-0 gap-3">
+              ${therapistPhotoHtml(profile, therapistName(selection.selectedTherapistId))}
+              <div class="min-w-0">
+                <p class="text-xs font-black text-slate-400">${esc(selection.date)} ${esc(selection.time)} · ${esc(courseName(selection.service))}</p>
+                <h4 class="mt-1 truncate font-black">${esc(therapistName(selection.selectedTherapistId))}</h4>
+                <p class="mt-1 text-sm font-bold text-slate-500">${esc(selection.customerName || "未留姓名")} ${selection.customerContact ? `｜${esc(selection.customerContact)}` : ""}</p>
+              </div>
+            </div>
+            <span class="badge bg-amber-50 text-amber-700">待確認</span>
+          </div>
+          <div class="mt-4 flex justify-end gap-2">
+            <button class="btn-teal px-3 py-2 text-sm" data-quick-confirm-selection="${esc(selection.id)}">快速確認</button>
+            <button class="btn-light px-3 py-2 text-sm" data-create-from-selection="${esc(selection.id)}">編輯建立</button>
+            <button class="rounded-xl bg-slate-100 px-3 py-2 text-sm font-black text-slate-600" data-reject-selection="${esc(selection.id)}">略過</button>
+          </div>
+        </article>`;
+      }).join("")}
+    </div>
+  </div>` : "";
+  const rows = visibleAppts.length ? visibleAppts.map((a) => {
     const cut = COURSE_CATALOG[a.service]?.therapistCut || 0;
     return `<tr>
       <td><button data-open-appt="${esc(a.id)}" class="font-mono font-black text-teal-700 hover:text-teal-900">${esc(a.date)} ${esc(a.time)}</button></td>
@@ -982,43 +1629,53 @@ function renderAppointmentListPage(appts) {
       <td class="font-bold">${esc(therapistName(a.therapistId))}</td>
       <td>${roomBadge(a.room)}</td>
       <td>${esc(courseName(a.service))}</td>
+      <td><span class="badge ${bookingStageClass(a.bookingStage)}">${esc(bookingStageLabel(a.bookingStage))}</span></td>
       <td class="max-w-[220px] truncate text-slate-600">${esc(a.notes || "無")}</td>
       <td class="text-right font-black text-rose-600">${money(a.price)}</td>
       <td class="text-right font-black text-teal-700">${money(Number(a.price || 0) - cut)}</td>
-      <td class="text-right"><button data-open-appt="${esc(a.id)}" class="btn-light px-3 py-1 text-xs">編輯</button></td>
+      <td class="text-right">
+        <div class="flex justify-end gap-2">
+          <button data-open-appt="${esc(a.id)}" class="btn-light px-3 py-1 text-xs">修改</button>
+          <button data-delete-appt="${esc(a.id)}" class="rounded-lg bg-rose-50 px-3 py-1 text-xs font-black text-rose-700">移除</button>
+        </div>
+      </td>
     </tr>`;
-  }).join("") : `<tr><td colspan="9" class="py-10 text-center font-bold text-slate-400">本月無派班資料</td></tr>`;
-  return `<div class="card p-5">
+  }).join("") : `<tr><td colspan="10" class="py-10 text-center font-bold text-slate-400">${appointmentRecordScope === "month" ? "本月無預約資料" : "今日無預約資料"}</td></tr>`;
+  return `${bookingWorkbenchIntroHtml(monthAppts, pendingSelections)}${appointmentQueryPanelHtml()}${pendingSelectionPanel}${bookingStageBoardHtml(monthAppts)}<div id="appointmentRecordsPanel" class="card scroll-mt-20 p-5">
     <div class="mb-5 flex flex-col justify-between gap-4 border-b pb-5 sm:flex-row sm:items-center">
-      <div><h3 class="text-lg font-black">派班資料清單</h3><p class="text-sm font-bold text-slate-500">本月所有派班集中在同一頁管理，點任一筆即可在此編輯。</p></div>
-      <button class="btn-light" data-reset-appointment-data>顯示清單</button>
+      <div><h3 class="text-lg font-black">${listTitle}</h3><p class="text-sm font-bold text-slate-500">${listDesc}</p></div>
+      <button class="btn-light" data-toggle-appointment-scope>${toggleText}</button>
     </div>
     <div class="grid grid-cols-2 gap-4 md:grid-cols-4">
-      ${metric("本月預約筆數", monthAppts.length)}
-      ${metric("本月預估營業額", money(monthAppts.reduce((sum, a) => sum + Number(a.price || 0), 0)), "text-rose-700")}
-      ${metric("已完成", monthAppts.filter((a) => String(a.isCompleted) === "true").length, "text-teal-700")}
-      ${metric("待回報", monthAppts.filter((a) => String(a.isCompleted) !== "true").length, "text-indigo-700")}
+      ${metric(appointmentRecordScope === "month" ? "本月預約筆數" : "今日預約筆數", visibleAppts.length)}
+      ${metric("未確認", visibleUnconfirmed.length, "text-amber-700")}
+      ${metric("已確認", visibleConfirmed.length, "text-teal-700")}
+      ${metric("待回報", visibleAppts.filter((a) => String(a.isCompleted) !== "true").length, "text-indigo-700")}
     </div>
-    <div class="table-wrap mt-5"><table><thead><tr><th>派班時間</th><th>顧客</th><th>師傅</th><th>空間</th><th>服務</th><th>備註</th><th class="text-right">金額</th><th class="text-right">店收</th><th class="text-right">操作</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="table-wrap mt-5"><table><thead><tr><th>預約時間</th><th>顧客</th><th>師傅</th><th>空間</th><th>服務</th><th>進度</th><th>備註</th><th class="text-right">金額</th><th class="text-right">店收</th><th class="text-right">操作</th></tr></thead><tbody>${rows}</tbody></table></div>
   </div>`;
 }
 
 function renderAppointmentDetailForm(appt, allAppts) {
   const record = appointmentRecord(appt) || {};
   const cut = COURSE_CATALOG[appt.service]?.therapistCut || 0;
+  const companyCut = Number(appt.price || 0) - cut;
+  const noticeText = therapistNoticeText(appt, companyCut);
   const sameCustomer = allAppts.filter((a) => a.phone && a.phone === appt.phone).length;
   const serviceOptions = [`<option value="">自訂/其他項目</option>`].concat(Object.entries(COURSE_CATALOG).map(([key, course]) => `<option value="${key}" ${appt.service === key ? "selected" : ""}>${esc(course.name)} (${money(course.price)})</option>`)).join("");
   return `<div class="grid gap-5 xl:grid-cols-[1fr_360px]">
     <form id="appointmentDetailForm" class="card p-5">
       <div class="mb-5 flex flex-col justify-between gap-4 border-b pb-5 sm:flex-row sm:items-center">
-        <div><p class="text-xs font-black uppercase tracking-widest text-slate-500">派班資料</p><h3 class="text-xl font-black">${esc(customerDisplay(appt.phone, appt.customerName))}</h3><p class="text-xs font-bold text-slate-500">ID：${esc(appt.id)}</p></div>
+        <div><p class="text-xs font-black uppercase tracking-widest text-slate-500">預約資料</p><h3 class="text-xl font-black">${esc(customerDisplay(appt.phone, appt.customerName))}</h3><p class="text-xs font-bold text-slate-500">ID：${esc(appt.id)}</p></div>
         <div class="flex gap-2"><button id="backToAppointmentListBtn" type="button" class="btn-light">返回清單</button><button data-delete-appt="${esc(appt.id)}" type="button" class="rounded-xl bg-rose-50 px-4 py-2 font-black text-rose-700">刪除</button></div>
       </div>
+      ${bookingStageRailHtml(appt.bookingStage || "confirmed")}
       <div class="grid gap-4 md:grid-cols-2">
         <div><label class="label">預約日期</label><input name="date" type="date" class="input" value="${esc(appt.date || todayKey())}"></div>
         <div><label class="label">預約時間</label><input name="time" type="time" class="input" value="${esc(appt.time || "")}"></div>
         <div><label class="label">指定按摩師</label><select name="therapistId" class="input">${Object.keys(db.therapists).map((id) => `<option value="${esc(id)}" ${id === appt.therapistId ? "selected" : ""}>${esc(therapistName(id))}</option>`).join("")}</select></div>
         <div><label class="label">工作室安排</label><select name="room" class="input"><option value="R" ${appt.room === "R" ? "selected" : ""}>Royal (R房)</option><option value="T" ${appt.room === "T" ? "selected" : ""}>Tiffany (T房)</option><option value="OUT" ${appt.room === "OUT" ? "selected" : ""}>外出</option></select></div>
+        <div><label class="label">預約進度</label><select name="bookingStage" class="input">${bookingStageOptions(appt.bookingStage || (String(appt.isCompleted) === "true" ? "completed" : "confirmed"))}</select></div>
         <div><label class="label">服務課程</label><select name="service" class="input">${serviceOptions}</select></div>
         <div><label class="label">預估時長</label><input name="duration" type="number" min="10" step="10" class="input" value="${esc(appt.duration || 60)}"></div>
         <div><label class="label">應收金額</label><input name="price" type="number" class="input" value="${esc(appt.price || 0)}"></div>
@@ -1030,10 +1687,27 @@ function renderAppointmentDetailForm(appt, allAppts) {
         <div class="md:col-span-2"><label class="label">服務紀錄 / 顧客反饋</label><textarea name="recordNotes" class="input min-h-28">${esc(record.notes || "")}</textarea></div>
       </div>
       <p id="appointmentDetailError" class="mt-4 hidden text-sm font-black text-rose-600"></p>
-      <div class="mt-5 flex justify-end gap-3 border-t pt-4"><button id="cancelAppointmentDetailBtn" type="button" class="btn-light">取消</button><button class="btn-teal">儲存派班資料</button></div>
+      <div class="mt-5 flex justify-end gap-3 border-t pt-4"><button id="cancelAppointmentDetailBtn" type="button" class="btn-light">取消</button><button class="btn-teal">儲存預約資料</button></div>
     </form>
     <aside class="space-y-4">
-      <div class="card p-5"><h4 class="mb-4 font-black">帳務摘要</h4><div class="space-y-3">${metric("應收金額", money(appt.price), "text-rose-700")}${metric("店家應收", money(Number(appt.price || 0) - cut), "text-teal-700")}${metric("師傅抽成", money(cut), "text-indigo-700")}</div></div>
+      <div class="card p-5"><h4 class="mb-4 font-black">帳務摘要</h4><div class="space-y-3">${metric("應收金額", money(appt.price), "text-rose-700")}${metric("店家應收", money(companyCut), "text-teal-700")}${metric("師傅抽成", money(cut), "text-indigo-700")}</div></div>
+      <div class="card p-5">
+        <div class="mb-3 flex items-center justify-between gap-3"><h4 class="font-black">行前通知</h4><span class="badge ${bookingStageClass(appt.bookingStage)}">${esc(bookingStageLabel(appt.bookingStage))}</span></div>
+        <div class="space-y-2 rounded-xl bg-slate-50 p-4 text-sm font-bold text-slate-600">
+          <p>師傅：<b class="text-slate-900">${esc(therapistName(appt.therapistId))}</b></p>
+          <p>時間：<b class="text-slate-900">${esc(appt.date)} ${esc(appt.time)}</b></p>
+          <p>房型：<b class="text-slate-900">${appt.room === "OUT" ? "外出" : `${esc(appt.room || "-")}房`}</b></p>
+          <p>大門密碼：<b class="text-slate-900">${esc(db.customers.SYS_DOOR_PWD?.notes || "未設定")}</b></p>
+          <p>課程：<b class="text-slate-900">${esc(courseName(appt.service))}</b></p>
+          <p>應收：<b class="text-rose-700">${money(appt.price)}</b>，應回款：<b class="text-teal-700">${money(companyCut)}</b></p>
+        </div>
+        <label class="label mt-3">給師傅通知文字</label>
+        <textarea id="therapistNoticeText" readonly class="input min-h-40 bg-white text-sm">${esc(noticeText)}</textarea>
+        <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <button type="button" class="btn-light" data-copy-notice="therapistNoticeText">複製通知</button>
+          <button type="button" class="btn-teal" data-mark-stage="${esc(appt.id)}" data-stage="pre_notice">標記已通知</button>
+        </div>
+      </div>
       <div class="card p-5"><h4 class="mb-3 font-black">顧客摘要</h4><p class="font-black">${esc(customerDisplay(appt.phone, appt.customerName))}</p><p class="text-sm font-bold text-slate-500">${esc(appt.phone || "無聯絡方式")}</p><p class="mt-3 text-sm text-slate-600">累積預約：<b>${sameCustomer}</b> 筆</p><p class="mt-3 whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-sm text-slate-600">${esc(db.customers[appt.phone]?.notes || "尚無顧客備註")}</p></div>
     </aside>
   </div>`;
@@ -1050,13 +1724,15 @@ async function saveAppointmentDetailForm(form) {
     appId: old.id,
     duration: Number(data.duration || 60),
     price: Number(data.price || 0),
-    isCompleted: data.isCompleted === "on",
+    bookingStage: String(data.bookingStage || old.bookingStage || "confirmed"),
+    isCompleted: data.isCompleted === "on" || data.bookingStage === "completed",
     collectedPrice: data.collectedPrice || "",
     phone: String(data.phone || "").trim(),
     customerName: String(data.customerName || "").trim(),
     notes: String(data.notes || "").trim()
   };
   const err = $("appointmentDetailError");
+  if (next.isCompleted) next.bookingStage = "completed";
   if (!next.date || !next.time || !next.phone) {
     err.textContent = "日期、時間與聯絡方式必填；顧客姓名可留空。";
     err.classList.remove("hidden");
@@ -1083,11 +1759,11 @@ async function saveAppointmentDetailForm(form) {
     await saveCloudActions([
       { action: "addAppointment", data: next },
       { action: "saveCustomer", data: { phone: next.phone, ...customer } }
-    ], "派班資料已寫入雲端");
+    ], "預約資料已寫入雲端");
     setFormBusy(form, false);
     renderAll();
     activeAppointmentId = next.id;
-    switchTab("appointment");
+    switchTab("dispatch");
   };
   const conflict = findAppointmentConflict(next);
   if (conflict) confirmAction("仍要儲存撞期預約？", conflict, commit, "強制儲存");
@@ -1180,7 +1856,7 @@ function openCustomerModal(phone = "", recordsOpen = false) {
 
 function renderRecordList(phone) {
   const records = [...(db.customers[phone]?.records || [])].sort((a, b) => String(b.date).localeCompare(String(a.date)));
-  return records.length ? records.map((r) => `<div class="rounded-xl border bg-white p-3"><div class="mb-1 flex justify-between gap-2"><b>${esc(r.date)}</b><span class="badge bg-slate-100 text-slate-600">${esc(courseName(r.service))}</span></div><p class="text-xs font-black text-teal-700">${esc(r.therapistName || therapistName(r.therapistId))}</p><p class="mt-1 whitespace-pre-wrap text-sm text-slate-600">${esc(r.notes || "尚未填寫細節")}</p>${db.appointments[r.id] ? `<button type="button" class="btn-light mt-3 px-3 py-1 text-xs" data-open-appt="${esc(r.id)}">開啟派班資料</button>` : ""}</div>`).join("") : `<div class="rounded-xl border border-dashed py-6 text-center text-sm font-bold text-slate-400">無紀錄</div>`;
+  return records.length ? records.map((r) => `<div class="rounded-xl border bg-white p-3"><div class="mb-1 flex justify-between gap-2"><b>${esc(r.date)}</b><span class="badge bg-slate-100 text-slate-600">${esc(courseName(r.service))}</span></div><p class="text-xs font-black text-teal-700">${esc(r.therapistName || therapistName(r.therapistId))}</p><p class="mt-1 whitespace-pre-wrap text-sm text-slate-600">${esc(r.notes || "尚未填寫細節")}</p>${db.appointments[r.id] ? `<button type="button" class="btn-light mt-3 px-3 py-1 text-xs" data-open-appt="${esc(r.id)}">開啟預約資料</button>` : ""}</div>`).join("") : `<div class="rounded-xl border border-dashed py-6 text-center text-sm font-bold text-slate-400">無紀錄</div>`;
 }
 
 async function addCustomerRecord(phone) {
@@ -1246,6 +1922,7 @@ function therapistProfileFields(profile = {}) {
     <div><label class="label">暱稱</label><input name="nickname" class="input" value="${esc(profile.nickname || "")}" placeholder="例如：Noah"></div>
     <div><label class="label">姓名</label><input name="name" class="input" value="${esc(profile.name || "")}" placeholder="真實姓名"></div>
     <div><label class="label">聯絡方式</label><input name="contact" class="input" value="${esc(profile.contact || "")}" placeholder="電話 / Line ID"></div>
+    <div class="md:col-span-2"><label class="label">照片網址</label><input name="photoUrl" class="input" value="${esc(profile.photoUrl || "")}" placeholder="貼上公開圖片網址，例如 GitHub / Google Drive / Imgur 圖片連結"></div>
     <div><label class="label">身高 (cm)</label><input name="height" inputmode="numeric" class="input" value="${esc(profile.height || "")}" placeholder="例：170"></div>
     <div><label class="label">體重 (kg)</label><input name="weight" inputmode="numeric" class="input" value="${esc(profile.weight || "")}" placeholder="例：60"></div>
     <div><label class="label">年齡</label><input name="age" inputmode="numeric" class="input" value="${esc(profile.age || "")}" placeholder="例：28"></div>
@@ -1387,6 +2064,15 @@ async function rejectRequest(id) {
   renderAll();
 }
 
+async function dismissApproval(id) {
+  const item = db.approvals[id];
+  if (!item || item.status === "pending") return;
+  delete db.approvals[id];
+  delete db.customers[approvalKey(id)];
+  await saveCloudActions([{ action: "deleteCustomer", data: { phone: approvalKey(id) } }], "審核紀錄已移除");
+  renderAll();
+}
+
 function renderPersonnel() {
   const section = $("view-personnel");
   const scheduleStart = $("scheduleStartDate")?.value || monthDates[0]?.key || todayKey();
@@ -1413,7 +2099,7 @@ function renderPersonnel() {
                 <h4 class="mt-2 text-lg font-black">${esc(therapistName(item.therapistId))} <span class="font-mono text-sm text-slate-400">${esc(item.therapistId)}</span></h4>
                 <p class="mt-1 text-sm font-bold text-slate-500">${esc(approvalSummary(item))}</p>
               </div>
-              ${item.status === "pending" ? `<div class="flex gap-2"><button class="btn-teal px-4 py-2 text-sm" data-approve-request="${esc(item.id)}">核可套用</button><button class="rounded-xl bg-rose-50 px-4 py-2 text-sm font-black text-rose-700" data-reject-request="${esc(item.id)}">退回</button></div>` : ""}
+              ${item.status === "pending" ? `<div class="flex gap-2"><button class="btn-teal px-4 py-2 text-sm" data-approve-request="${esc(item.id)}">核可套用</button><button class="rounded-xl bg-rose-50 px-4 py-2 text-sm font-black text-rose-700" data-reject-request="${esc(item.id)}">退回</button></div>` : `<button class="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-lg font-black text-slate-500 hover:bg-rose-50 hover:text-rose-600" title="移除此審核紀錄" data-dismiss-approval="${esc(item.id)}">×</button>`}
             </div>
             ${renderApprovalDetail(item)}
           </div>`;
@@ -1422,15 +2108,10 @@ function renderPersonnel() {
     </div>`;
   const staffPanel = `
     <div class="card p-5">
-      <div class="mb-4 flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
-        <div><h3 class="font-black">新增按摩師基本人事資料</h3><p class="text-sm font-bold text-slate-500">建立後即可使用編號與 PIN 登入師傅專屬中樞。</p></div>
+      <div class="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+        <div><h3 class="font-black">人事資料</h3><p class="text-sm font-bold text-slate-500">人員清單保持乾淨，需要建立新人時再開啟新增表單。</p></div>
+        <button id="openTherapistCreateBtn" class="btn-teal">新增人員</button>
       </div>
-      <form id="therapistForm" class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <div><label class="label">編號 (登入帳號)</label><input name="id" class="input" placeholder="例：T004"></div>
-        <div><label class="label">密碼 PIN</label><input name="pin" class="input" inputmode="numeric" autocomplete="off" placeholder="可含開頭 0"></div>
-        ${therapistProfileFields()}
-        <div class="flex items-end xl:col-span-4"><button class="btn-teal w-full sm:w-auto">建立檔案並開通登入</button></div>
-      </form>
     </div>
     <div class="card overflow-hidden">
       <div class="border-b bg-slate-50 p-5"><h3 class="font-black">在職人員資料庫</h3></div>
@@ -1486,16 +2167,7 @@ function renderPersonnel() {
     return;
   }
   if (activePersonnelPanel === "staff") {
-    $("therapistForm").onsubmit = async (e) => {
-      e.preventDefault();
-      const data = collectTherapistProfile(e.currentTarget);
-      if (!data.id || !data.pin) return showSnackbar("編號與密碼 PIN 必填");
-      setFormBusy(e.currentTarget, true);
-      await saveTherapistProfile(data);
-      setFormBusy(e.currentTarget, false);
-      renderAll();
-    };
-    wireTherapistBioGenerator("therapistForm");
+    $("openTherapistCreateBtn").onclick = openTherapistCreator;
     section.querySelectorAll("[data-edit-therapist]").forEach((btn) => btn.onclick = () => openTherapistEditor(btn.dataset.editTherapist));
     section.querySelectorAll("[data-delete-therapist]").forEach((btn) => btn.onclick = () => confirmAction("刪除按摩師", "排班資料會保留於本機資料中，但人員不再顯示。", async () => {
       const id = btn.dataset.deleteTherapist;
@@ -1510,6 +2182,7 @@ function renderPersonnel() {
   if (activePersonnelPanel === "approvals") {
     section.querySelectorAll("[data-approve-request]").forEach((btn) => btn.onclick = () => approveRequest(btn.dataset.approveRequest));
     section.querySelectorAll("[data-reject-request]").forEach((btn) => btn.onclick = () => rejectRequest(btn.dataset.rejectRequest));
+    section.querySelectorAll("[data-dismiss-approval]").forEach((btn) => btn.onclick = () => dismissApproval(btn.dataset.dismissApproval));
     return;
   }
   if (activePersonnelPanel === "admins") {
@@ -1535,6 +2208,31 @@ function renderPersonnel() {
       renderAll();
     }));
   }
+}
+
+function openTherapistCreator() {
+  showModal(`<div class="modal max-w-4xl">
+    <h3 class="mb-5 border-b pb-4 text-xl font-black">新增按摩師基本人事資料</h3>
+    <form id="therapistCreateForm" class="space-y-5">
+      <div class="grid gap-4 md:grid-cols-2">
+        <div><label class="label">編號 (登入帳號)</label><input name="id" class="input" placeholder="例：T004"></div>
+        <div><label class="label">密碼 PIN</label><input name="pin" class="input" inputmode="numeric" autocomplete="off" placeholder="4 位數，可含開頭 0"></div>
+        ${therapistProfileFields()}
+      </div>
+      <div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">建立檔案並開通登入</button></div>
+    </form>
+  </div>`);
+  $("therapistCreateForm").onsubmit = async (event) => {
+    event.preventDefault();
+    const data = collectTherapistProfile(event.currentTarget);
+    if (!data.id || !data.pin) return showSnackbar("編號與密碼 PIN 必填");
+    setFormBusy(event.currentTarget, true);
+    await saveTherapistProfile(data);
+    setFormBusy(event.currentTarget, false);
+    closeModal();
+    renderAll();
+  };
+  wireTherapistBioGenerator("therapistCreateForm");
 }
 
 function openTherapistEditor(id) {
@@ -1719,7 +2417,7 @@ function renderPortal() {
       <div class="card overflow-hidden">
         <div class="flex flex-col justify-between gap-4 border-b bg-white px-5 py-4 sm:flex-row sm:items-center">
           <div><p class="text-xs font-black uppercase tracking-widest text-slate-500">個人中樞</p><h3 class="text-2xl font-black">${esc(currentUser.nickname || currentUser.name)}</h3></div>
-          <span class="badge bg-teal-50 text-teal-700">${appts.length} 筆本月派單</span>
+          <span class="badge bg-teal-50 text-teal-700">${appts.length} 筆本月預約</span>
         </div>
         <div class="divide-y divide-slate-100">
           ${appts.length ? appts.map((a) => `<div class="grid gap-3 p-4 md:grid-cols-[120px_1fr_auto] md:items-center">
@@ -1882,11 +2580,27 @@ function bindEvents() {
   $("openSidebarBtn").addEventListener("click", showSidebar);
   $("closeSidebarBtn").addEventListener("click", hideSidebar);
   $("sidebarOverlay").addEventListener("click", hideSidebar);
-  document.querySelectorAll("[data-tab]").forEach((btn) => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
+  document.querySelectorAll("[data-tab]").forEach((tabButton) => {
+    tabButton.addEventListener("click", () => switchTab(tabButton.dataset.tab, { clearAppointment: tabButton.dataset.tab === "dispatch" }));
+  });
+  document.addEventListener("click", (event) => {
+    const jumpButton = event.target.closest?.("[data-jump-tab]");
+    if (jumpButton) {
+      event.preventDefault();
+      if (jumpButton.dataset.personnelPanel) activePersonnelPanel = jumpButton.dataset.personnelPanel;
+      switchTab(jumpButton.dataset.jumpTab, { clearAppointment: jumpButton.dataset.jumpTab === "dispatch", focus: jumpButton.dataset.dispatchFocus || "" });
+      return;
+    }
+    const addButton = event.target.closest?.("[data-add-appointment]");
+    if (!addButton) return;
+    event.preventDefault();
+    openAppointmentModal({ therapistId: addButton.dataset.therapist, date: addButton.dataset.date, time: addButton.dataset.time || "" });
+  });
 }
 
 window.handleLogin = handleLogin;
 window.handleAdminLogin = handleLogin;
+window.switchTab = switchTab;
 window.logout = logout;
 
 bindEvents();

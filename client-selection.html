@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>選擇服務師傅｜Morgan</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+    body { font-family: 'Noto Sans TC', sans-serif; background: #eef3f8; color: #162033; }
+    .card { background: #fff; border: 1px solid #dce4ee; border-radius: 20px; box-shadow: 0 10px 28px rgba(15, 23, 42, .06); }
+    .input { width: 100%; border: 1px solid #cbd5e1; border-radius: 14px; padding: 14px 16px; font-weight: 800; outline: none; background: #fff; }
+    .input:focus { border-color: #0f766e; box-shadow: 0 0 0 3px rgba(15, 118, 110, .14); }
+    .btn { border-radius: 14px; padding: 13px 18px; font-weight: 900; transition: .16s ease; }
+    .btn-primary { background: #0f766e; color: #fff; }
+    .btn-primary:hover { background: #115e59; }
+    .badge { border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 900; }
+    .selected { border-color: #0f766e; box-shadow: 0 0 0 3px rgba(15, 118, 110, .18); }
+  </style>
+</head>
+<body>
+  <main class="mx-auto max-w-5xl px-4 py-6 md:py-10">
+    <section class="mb-5 rounded-[24px] bg-slate-950 p-6 text-white md:p-8">
+      <p class="text-sm font-black tracking-widest text-teal-300">MORGAN 客選服務</p>
+      <h1 class="mt-2 text-2xl font-black md:text-4xl">選擇偏好的服務師傅</h1>
+      <p id="selectionMeta" class="mt-3 text-sm font-bold text-slate-300">讀取可選名單中...</p>
+    </section>
+
+    <section id="noticeBox" class="card mb-5 hidden p-5"></section>
+
+    <section class="grid gap-5 lg:grid-cols-[1fr_320px]">
+      <div>
+        <div id="candidateList" class="grid gap-4 md:grid-cols-2"></div>
+      </div>
+      <aside class="card h-fit p-5">
+        <h2 class="text-lg font-black">留下聯絡資料</h2>
+      <p class="mt-1 text-sm font-bold text-slate-500">送出後店家會確認時段與房間，再正式建立預約。</p>
+        <form id="selectionForm" class="mt-5 space-y-4">
+          <div>
+            <label class="mb-1 block text-xs font-black text-slate-500">顧客姓名 <span class="text-slate-400">(選填)</span></label>
+            <input id="customerName" class="input" placeholder="可留空">
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-black text-slate-500">聯絡方式</label>
+            <input id="customerContact" class="input" placeholder="電話 / Line ID" required>
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-black text-slate-500">備註 <span class="text-slate-400">(選填)</span></label>
+            <textarea id="customerNote" class="input min-h-24" placeholder="例如偏好力道、希望加強部位"></textarea>
+          </div>
+          <button id="submitBtn" class="btn btn-primary w-full" disabled>先選擇一位師傅</button>
+          <p id="formMsg" class="hidden text-sm font-black"></p>
+        </form>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const API_URL = "https://script.google.com/macros/s/AKfycbxC4Pk1v6rkdmd96cR_2r_xPhbcNjrQ0bNdikGKyqbR9OMMeCwN9L5t9mE1j-AoS-ie/exec";
+    const COURSE_CATALOG = {
+      A60: { name: "A課程 60分", duration: 60, price: 1800 },
+      C120: { name: "C課程 120分", duration: 120, price: 2800 },
+      C90: { name: "C課程 90分", duration: 90, price: 2500 },
+      D120: { name: "D課程 120分", duration: 120, price: 2400 },
+      D90: { name: "D課程 90分", duration: 90, price: 2100 },
+      OUT_DAY: { name: "外出 (22:00前)", duration: 120, price: 3200 },
+      OUT_NIGHT: { name: "外出 (22:00後)", duration: 120, price: 3500 }
+    };
+    const params = new URLSearchParams(window.location.search);
+    const query = {
+      date: params.get("date") || "",
+      time: (params.get("time") || "").slice(0, 5),
+      service: params.get("service") || "C120",
+      limit: Number(params.get("limit") || 5)
+    };
+    const CLIENT_SELECTION_PREFIX = "SYS_CLIENT_SELECTION_";
+    const THERAPIST_PROFILE_PREFIX = "SYS_THERAPIST_PROFILE_";
+    const AFTER_MIDNIGHT_CUTOFF = 5 * 60;
+    let db = { therapists: {}, schedules: {}, appointments: {}, customers: {} };
+    let selectedTherapistId = "";
+
+    const $ = (id) => document.getElementById(id);
+    const esc = (value = "") => String(value ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+    const courseName = (code) => COURSE_CATALOG[code]?.name || code || "自訂服務";
+    const timeToMinutes = (value = "00:00") => {
+      const [h = 0, m = 0] = String(value).split(":").map(Number);
+      return h * 60 + m;
+    };
+    const normalizedTimelineMinute = (mins) => mins < AFTER_MIDNIGHT_CUTOFF ? mins + 24 * 60 : mins;
+    const therapistName = (id) => db.therapists[id]?.nickname || db.therapists[id]?.name || id || "師傅";
+    const isWorking = (shift = "") => shift && !String(shift).includes("休") && shift !== "尚未排班";
+
+    function normalizeDate(value = "") {
+      const direct = String(value || "").match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+      if (direct) return `${direct[1]}-${String(direct[2]).padStart(2, "0")}-${String(direct[3]).padStart(2, "0")}`;
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return String(value || "");
+      return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
+    }
+
+    function normalizeTime(value = "") {
+      const match = String(value || "").match(/\b(\d{1,2}):(\d{2})(?::\d{2})?\b/);
+      return match ? `${String(match[1]).padStart(2, "0")}:${match[2]}` : String(value || "").slice(0, 5);
+    }
+
+    function parseShiftSegments(shift = "") {
+      if (!isWorking(shift)) return [];
+      return String(shift).split(/[,\s、，]+/).map((part) => {
+        const [rawStart, rawEnd] = part.split("-");
+        if (!rawStart || !rawEnd) return null;
+        let start = timeToMinutes(rawStart);
+        let end = timeToMinutes(rawEnd);
+        if (end <= start) end += 24 * 60;
+        return { start, end, label: `${rawStart}-${rawEnd}` };
+      }).filter(Boolean);
+    }
+
+    function isMinuteInShift(shift, minute) {
+      return parseShiftSegments(shift).some((seg) => {
+        const start = normalizedTimelineMinute(seg.start);
+        const end = normalizedTimelineMinute(seg.end);
+        return minute >= start && minute < end;
+      });
+    }
+
+    function isRangeInShift(shift, minute, duration) {
+      const endMinute = minute + Number(duration || 60);
+      return parseShiftSegments(shift).some((seg) => {
+        const start = normalizedTimelineMinute(seg.start);
+        const end = normalizedTimelineMinute(seg.end);
+        return minute >= start && endMinute <= end;
+      });
+    }
+
+    function normalizeDb(raw) {
+      raw.therapists ||= {};
+      raw.schedules ||= {};
+      raw.appointments ||= {};
+      raw.customers ||= {};
+      Object.entries(raw.customers).forEach(([key, customer]) => {
+        if (!key.startsWith(THERAPIST_PROFILE_PREFIX)) return;
+        const id = key.replace(THERAPIST_PROFILE_PREFIX, "");
+        try {
+          raw.therapists[id] = { ...(raw.therapists[id] || {}), ...JSON.parse(customer.notes || "{}") };
+        } catch {}
+      });
+      Object.entries(raw.appointments).forEach(([id, appt]) => {
+        appt.id ||= id;
+        appt.date = normalizeDate(appt.date);
+        appt.time = normalizeTime(appt.time);
+      });
+      return raw;
+    }
+
+    function candidateCompleteness(profile = {}) {
+      return ["photoUrl", "bio", "specialties", "height", "weight", "age"].reduce((sum, key) => sum + (String(profile[key] || "").trim() ? 1 : 0), 0);
+    }
+
+    function therapistPhoto(profile, name) {
+      const photo = String(profile.photoUrl || "").trim();
+      if (photo) return `<img src="${esc(photo)}" alt="${esc(name)}" class="h-24 w-24 rounded-2xl object-cover">`;
+      return `<div class="flex h-24 w-24 items-center justify-center rounded-2xl bg-teal-50 text-4xl font-black text-teal-700">${esc(name.charAt(0) || "師")}</div>`;
+    }
+
+    function compactStats(profile = {}) {
+      return [
+        profile.age ? `${profile.age}歲` : "",
+        profile.height ? `${profile.height}cm` : "",
+        profile.weight ? `${profile.weight}kg` : ""
+      ].filter(Boolean).join(" / ");
+    }
+
+    function availableCandidates() {
+      if (!query.date || !query.time) return [];
+      const start = normalizedTimelineMinute(timeToMinutes(query.time));
+      const duration = COURSE_CATALOG[query.service]?.duration || 120;
+      const end = start + duration;
+      return Object.entries(db.therapists).map(([id, profile]) => {
+        const shift = (db.schedules[id] || {})[query.date] || "休假";
+        if (!isRangeInShift(shift, start, duration)) return null;
+        const dayAppts = Object.values(db.appointments).filter((appt) => appt.date === query.date && appt.therapistId === id);
+        const conflict = dayAppts.some((appt) => {
+          const apptStart = normalizedTimelineMinute(timeToMinutes(appt.time));
+          const apptEnd = apptStart + Number(appt.duration || 60);
+          return start < apptEnd && end > apptStart;
+        });
+        if (conflict) return null;
+        return { id, profile, shift, score: candidateCompleteness(profile) * 10 };
+      }).filter(Boolean).sort((a, b) => b.score - a.score || therapistName(a.id).localeCompare(therapistName(b.id))).slice(0, query.limit);
+    }
+
+    function renderCandidates(candidates) {
+      const list = $("candidateList");
+      if (!candidates.length) {
+        list.innerHTML = `<div class="card p-8 text-center font-black text-slate-500 md:col-span-2">此時段目前沒有可選師傅，請回上一頁或聯繫店家協助安排。</div>`;
+        return;
+      }
+      list.innerHTML = candidates.map(({ id, profile, shift }) => {
+        const name = therapistName(id);
+        return `<article class="card p-5" data-card="${esc(id)}">
+          <div class="flex gap-4">
+            ${therapistPhoto(profile, name)}
+            <div class="min-w-0 flex-1">
+              <div class="flex items-start justify-between gap-2">
+                <h2 class="truncate text-xl font-black">${esc(name)}</h2>
+                <span class="badge bg-teal-50 text-teal-700">可選</span>
+              </div>
+              <p class="mt-1 text-sm font-black text-teal-700">${esc(shift)}</p>
+              <p class="mt-1 text-sm font-bold text-slate-500">${esc(compactStats(profile) || "基本資料未完整")}</p>
+            </div>
+          </div>
+          <p class="mt-4 min-h-16 text-sm font-bold leading-relaxed text-slate-600">${esc(profile.bio || profile.specialties || "尚未填寫介紹詞")}</p>
+          <div class="mt-4 flex flex-wrap gap-2">
+            ${String(profile.specialties || "").split(/[、，,]/).filter(Boolean).slice(0, 3).map((item) => `<span class="badge bg-slate-100 text-slate-600">${esc(item.trim())}</span>`).join("")}
+          </div>
+          <button class="btn mt-5 w-full bg-slate-100 text-slate-800" data-select="${esc(id)}">選擇 ${esc(name)}</button>
+        </article>`;
+      }).join("");
+      list.querySelectorAll("[data-select]").forEach((btn) => {
+        btn.onclick = () => {
+          selectedTherapistId = btn.dataset.select;
+          list.querySelectorAll("[data-card]").forEach((card) => card.classList.toggle("selected", card.dataset.card === selectedTherapistId));
+          list.querySelectorAll("[data-select]").forEach((item) => {
+            const active = item.dataset.select === selectedTherapistId;
+            item.className = active ? "btn btn-primary mt-5 w-full" : "btn mt-5 w-full bg-slate-100 text-slate-800";
+            item.textContent = active ? "已選擇" : `選擇 ${therapistName(item.dataset.select)}`;
+          });
+          $("submitBtn").disabled = false;
+          $("submitBtn").textContent = "送出選擇，等待店家確認";
+        };
+      });
+    }
+
+    async function submitSelection(event) {
+      event.preventDefault();
+      const msg = $("formMsg");
+      if (!selectedTherapistId) return;
+      const contact = $("customerContact").value.trim();
+      if (!contact) {
+        msg.textContent = "請留下聯絡方式，方便店家確認。";
+        msg.className = "text-sm font-black text-rose-600";
+        msg.classList.remove("hidden");
+        return;
+      }
+      $("submitBtn").disabled = true;
+      $("submitBtn").textContent = "送出中...";
+      const id = `SEL-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+      const selection = {
+        id,
+        status: "pending",
+        date: query.date,
+        time: query.time,
+        service: query.service,
+        duration: COURSE_CATALOG[query.service]?.duration || 120,
+        selectedTherapistId,
+        selectedTherapistName: therapistName(selectedTherapistId),
+        customerName: $("customerName").value.trim(),
+        customerContact: contact,
+        customerNote: $("customerNote").value.trim(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      try {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          mode: "no-cors",
+          body: JSON.stringify({
+            action: "saveCustomer",
+            data: {
+              phone: `${CLIENT_SELECTION_PREFIX}${id}`,
+              name: `待確認-${selection.customerName || selection.customerContact}-${selection.selectedTherapistName}`,
+              notes: JSON.stringify(selection),
+              records: []
+            }
+          })
+        });
+        const accepted = res.ok || res.type === "opaque" || res.status === 302 || res.type === "opaqueredirect" || (res.status >= 200 && res.status < 400);
+        if (!accepted) throw new Error(`HTTP ${res.status}`);
+        $("selectionForm").innerHTML = `<div class="rounded-2xl bg-teal-50 p-5 text-teal-800"><h2 class="text-lg font-black">已送出選擇</h2><p class="mt-2 text-sm font-bold">店家確認時段、房間與預約後，會再與您聯繫。</p></div>`;
+        document.querySelectorAll("[data-select]").forEach((button) => button.disabled = true);
+      } catch (error) {
+        msg.textContent = "送出失敗，請稍後再試或直接聯繫店家。";
+        msg.className = "text-sm font-black text-rose-600";
+        msg.classList.remove("hidden");
+        $("submitBtn").disabled = false;
+        $("submitBtn").textContent = "重新送出";
+      }
+    }
+
+    async function boot() {
+      $("selectionMeta").textContent = `${query.date || "未指定日期"} ${query.time || "未指定時間"} · ${courseName(query.service)}`;
+      if (!query.date || !query.time) {
+        $("noticeBox").className = "card mb-5 p-5 text-center font-black text-rose-600";
+        $("noticeBox").textContent = "缺少日期或時間參數，請使用店家提供的連結。";
+        return;
+      }
+      try {
+        const res = await fetch(`${API_URL}?t=${Date.now()}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        db = normalizeDb(await res.json());
+        renderCandidates(availableCandidates());
+      } catch (error) {
+        $("candidateList").innerHTML = `<div class="card p-8 text-center font-black text-rose-600 md:col-span-2">無法讀取可選名單，請稍後再試。</div>`;
+      }
+    }
+
+    $("selectionForm").onsubmit = submitSelection;
+    boot();
+  </script>
+</body>
+</html>

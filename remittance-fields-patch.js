@@ -16,7 +16,8 @@
 
     const due = remittanceDueAmount(appt);
     const paid = isRemitted(appt);
-    const currentMethod = appt.remittanceMethod || "";
+    const currentRecord = appointmentRecord(appt);
+    const currentMethod = appt.remittanceMethod || currentRecord?.remittanceMethod || "";
     const oldCollectedInput = form.elements.collectedPrice;
     const amountContainer = oldCollectedInput?.closest("div");
     if (amountContainer) {
@@ -113,7 +114,7 @@
       setFormBusy(form, false);
       renderAll();
       activeAppointmentId = draft.id;
-      switchTab("appointment");
+      switchTab("dispatch");
     };
 
     const conflict = findAppointmentConflict(draft);
@@ -132,7 +133,7 @@
     const due = remittanceDueAmount(appt);
     const paid = isRemitted(appt);
     const record = findRecord(appt);
-    showModal(`<div class="modal max-w-lg"><h3 class="mb-5 border-b pb-4 text-xl font-black">填寫服務紀錄與回帳</h3><form id="therapistReportForm" class="space-y-4"><div class="rounded-xl border bg-slate-50 p-4"><b>${esc(customerDisplay(appt.phone, appt.customerName))}</b><p class="text-sm font-bold text-teal-700">${esc(appt.date)} / ${esc(appt.time)} - ${esc(courseName(appt.service))}</p></div><div class="grid grid-cols-2 gap-3"><div class="metric"><p class="text-xs font-black text-slate-500">應收總額</p><p class="mt-1 text-2xl font-black text-rose-700">${money(appt.price)}</p></div><div class="metric"><p class="text-xs font-black text-slate-500">應回帳金額</p><p class="mt-1 text-2xl font-black text-teal-700">${money(due)}</p></div></div><label class="flex items-center gap-3 rounded-xl border p-3 font-black"><input name="remittancePaid" type="checkbox" class="h-5 w-5" ${paid ? "checked" : ""}> 已回帳</label><div><label class="label">回帳管道</label><select name="remittanceMethod" class="input">${remittanceMethodOptions(appt.remittanceMethod || "")}</select></div><textarea name="notes" class="input min-h-28" placeholder="服務細節與顧客反饋">${esc(record?.notes || "")}</textarea><label class="flex items-center gap-3 rounded-xl border p-3 font-black"><input name="isCompleted" type="checkbox" ${String(appt.isCompleted) === "true" ? "checked" : ""}> 標記為已完成</label><p id="therapistReportError" class="hidden text-sm font-black text-rose-600"></p><div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">儲存入檔</button></div></form></div>`);
+    showModal(`<div class="modal max-w-lg"><h3 class="mb-5 border-b pb-4 text-xl font-black">填寫服務紀錄與回帳</h3><form id="therapistReportForm" class="space-y-4"><div class="rounded-xl border bg-slate-50 p-4"><b>${esc(customerDisplay(appt.phone, appt.customerName))}</b><p class="text-sm font-bold text-teal-700">${esc(appt.date)} / ${esc(appt.time)} - ${esc(courseName(appt.service))}</p></div><div class="grid grid-cols-2 gap-3"><div class="metric"><p class="text-xs font-black text-slate-500">應收總額</p><p class="mt-1 text-2xl font-black text-rose-700">${money(appt.price)}</p></div><div class="metric"><p class="text-xs font-black text-slate-500">應回帳金額</p><p class="mt-1 text-2xl font-black text-teal-700">${money(due)}</p></div></div><label class="flex items-center gap-3 rounded-xl border p-3 font-black"><input name="remittancePaid" type="checkbox" class="h-5 w-5" ${paid ? "checked" : ""}> 已回帳</label><div><label class="label">回帳管道</label><select name="remittanceMethod" class="input">${remittanceMethodOptions(appt.remittanceMethod || record?.remittanceMethod || "")}</select></div><textarea name="notes" class="input min-h-28" placeholder="服務細節與顧客反饋">${esc(record?.notes || "")}</textarea><label class="flex items-center gap-3 rounded-xl border p-3 font-black"><input name="isCompleted" type="checkbox" ${String(appt.isCompleted) === "true" ? "checked" : ""}> 標記為已完成</label><p id="therapistReportError" class="hidden text-sm font-black text-rose-600"></p><div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">儲存入檔</button></div></form></div>`);
 
     $("therapistReportForm").onsubmit = async (event) => {
       event.preventDefault();
@@ -184,7 +185,7 @@
     };
   };
 
-  if ($("appointmentDataPanel") || ($("view-appointmentDetail") && !$("view-appointmentDetail").classList.contains("hidden"))) {
+  if ($("view-dispatch") || $("appointmentDataPanel") || ($("view-appointmentDetail") && !$("view-appointmentDetail").classList.contains("hidden"))) {
     renderAppointmentDetail();
   }
 })();

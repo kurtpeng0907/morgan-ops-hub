@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>專業按摩師排班與派單中樞</title>
+    <title>專業按摩師排班與預約中樞</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700;900&display=swap');
@@ -60,7 +60,7 @@
         
         <!-- 表頭設計 -->
         <header class="mb-12 text-center pt-8">
-            <h1 class="text-3xl md:text-4xl font-black text-zinc-900 mb-4 tracking-tight">排班與派單管理</h1>
+            <h1 class="text-3xl md:text-4xl font-black text-zinc-900 mb-4 tracking-tight">排班與預約管理</h1>
             <div class="flex items-center justify-center gap-3 text-zinc-500">
                 <button onclick="changeMonth(-1)" class="p-2 hover:bg-zinc-100 rounded-full transition-colors">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
@@ -119,7 +119,7 @@
                 <div id="loginForm" class="glass-card p-8 md:p-10 rounded-3xl max-w-md mx-auto">
                     <div class="mb-8">
                         <h2 class="text-2xl font-black text-zinc-900 mb-2 tracking-tight">安全驗證</h2>
-                        <p class="text-sm text-zinc-500 font-medium">請登入以檢視個人派單與編輯排班。</p>
+                        <p class="text-sm text-zinc-500 font-medium">請登入以檢視個人預約與編輯排班。</p>
                     </div>
                     <div class="space-y-4">
                         <input type="text" id="authId" placeholder="專屬編號 (ID)" class="w-full px-5 py-3.5 soft-input rounded-xl outline-none font-medium text-zinc-800 placeholder-zinc-400">
@@ -147,7 +147,7 @@
                     <div class="flex flex-wrap gap-6 mb-8 border-b border-zinc-200">
                         <button onclick="switchPortalTab('profile')" id="portalTabProfile" class="pb-3 px-1 portal-tab-active text-base transition-all">我的人事資料</button>
                         <button onclick="switchPortalTab('schedule')" id="portalTabSchedule" class="pb-3 px-1 portal-tab-inactive text-base transition-all">我的排班設定</button>
-                        <button onclick="switchPortalTab('appointments')" id="portalTabAppointments" class="pb-3 px-1 portal-tab-inactive text-base transition-all">當月派單與回報</button>
+                        <button onclick="switchPortalTab('appointments')" id="portalTabAppointments" class="pb-3 px-1 portal-tab-inactive text-base transition-all">當月預約與回報</button>
                     </div>
 
                     <!-- 區塊 A：個人人事資料 -->
@@ -173,7 +173,7 @@
                         </div>
                     </div>
 
-                    <!-- 區塊 C：派單與回報 -->
+                    <!-- 區塊 C：預約與回報 -->
                     <div id="portalSectionAppointments" class="hidden">
                         <div class="flex flex-col sm:flex-row items-start sm:items-end justify-between mb-6 gap-4">
                             <div>
@@ -407,7 +407,8 @@
             age: "",
             specialties: "",
             notes: "",
-            bio: ""
+            bio: "",
+            photoUrl: ""
         };
         const normalizeTherapistProfile = (therapist = {}) => {
             const normalized = { ...THERAPIST_PROFILE_DEFAULTS, ...therapist };
@@ -624,7 +625,11 @@
                 records: []
             };
             await postToDatabase({ action: 'saveCustomer', data: { phone: approvalKey(id), ...globalDB.customers[approvalKey(id)] } });
-            await fetchDatabase();
+            try {
+                await fetchDatabase();
+            } catch (e) {
+                console.warn("審核已送出，但即時重新同步失敗，保留本機送審狀態。");
+            }
             renderApprovalStatusBlocks();
             return request;
         }
@@ -664,6 +669,7 @@
                 <div><label class="block text-xs font-bold text-zinc-500 mb-1.5">暱稱</label><input name="nickname" class="w-full px-4 py-3 soft-input rounded-xl outline-none font-bold" value="${esc(profile.nickname || "")}"></div>
                 <div><label class="block text-xs font-bold text-zinc-500 mb-1.5">姓名</label><input name="name" class="w-full px-4 py-3 soft-input rounded-xl outline-none font-bold" value="${esc(profile.name || "")}"></div>
                 <div><label class="block text-xs font-bold text-zinc-500 mb-1.5">聯絡方式</label><input name="contact" class="w-full px-4 py-3 soft-input rounded-xl outline-none font-bold" value="${esc(profile.contact || "")}"></div>
+                <div class="md:col-span-2"><label class="block text-xs font-bold text-zinc-500 mb-1.5">照片網址</label><input name="photoUrl" class="w-full px-4 py-3 soft-input rounded-xl outline-none font-bold" value="${esc(profile.photoUrl || "")}" placeholder="貼上公開圖片網址"></div>
                 <div><label class="block text-xs font-bold text-zinc-500 mb-1.5">年齡</label><input name="age" inputmode="numeric" class="w-full px-4 py-3 soft-input rounded-xl outline-none font-bold" value="${esc(profile.age || "")}"></div>
                 <div><label class="block text-xs font-bold text-zinc-500 mb-1.5">身高 cm</label><input name="height" inputmode="numeric" class="w-full px-4 py-3 soft-input rounded-xl outline-none font-bold" value="${esc(profile.height || "")}"></div>
                 <div><label class="block text-xs font-bold text-zinc-500 mb-1.5">體重 kg</label><input name="weight" inputmode="numeric" class="w-full px-4 py-3 soft-input rounded-xl outline-none font-bold" value="${esc(profile.weight || "")}"></div>
@@ -919,7 +925,7 @@
             }
         };
 
-        // ================= 顧客預約空間演算與派單 =================
+        // ================= 顧客預約空間演算與預約 =================
         window.handleCourseChange = function() {
             const serviceCode = document.getElementById('apptService').value;
             const durationInput = document.getElementById('apptDuration');
@@ -1040,7 +1046,7 @@
             }
         };
 
-        // ================= 派單與回報模組 (智慧時序分類引擎 & 日曆渲染) =================
+        // ================= 預約與回報模組 (智慧時序分類引擎 & 日曆渲染) =================
         const createApptCardHtml = (appt, allApptsData) => {
             const serviceName = COURSE_CATALOG[appt.service] ? COURSE_CATALOG[appt.service].name : (appt.service || '一般預約');
             let roomBadgeColor = 'bg-zinc-100 text-zinc-600 border-zinc-200';
