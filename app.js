@@ -39,6 +39,10 @@ let pendingDispatchFocus = "";
 let appointmentRecordScope = "today";
 let activePersonnelPanel = "schedule";
 let activeReportPanel = "revenue";
+let scheduleFilterStart = "";
+let scheduleFilterEnd = "";
+let reportFilterStart = "";
+let reportFilterEnd = "";
 let currentScheduleViewDates = [];
 let editingAppointmentId = null;
 let activeAppointmentId = null;
@@ -1048,7 +1052,7 @@ async function createLineTrialRequest(form) {
   if (!selection.time) {
     $("lineTrialError").textContent = "請至少在訊息或欄位中提供預約時間。";
     $("lineTrialError").classList.remove("hidden");
-    return;
+    return false;
   }
   db.clientSelections[id] = selection;
   db.customers[clientSelectionKey(id)] = {
@@ -1059,25 +1063,39 @@ async function createLineTrialRequest(form) {
   await saveCloudActions([{ action: "saveCustomer", data: { phone: clientSelectionKey(id), ...db.customers[clientSelectionKey(id)] } }], "LINE 測試需求已寫入待處理");
   if (!$("view-dispatch")?.classList.contains("hidden")) renderDispatch();
   if (!$("view-system")?.classList.contains("hidden")) renderSystem();
+  return true;
 }
 
 function lineTrialPanelHtml() {
-  const serviceOptions = Object.entries(COURSE_CATALOG).map(([key, course]) => `<option value="${key}">${esc(course.name)}</option>`).join("");
   return `<div class="card p-5">
-    <div class="mb-4 flex flex-col justify-between gap-3 border-b pb-4 sm:flex-row sm:items-start">
-      <div><span class="badge bg-emerald-50 text-emerald-700">LINE 測試版</span><h3 class="mt-2 font-black">模擬 LINE 預約需求</h3><p class="mt-1 text-sm font-bold text-slate-500">先不用正式串 token，測試客人訊息進後台後會長什麼樣子。</p></div>
+    <div class="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+      <div><span class="badge bg-emerald-50 text-emerald-700">LINE 測試版</span><h3 class="mt-2 font-black">模擬 LINE 預約需求</h3><p class="mt-1 text-sm font-bold text-slate-500">以彈窗模擬客人訊息進後台後的待處理流程。</p></div>
+      <button id="openLineTrialBtn" class="btn-teal">開啟測試</button>
     </div>
-    <form id="lineTrialForm" class="grid gap-3 lg:grid-cols-[1.3fr_.7fr_.7fr_.8fr_auto] lg:items-end">
+  </div>`;
+}
+
+function openLineTrialModal() {
+  const serviceOptions = Object.entries(COURSE_CATALOG).map(([key, course]) => `<option value="${key}">${esc(course.name)}</option>`).join("");
+  showModal(`<div class="modal max-w-3xl"><h3 class="mb-5 border-b pb-4 text-xl font-black">模擬 LINE 預約需求</h3>
+    <form id="lineTrialForm" class="space-y-4">
       <div><label class="label">客人訊息</label><input name="message" class="input" placeholder="例：想預約今晚 20:00 C課程120分"></div>
-      <div><label class="label">聯絡 / LINE ID</label><input name="contact" class="input" placeholder="LINE user"></div>
-      <div><label class="label">顧客姓名</label><input name="customerName" class="input" placeholder="可空白"></div>
-      <div><label class="label">課程</label><select name="service" class="input">${serviceOptions}</select></div>
-      <button class="btn-teal px-4 py-3">送入待處理</button>
+      <div class="grid gap-4 md:grid-cols-3">
+        <div><label class="label">聯絡 / LINE ID</label><input name="contact" class="input" placeholder="LINE user"></div>
+        <div><label class="label">顧客姓名</label><input name="customerName" class="input" placeholder="可空白"></div>
+        <div><label class="label">課程</label><select name="service" class="input">${serviceOptions}</select></div>
+      </div>
       <input name="date" type="hidden" value="">
       <input name="time" type="hidden" value="">
+      <p id="lineTrialError" class="hidden text-sm font-black text-rose-600"></p>
+      <div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">送入待處理</button></div>
     </form>
-    <p id="lineTrialError" class="mt-3 hidden text-sm font-black text-rose-600"></p>
-  </div>`;
+  </div>`);
+  $("lineTrialForm").onsubmit = async (event) => {
+    event.preventDefault();
+    const ok = await createLineTrialRequest(event.currentTarget);
+    if (ok) closeModal();
+  };
 }
 
 function appointmentQueryBoardHtml(dateKey, queryTime = "") {
@@ -1151,10 +1169,71 @@ function hydrateResponsiveTables(root = document) {
     if (!headers.length) return;
     table.closest(".table-wrap")?.classList.add("mobile-card-table");
     table.querySelectorAll("tbody tr").forEach((row) => {
-      Array.from(row.children).forEach((cell, index) => {
+      const cells = Array.from(row.children);
+      cells.forEach((cell, index) => {
         if (!cell.hasAttribute("colspan")) cell.dataset.label = headers[index] || "";
       });
+      hydrateLayeredTableRow(row, headers);
     });
+  });
+}
+
+function hydrateLayeredTableRow(row, headers) {
+  if (row.dataset.layeredReady === "true") return;
+  const cells = Array.from(row.children).filter((cell) => cell.tagName === "TD");
+  if (cells.length < 5 || cells.some((cell) => cell.hasAttribute("colspan"))) return;
+
+  const textOf = (cell) => cell.innerText.replace(/\s+/g, " ").trim();
+  const actionHeader = /操作|管理|動作|處理|刪除|編輯/;
+  const summaryItems = cells.slice(0, 3).map((cell, index) => ({
+    label: headers[index] || "",
+    value: textOf(cell)
+  })).filter((item) => item.value);
+
+  if (!summaryItems.length) return;
+
+  row.dataset.layeredReady = "true";
+  row.classList.add("is-layered-row");
+
+  cells.forEach((cell, index) => {
+    const label = headers[index] || "";
+    const isAction = actionHeader.test(label) || cell.querySelector("button,a,input,select");
+    cell.classList.add(isAction ? "mobile-action-cell" : "mobile-detail-cell");
+  });
+
+  const summaryCell = document.createElement("td");
+  summaryCell.className = "mobile-row-summary";
+  summaryCell.colSpan = cells.length;
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "mobile-row-summary-button";
+  button.setAttribute("aria-expanded", "false");
+
+  const textWrap = document.createElement("span");
+  textWrap.className = "mobile-row-summary-text";
+
+  const title = document.createElement("strong");
+  title.textContent = summaryItems[0].value;
+  textWrap.appendChild(title);
+
+  const meta = document.createElement("span");
+  meta.textContent = summaryItems.slice(1).map((item) => `${item.label} ${item.value}`.trim()).join(" / ");
+  textWrap.appendChild(meta);
+
+  const toggle = document.createElement("span");
+  toggle.className = "mobile-row-summary-toggle";
+  toggle.textContent = "詳細";
+
+  button.appendChild(textWrap);
+  button.appendChild(toggle);
+  summaryCell.appendChild(button);
+  row.insertBefore(summaryCell, row.firstChild);
+
+  button.addEventListener("click", () => {
+    const expanded = row.classList.toggle("is-expanded");
+    button.setAttribute("aria-expanded", expanded ? "true" : "false");
+    toggle.textContent = expanded ? "收合" : "詳細";
   });
 }
 
@@ -2547,10 +2626,22 @@ function buildDateRange(start, end) {
 }
 
 function drawScheduleTable() {
-  currentScheduleViewDates = buildDateRange($("scheduleStartDate").value, $("scheduleEndDate").value);
+  currentScheduleViewDates = buildDateRange(scheduleFilterStart, scheduleFilterEnd);
   $("scheduleHeader").innerHTML = `<th class="sticky left-0 z-10 bg-slate-50">按摩師</th>` + currentScheduleViewDates.map((d) => `<th class="${d.isWeekend ? "text-rose-600" : ""}">${esc(d.displayShort)}</th>`).join("");
   $("scheduleRows").innerHTML = Object.keys(db.therapists).map((id) => `<tr><td class="sticky left-0 bg-white font-black">${esc(therapistName(id))} <button class="ml-2 rounded bg-slate-100 px-2 py-1 text-xs" data-edit-schedule="${id}">✎</button></td>${currentScheduleViewDates.map((d) => `<td class="${isWorking((db.schedules[id] || {})[d.key]) ? "font-bold text-slate-700" : "text-slate-400"}">${esc((db.schedules[id] || {})[d.key] || "休假")}</td>`).join("")}</tr>`).join("");
   $("scheduleRows").querySelectorAll("[data-edit-schedule]").forEach((btn) => btn.onclick = () => openScheduleModal(btn.dataset.editSchedule));
+}
+
+function openScheduleFilterModal() {
+  showModal(`<div class="modal max-w-lg"><h3 class="mb-5 border-b pb-4 text-xl font-black">設定班表查詢區間</h3><form id="scheduleFilterForm" class="space-y-4"><div><label class="label">開始日期</label><input name="start" type="date" class="input" value="${esc(scheduleFilterStart)}"></div><div><label class="label">結束日期</label><input name="end" type="date" class="input" value="${esc(scheduleFilterEnd)}"></div><div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">套用區間</button></div></form></div>`);
+  $("scheduleFilterForm").onsubmit = (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.currentTarget).entries());
+    scheduleFilterStart = data.start || monthDates[0]?.key || todayKey();
+    scheduleFilterEnd = data.end || monthDates.at(-1)?.key || todayKey();
+    closeModal();
+    renderPersonnel();
+  };
 }
 
 function openScheduleModal(id) {
@@ -2579,7 +2670,7 @@ function exportScheduleCSV() {
   Object.entries(db.therapists).forEach(([id, t]) => {
     csv += `"${therapistName(id)}",` + currentScheduleViewDates.map((d) => `"${(db.schedules[id] || {})[d.key] || "休假"}"`).join(",") + "\n";
   });
-  downloadCSV(csv, `排班總表_${$("scheduleStartDate").value}_至_${$("scheduleEndDate").value}.csv`);
+  downloadCSV(csv, `排班總表_${scheduleFilterStart}_至_${scheduleFilterEnd}.csv`);
 }
 
 function therapistProfileFields(profile = {}) {
@@ -2740,8 +2831,8 @@ async function dismissApproval(id) {
 
 function renderPersonnel() {
   const section = $("view-personnel");
-  const scheduleStart = $("scheduleStartDate")?.value || monthDates[0]?.key || todayKey();
-  const scheduleEnd = $("scheduleEndDate")?.value || monthDates.at(-1)?.key || todayKey();
+  scheduleFilterStart ||= monthDates[0]?.key || todayKey();
+  scheduleFilterEnd ||= monthDates.at(-1)?.key || todayKey();
   const pendingCount = approvalsList("pending").length;
   const panelBtn = (panel, label) => `<button class="rounded-lg px-4 py-2 text-sm font-black ${activePersonnelPanel === panel ? "bg-white text-teal-700 shadow" : "text-slate-500"}" data-personnel-panel="${panel}">${label}${panel === "approvals" && pendingCount ? ` <span class="ml-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">${pendingCount}</span>` : ""}</button>`;
   const approvalPanel = `
@@ -2802,9 +2893,8 @@ function renderPersonnel() {
       <div class="flex flex-col justify-between gap-4 border-b bg-slate-50 p-5 xl:flex-row xl:items-center">
         <div><h3 class="font-black">班表矩陣</h3><p class="mt-1 text-sm font-bold text-slate-500">排班直接掛在人事資料底下，方便從人員管理進入。</p></div>
         <div class="flex flex-col gap-2 sm:flex-row">
-          <input id="scheduleStartDate" type="date" class="input py-2" value="${scheduleStart}">
-          <input id="scheduleEndDate" type="date" class="input py-2" value="${scheduleEnd}">
-          <button id="queryScheduleBtn" class="btn-light">查詢</button>
+          <div class="rounded-xl bg-white px-4 py-3 text-sm font-black text-slate-600">${esc(scheduleFilterStart)} 至 ${esc(scheduleFilterEnd)}</div>
+          <button id="openScheduleFilterBtn" class="btn-light">設定區間</button>
           <button id="exportScheduleBtn" class="btn-teal">匯出班表</button>
         </div>
       </div>
@@ -2834,7 +2924,7 @@ function renderPersonnel() {
     renderPersonnel();
   });
   if (activePersonnelPanel === "schedule") {
-    $("queryScheduleBtn").onclick = drawScheduleTable;
+    $("openScheduleFilterBtn").onclick = openScheduleFilterModal;
     $("exportScheduleBtn").onclick = exportScheduleCSV;
     drawScheduleTable();
     return;
@@ -3019,8 +3109,10 @@ function staffMobileCardsHtml() {
 }
 
 function renderReport() {
-  const start = $("reportStartDate")?.value || todayKey();
-  const end = $("reportEndDate")?.value || todayKey();
+  reportFilterStart ||= todayKey();
+  reportFilterEnd ||= todayKey();
+  const start = reportFilterStart;
+  const end = reportFilterEnd;
   const rows = Object.values(db.appointments).filter((a) => a.date >= start && a.date <= end).sort((a, b) => a.date === b.date ? sortByTime(a, b) : a.date.localeCompare(b.date));
   const total = rows.reduce((s, a) => s + Number(a.price || 0), 0);
   const therapistCut = rows.reduce((s, a) => s + Number(COURSE_CATALOG[a.service]?.therapistCut || 0), 0);
@@ -3073,13 +3165,13 @@ function renderReport() {
     <div class="card p-5">
       <div class="mb-5 flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
         <div><h3 class="text-lg font-black">財務報表</h3><p class="text-sm font-bold text-slate-500">同一區間內切換營收、來客、回客與回帳分析。</p></div>
-        <div class="flex flex-col gap-2 sm:flex-row"><input id="reportStartDate" type="date" class="input py-2" value="${start}"><input id="reportEndDate" type="date" class="input py-2" value="${end}"><button id="queryReportBtn" class="btn-primary px-5 py-3">查詢</button><button id="exportReportBtn" class="btn-teal">輸出報表</button></div>
+        <div class="flex flex-col gap-2 sm:flex-row"><div class="rounded-xl bg-slate-50 px-4 py-3 text-sm font-black text-slate-600">${esc(start)} 至 ${esc(end)}</div><button id="queryReportBtn" class="btn-light">設定區間</button><button id="exportReportBtn" class="btn-teal">輸出報表</button></div>
       </div>
       <div class="mb-5 grid grid-cols-2 gap-4 xl:grid-cols-4">${metric("來客數", rows.length)}${metric("總營業額", money(total))}${metric("已回帳", money(collected), "text-emerald-700")}${metric("師傅抽成", money(therapistCut), "text-indigo-700")}</div>
       <div class="report-tabs mb-5 flex flex-wrap rounded-xl bg-slate-100 p-1">${reportTab("revenue", "營收明細")}${reportTab("guests", "來客數")}${reportTab("retention", "師傅回客率")}${reportTab("commission", "抽成回帳")}</div>
       ${panelContent}
     </div>`;
-  $("queryReportBtn").onclick = renderReport;
+  $("queryReportBtn").onclick = openReportFilterModal;
   $("exportReportBtn").onclick = exportReportCSV;
   $("view-report").querySelectorAll("[data-report-panel]").forEach((btn) => btn.onclick = () => {
     activeReportPanel = btn.dataset.reportPanel;
@@ -3089,9 +3181,21 @@ function renderReport() {
   hydrateResponsiveTables($("view-report"));
 }
 
+function openReportFilterModal() {
+  showModal(`<div class="modal max-w-lg"><h3 class="mb-5 border-b pb-4 text-xl font-black">設定財務查詢區間</h3><form id="reportFilterForm" class="space-y-4"><div><label class="label">開始日期</label><input name="start" type="date" class="input" value="${esc(reportFilterStart || todayKey())}"></div><div><label class="label">結束日期</label><input name="end" type="date" class="input" value="${esc(reportFilterEnd || todayKey())}"></div><div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">套用查詢</button></div></form></div>`);
+  $("reportFilterForm").onsubmit = (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.currentTarget).entries());
+    reportFilterStart = data.start || todayKey();
+    reportFilterEnd = data.end || todayKey();
+    closeModal();
+    renderReport();
+  };
+}
+
 function exportReportCSV() {
-  const start = $("reportStartDate").value;
-  const end = $("reportEndDate").value;
+  const start = reportFilterStart || todayKey();
+  const end = reportFilterEnd || todayKey();
   const rows = Object.values(db.appointments).filter((a) => a.date >= start && a.date <= end).sort((a, b) => a.date === b.date ? sortByTime(a, b) : a.date.localeCompare(b.date));
   let csv = "\uFEFF";
   if (activeReportPanel === "commission") {
@@ -3233,13 +3337,7 @@ function renderSystem() {
   $("systemOpenHistoryBtn").onclick = openChangeHistoryModal;
   $("systemOpenHistoryBtn2").onclick = openChangeHistoryModal;
   $("systemDownloadBackupBtn").onclick = downloadCurrentBackup;
-  const lineTrialForm = $("lineTrialForm");
-  if (lineTrialForm) {
-    lineTrialForm.onsubmit = (event) => {
-      event.preventDefault();
-      createLineTrialRequest(lineTrialForm);
-    };
-  }
+  $("openLineTrialBtn").onclick = openLineTrialModal;
   section.querySelectorAll("[data-download-backup]").forEach((btn) => btn.onclick = () => downloadBackupEntry(btn.dataset.downloadBackup));
   hydrateResponsiveTables(section);
 }
