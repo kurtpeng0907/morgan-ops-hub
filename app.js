@@ -464,11 +464,14 @@ async function postCloud(action, data) {
   persist();
   const hadFailedWrite = syncMeta.pending && syncMeta.reason === "last-write-failed";
   if (!hadFailedWrite) markSyncPending(true, "uploading");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
   try {
     const res = await fetch(API_URL, {
       method: "POST",
       body: JSON.stringify({ action, data }),
-      redirect: "manual"
+      redirect: "manual",
+      signal: controller.signal
     });
     const accepted = res.ok || res.status === 302 || res.type === "opaqueredirect" || (res.status >= 200 && res.status < 400);
     if (!accepted) throw new Error(`HTTP ${res.status}`);
@@ -478,14 +481,17 @@ async function postCloud(action, data) {
     markSyncPending(true, "last-write-failed");
     showSnackbar("已先存於此瀏覽器；雲端寫入失敗，請檢查 Apps Script 權限");
     return false;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
-async function saveCloudActions(actions, successMessage = "已儲存到雲端") {
+async function saveCloudActions(actions, successMessage = "已儲存到雲端", options = {}) {
   showSnackbar("正在寫入雲端...");
   pendingBackupReason = successMessage;
   const results = [];
-  for (const item of actions) {
+  for (const [index, item] of actions.entries()) {
+    options.onProgress?.(index + 1, actions.length, item);
     results.push(await postCloud(item.action, item.data));
   }
   const ok = results.every(Boolean);
@@ -678,21 +684,46 @@ function downloadBackupEntry(key) {
   showSnackbar("修改紀錄已下載");
 }
 
+function canonicalJson(value) {
+  const clean = (item) => {
+    if (Array.isArray(item)) return item.map(clean);
+    if (!item || typeof item !== "object") return item ?? null;
+    return Object.keys(item).sort().reduce((next, key) => {
+      next[key] = clean(item[key]);
+      return next;
+    }, {});
+  };
+  return JSON.stringify(clean(value));
+}
+
+function dataChanged(next, current) {
+  return canonicalJson(next) !== canonicalJson(current);
+}
+
 function restoreActionsFor(targetDb, currentDb) {
   const actions = [];
   Object.keys(currentDb.appointments || {}).forEach((id) => {
     if (!targetDb.appointments?.[id]) actions.push({ action: "deleteAppointment", data: { appId: id } });
   });
-  Object.values(targetDb.appointments || {}).forEach((appt) => actions.push({ action: "addAppointment", data: { ...appt, appId: appt.id } }));
+  Object.values(targetDb.appointments || {}).forEach((appt) => {
+    if (dataChanged(appt, currentDb.appointments?.[appt.id])) actions.push({ action: "addAppointment", data: { ...appt, appId: appt.id } });
+  });
   Object.keys(currentDb.customers || {}).forEach((phone) => {
     if (!targetDb.customers?.[phone]) actions.push({ action: "deleteCustomer", data: { phone } });
   });
-  Object.entries(targetDb.customers || {}).forEach(([phone, customer]) => actions.push({ action: "saveCustomer", data: { phone, ...customer } }));
-  Object.entries(targetDb.schedules || {}).forEach(([id, schedule]) => actions.push({ action: "saveSchedule", data: { id, schedule } }));
-  Object.entries(targetDb.therapists || {}).forEach(([id, therapist]) => actions.push({ action: "addTherapist", data: { ...therapist, id, pin: sheetText(therapist.pin) } }));
+  Object.entries(targetDb.customers || {}).forEach(([phone, customer]) => {
+    if (dataChanged(customer, currentDb.customers?.[phone])) actions.push({ action: "saveCustomer", data: { phone, ...customer } });
+  });
+  Object.entries(targetDb.schedules || {}).forEach(([id, schedule]) => {
+    if (dataChanged(schedule, currentDb.schedules?.[id])) actions.push({ action: "saveSchedule", data: { id, schedule } });
+  });
+  Object.entries(targetDb.therapists || {}).forEach(([id, therapist]) => {
+    if (dataChanged(therapist, currentDb.therapists?.[id])) actions.push({ action: "addTherapist", data: { ...therapist, id, pin: sheetText(therapist.pin) } });
+  });
   Object.entries(targetDb.admins || {}).forEach(([id, admin]) => {
     if (id === "admin") return;
-    actions.push({ action: "saveCustomer", data: { phone: `SYS_ADMIN_${id}`, name: admin.name || id, notes: sheetText(admin.pin || ""), records: [{ email: admin.email || "" }] } });
+    const adminCustomer = { name: admin.name || id, notes: sheetText(admin.pin || ""), records: [{ email: admin.email || "" }] };
+    if (dataChanged(adminCustomer, currentDb.customers?.[`SYS_ADMIN_${id}`])) actions.push({ action: "saveCustomer", data: { phone: `SYS_ADMIN_${id}`, ...adminCustomer } });
   });
   return actions;
 }
@@ -748,7 +779,12 @@ async function uploadLocalDbToCloud() {
       showSnackbar("本機與雲端已一致");
       return;
     }
-    const ok = await saveCloudActions(actions, "本機資料已上傳雲端");
+    const ok = await saveCloudActions(actions, "本機資料已上傳雲端", {
+      onProgress(done, total) {
+        if (button) button.textContent = `上傳 ${done}/${total}`;
+        if (done === 1 || done === total || done % 10 === 0) showSnackbar(`正在上傳本機資料 ${done}/${total}`);
+      }
+    });
     if (ok) {
       markSyncPending(false);
       syncMeta.reason = "";
