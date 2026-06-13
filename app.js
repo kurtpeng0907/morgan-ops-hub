@@ -713,6 +713,58 @@ async function restoreBackup(key) {
   renderAll();
 }
 
+async function fetchCloudDbSnapshot() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const res = await fetch(`${API_URL}?t=${Date.now()}`, { signal: controller.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return normalizeDb(await res.json());
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function uploadLocalDbToCloud() {
+  const button = $("systemUploadLocalBtn");
+  if (button) {
+    button.disabled = true;
+    button.dataset.originalText = button.textContent;
+    button.textContent = "上傳中...";
+  }
+  try {
+    const localDb = normalizeDb(JSON.parse(JSON.stringify(db)));
+    let cloudDb = { therapists: {}, schedules: {}, admins: {}, appointments: {}, customers: {} };
+    try {
+      cloudDb = await fetchCloudDbSnapshot();
+    } catch {
+      showSnackbar("雲端資料讀取失敗，改以覆寫/新增方式上傳本機資料");
+    }
+    const actions = restoreActionsFor(localDb, cloudDb);
+    if (!actions.length) {
+      markSyncPending(false);
+      persist("本機資料已確認同步");
+      renderAll();
+      showSnackbar("本機與雲端已一致");
+      return;
+    }
+    const ok = await saveCloudActions(actions, "本機資料已上傳雲端");
+    if (ok) {
+      markSyncPending(false);
+      syncMeta.reason = "";
+      saveSyncMeta();
+      persist("本機資料已上傳雲端");
+      await tryCloudSync();
+      renderAll();
+    }
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = button.dataset.originalText || "上傳本機資料";
+    }
+  }
+}
+
 function openChangeHistoryModal() {
   const backups = listLocalBackups();
   const rows = backups.length ? backups.slice(0, 40).map((item) => `<tr>
@@ -3284,6 +3336,7 @@ function renderSystem() {
           </div>
           <div class="flex flex-wrap gap-2">
             <button id="systemRefreshDataBtn" class="btn-light">重新同步</button>
+            <button id="systemUploadLocalBtn" class="${syncMeta.pending ? "btn-teal" : "btn-light"}">上傳本機資料</button>
             <button id="systemOpenHistoryBtn" class="btn-light">修改紀錄</button>
             <button id="systemDownloadBackupBtn" class="btn-teal">下載備份</button>
           </div>
@@ -3299,6 +3352,7 @@ function renderSystem() {
           <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">最後同步</p><p class="mt-2 text-sm font-black text-slate-700">${esc(syncMeta.lastSync ? backupLabelTime(syncMeta.lastSync) : "尚未更新")}</p></div>
           <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">資料來源</p><p class="mt-2 text-sm font-black text-slate-700">${esc(syncMeta.source || "local")}${syncMeta.reason ? ` · ${esc(syncMeta.reason)}` : ""}</p></div>
         </div>
+        <p class="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">若這台 Mac 看得到資料、其他裝置看不到，請按「上傳本機資料」，把此裝置資料寫成雲端正式資料。</p>
       </div>
       <div class="card p-5">
         <div class="mb-4 flex items-center justify-between gap-3 border-b pb-4">
@@ -3334,6 +3388,7 @@ function renderSystem() {
     </div>`;
 
   $("systemRefreshDataBtn").onclick = refreshDashboardData;
+  $("systemUploadLocalBtn").onclick = () => confirmAction("上傳本機資料到雲端", "會以這台 Mac 目前看到的資料作為正式版本，其他裝置重新整理後會讀取這份資料。", uploadLocalDbToCloud);
   $("systemOpenHistoryBtn").onclick = openChangeHistoryModal;
   $("systemOpenHistoryBtn2").onclick = openChangeHistoryModal;
   $("systemDownloadBackupBtn").onclick = downloadCurrentBackup;
