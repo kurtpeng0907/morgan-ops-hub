@@ -202,8 +202,8 @@ function therapistDisplayMeta(therapist = {}) {
   return body.join(" · ");
 }
 
-let db = seedDatabase();
 let syncMeta = loadSyncMeta();
+let db = seedDatabase();
 
 function customerCode(phone = "") {
   return db.customers[phone]?.code || "";
@@ -221,36 +221,16 @@ function toDateKey(date) {
 }
 
 function seedDatabase() {
-  const now = new Date();
-  const today = toDateKey(now);
-  const tomorrow = new Date(now);
-  tomorrow.setDate(now.getDate() + 1);
-  const tomorrowKey = toDateKey(tomorrow);
   const base = {
-    therapists: {
-      T001: { name: "小雅", pin: "1111" },
-      T002: { name: "Mina", pin: "2222" },
-      T003: { name: "Nora", pin: "3333" }
-    },
+    therapists: {},
     admins: { admin: { name: "系統總管理員", pin: "admin123", email: "" } },
-    schedules: {
-      T001: { [today]: "13:00-22:00", [tomorrowKey]: "15:00-23:00" },
-      T002: { [today]: "12:00-20:00", [tomorrowKey]: "休假" },
-      T003: { [today]: "18:00-02:00", [tomorrowKey]: "18:00-02:00" }
-    },
-    appointments: {
-      "APT-demo-1": { id: "APT-demo-1", date: today, time: "14:00", duration: 90, therapistId: "T001", service: "C90", price: 2500, room: "R", customerName: "林小姐", phone: "line-lin", isCompleted: false, collectedPrice: "" },
-      "APT-demo-2": { id: "APT-demo-2", date: today, time: "19:30", duration: 120, therapistId: "T003", service: "D120", price: 2400, room: "T", customerName: "陳先生", phone: "0912-000-123", isCompleted: false, collectedPrice: "" }
-    },
-    customers: {
-      "line-lin": { name: "林小姐", notes: "偏好肩頸加強，怕冷。", records: [{ id: "APT-demo-1", date: today, therapistId: "T001", therapistName: "小雅", service: "C90", notes: "肩頸緊繃，左肩較明顯。", collectedPrice: "" }] },
-      "0912-000-123": { name: "陳先生", notes: "熟客，習慣晚間預約。", records: [] },
-      SYS_DOOR_PWD: { name: "設定", notes: "2580", records: [] }
-    }
+    schedules: {},
+    appointments: {},
+    customers: { SYS_DOOR_PWD: { name: "設定", notes: "", records: [] } }
   };
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-    if (saved?.therapists && saved?.appointments) return normalizeDb(saved);
+    if (syncMeta.pending && saved?.therapists && saved?.appointments) return normalizeDb(saved);
   } catch {}
   return normalizeDb(base);
 }
@@ -601,6 +581,38 @@ function dbStats(data = db) {
   };
 }
 
+function systemRecordStats(data = db) {
+  const keys = Object.keys(data.customers || {}).filter(isSystemCustomerKey);
+  return {
+    total: keys.length,
+    admins: keys.filter((key) => key.startsWith("SYS_ADMIN_")).length,
+    therapistProfiles: keys.filter((key) => key.startsWith("SYS_THERAPIST_PROFILE_")).length,
+    approvals: keys.filter((key) => key.startsWith(APPROVAL_PREFIX)).length,
+    clientSelections: keys.filter((key) => key.startsWith(CLIENT_SELECTION_PREFIX)).length,
+    appointmentMeta: keys.filter((key) => key.startsWith(APPOINTMENT_META_PREFIX)).length,
+    logs: keys.filter((key) => key === ADMIN_LOGIN_LOG_KEY || key === "SYS_DOOR_PWD").length
+  };
+}
+
+function modelSummaryHtml(data = db) {
+  const stats = dbStats(data);
+  const system = systemRecordStats(data);
+  return `<div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    ${metric("正式按摩師", stats.therapists)}
+    ${metric("正式預約", stats.appointments, "text-teal-700")}
+    ${metric("正式顧客", stats.customers, "text-indigo-700")}
+    ${metric("系統資料", system.total, "text-amber-700")}
+  </div>
+  <div class="mt-4 grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
+    <div class="rounded-xl border bg-slate-50 p-3"><p class="text-xs font-black text-slate-500">管理員</p><p class="mt-1 text-xl font-black">${system.admins}</p></div>
+    <div class="rounded-xl border bg-slate-50 p-3"><p class="text-xs font-black text-slate-500">師傅人事</p><p class="mt-1 text-xl font-black">${system.therapistProfiles}</p></div>
+    <div class="rounded-xl border bg-slate-50 p-3"><p class="text-xs font-black text-slate-500">審核</p><p class="mt-1 text-xl font-black">${system.approvals}</p></div>
+    <div class="rounded-xl border bg-slate-50 p-3"><p class="text-xs font-black text-slate-500">客選</p><p class="mt-1 text-xl font-black">${system.clientSelections}</p></div>
+    <div class="rounded-xl border bg-slate-50 p-3"><p class="text-xs font-black text-slate-500">預約狀態</p><p class="mt-1 text-xl font-black">${system.appointmentMeta}</p></div>
+    <div class="rounded-xl border bg-slate-50 p-3"><p class="text-xs font-black text-slate-500">紀錄設定</p><p class="mt-1 text-xl font-black">${system.logs}</p></div>
+  </div>`;
+}
+
 function listLocalBackups() {
   try {
     return Object.keys(localStorage)
@@ -800,6 +812,45 @@ async function uploadLocalDbToCloud() {
       button.disabled = false;
       button.textContent = button.dataset.originalText || "上傳本機資料";
     }
+  }
+}
+
+async function openSyncDiagnosticsModal() {
+  showModal(`<div class="modal max-w-3xl"><h3 class="mb-5 border-b pb-4 text-xl font-black">同步診斷</h3><div id="syncDiagnosticsBody" class="rounded-xl border bg-slate-50 p-5 text-sm font-bold text-slate-500">正在讀取雲端資料...</div><div class="mt-5 flex justify-end border-t pt-4"><button class="btn-light" data-close-modal>關閉</button></div></div>`);
+  const body = $("syncDiagnosticsBody");
+  try {
+    const cloudDb = await fetchCloudDbSnapshot();
+    const localStats = dbStats(db);
+    const cloudStats = dbStats(cloudDb);
+    body.className = "space-y-5";
+    body.innerHTML = `
+      <div class="grid gap-4 md:grid-cols-2">
+        <div class="rounded-xl border bg-white p-4">
+          <p class="text-xs font-black text-slate-500">此裝置狀態</p>
+          <p class="mt-2 text-xl font-black ${syncMeta.pending ? "text-amber-700" : "text-teal-700"}">${syncMeta.pending ? "本機有待同步資料" : "雲端正式資料"}</p>
+          <p class="mt-1 text-xs font-bold text-slate-500">${esc(syncMeta.reason || "無異常")} · ${esc(syncMeta.lastSync ? backupLabelTime(syncMeta.lastSync) : "尚未記錄同步時間")}</p>
+        </div>
+        <div class="rounded-xl border bg-white p-4">
+          <p class="text-xs font-black text-slate-500">雲端連線</p>
+          <p class="mt-2 text-xl font-black text-teal-700">可讀取</p>
+          <p class="mt-1 text-xs font-bold text-slate-500">Google Apps Script 已回傳資料</p>
+        </div>
+      </div>
+      <div class="rounded-xl border bg-white p-4">
+        <h4 class="mb-3 font-black">本機摘要</h4>
+        ${modelSummaryHtml(db)}
+      </div>
+      <div class="rounded-xl border bg-white p-4">
+        <h4 class="mb-3 font-black">雲端摘要</h4>
+        ${modelSummaryHtml(cloudDb)}
+      </div>
+      <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-600">
+        本機 / 雲端差異：按摩師 ${localStats.therapists - cloudStats.therapists}、預約 ${localStats.appointments - cloudStats.appointments}、顧客 ${localStats.customers - cloudStats.customers}、班表人員 ${localStats.schedules - cloudStats.schedules}
+      </div>`;
+    hydrateResponsiveTables(body);
+  } catch {
+    body.className = "rounded-xl border border-rose-200 bg-rose-50 p-5 font-bold text-rose-700";
+    body.textContent = "雲端讀取失敗。請確認 Apps Script 權限或網路連線。";
   }
 }
 
@@ -1426,7 +1477,7 @@ async function refreshDashboardData() {
     button.textContent = "更新中...";
   }
   showSnackbar("正在更新雲端資料...");
-  await tryCloudSync();
+  await tryCloudSync({ force: true });
   renderAll();
   showSnackbar(syncMeta.pending ? "此裝置有未同步資料，已保留本機版本" : "資料已更新");
   if (button) {
@@ -3374,6 +3425,7 @@ function renderSystem() {
           </div>
           <div class="flex flex-wrap gap-2">
             <button id="systemRefreshDataBtn" class="btn-light">重新同步</button>
+            <button id="systemDiagnosticsBtn" class="btn-light">同步診斷</button>
             <button id="systemUploadLocalBtn" class="${syncMeta.pending ? "btn-teal" : "btn-light"}">上傳本機資料</button>
             <button id="systemOpenHistoryBtn" class="btn-light">修改紀錄</button>
             <button id="systemDownloadBackupBtn" class="btn-teal">下載備份</button>
@@ -3419,6 +3471,13 @@ function renderSystem() {
     </div>
     <div class="card p-5">
       <div class="mb-4 border-b pb-4">
+        <h3 class="font-black">資料模型摘要</h3>
+        <p class="text-xs font-bold text-slate-500">正式資料與系統資料分開檢視；系統資料目前仍暫存於 Google Sheet 的 customers 分區，但前端會分類呈現。</p>
+      </div>
+      ${modelSummaryHtml(db)}
+    </div>
+    <div class="card p-5">
+      <div class="mb-4 border-b pb-4">
         <h3 class="font-black">營運規則檢視</h3>
         <p class="text-xs font-bold text-slate-500">目前先集中顯示課程、金額與抽成；下一階段可改成可編輯設定。</p>
       </div>
@@ -3426,6 +3485,7 @@ function renderSystem() {
     </div>`;
 
   $("systemRefreshDataBtn").onclick = refreshDashboardData;
+  $("systemDiagnosticsBtn").onclick = openSyncDiagnosticsModal;
   $("systemUploadLocalBtn").onclick = () => confirmAction("上傳本機資料到雲端", "會以這台 Mac 目前看到的資料作為正式版本，其他裝置重新整理後會讀取這份資料。", uploadLocalDbToCloud);
   $("systemOpenHistoryBtn").onclick = openChangeHistoryModal;
   $("systemOpenHistoryBtn2").onclick = openChangeHistoryModal;
