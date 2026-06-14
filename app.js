@@ -437,18 +437,19 @@ function markSyncPending(isPending, reason = "") {
   saveSyncMeta();
 }
 
-async function tryCloudSync() {
+async function tryCloudSync(options = {}) {
+  const force = Boolean(options.force);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
-    const res = await fetch(`${API_URL}?t=${Date.now()}`, { signal: controller.signal });
+    const res = await fetch(`${API_URL}?t=${Date.now()}`, { signal: controller.signal, cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const cloudDb = normalizeDb(await res.json());
-    if (syncMeta.pending) {
+    if (syncMeta.pending && !force) {
       $("sysStatus").textContent = "雲端已連線；此裝置有未同步資料，暫保留本機版本";
       return;
     }
-    backupLocalDb("before-cloud-authoritative-sync");
+    backupLocalDb(force ? "before-force-cloud-sync" : "before-cloud-authoritative-sync");
     db = cloudDb;
     persist();
     markSyncPending(false);
@@ -471,7 +472,8 @@ async function postCloud(action, data) {
       method: "POST",
       body: JSON.stringify({ action, data }),
       redirect: "manual",
-      signal: controller.signal
+      signal: controller.signal,
+      cache: "no-store"
     });
     const accepted = res.ok || res.status === 302 || res.type === "opaqueredirect" || (res.status >= 200 && res.status < 400);
     if (!accepted) throw new Error(`HTTP ${res.status}`);
@@ -748,7 +750,7 @@ async function fetchCloudDbSnapshot() {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
-    const res = await fetch(`${API_URL}?t=${Date.now()}`, { signal: controller.signal });
+    const res = await fetch(`${API_URL}?t=${Date.now()}`, { signal: controller.signal, cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return normalizeDb(await res.json());
   } finally {
@@ -3546,6 +3548,28 @@ async function handleLogin() {
   const id = $("adminId").value.trim();
   const pin = $("adminPin").value.trim();
   const err = $("loginErrorMsg");
+  const finishLogin = () => {
+    if (pinMatches(db.admins[id]?.pin, pin)) {
+      currentUser = { id, name: db.admins[id].name, role: "admin" };
+      $("adminNav").classList.remove("hidden");
+      $("therapistNav").classList.add("hidden");
+      $("roleLabel").textContent = "管理員";
+      enterDashboard("overview");
+      recordAdminLogin(id);
+      if (cleanPin(db.admins[id]?.pin) !== cleanPin(pin)) showSnackbar("已用舊格式密碼登入，請至人事頁編輯後重新儲存 PIN");
+      return true;
+    }
+    if (pinMatches(db.therapists[id]?.pin, pin)) {
+      currentUser = { id, name: therapistName(id), role: "therapist" };
+      $("adminNav").classList.add("hidden");
+      $("therapistNav").classList.remove("hidden");
+      $("roleLabel").textContent = "按摩師";
+      enterDashboard("portal");
+      if (cleanPin(db.therapists[id]?.pin) !== cleanPin(pin)) showSnackbar("已用舊格式密碼登入，請管理員重新儲存您的 PIN");
+      return true;
+    }
+    return false;
+  };
   err.classList.add("hidden");
   if (!id || !pin) {
     err.textContent = "請輸入完整帳號密碼。";
@@ -3556,22 +3580,12 @@ async function handleLogin() {
   $("loginBtnText").textContent = "連線中...";
   $("loginLoader").classList.remove("hidden");
   await tryCloudSync();
-  if (pinMatches(db.admins[id]?.pin, pin)) {
-    currentUser = { id, name: db.admins[id].name, role: "admin" };
-    $("adminNav").classList.remove("hidden");
-    $("therapistNav").classList.add("hidden");
-    $("roleLabel").textContent = "管理員";
-    enterDashboard("overview");
-    recordAdminLogin(id);
-    if (cleanPin(db.admins[id]?.pin) !== cleanPin(pin)) showSnackbar("已用舊格式密碼登入，請至人事頁編輯後重新儲存 PIN");
-  } else if (pinMatches(db.therapists[id]?.pin, pin)) {
-    currentUser = { id, name: therapistName(id), role: "therapist" };
-    $("adminNav").classList.add("hidden");
-    $("therapistNav").classList.remove("hidden");
-    $("roleLabel").textContent = "按摩師";
-    enterDashboard("portal");
-    if (cleanPin(db.therapists[id]?.pin) !== cleanPin(pin)) showSnackbar("已用舊格式密碼登入，請管理員重新儲存您的 PIN");
-  } else {
+  if (!finishLogin() && syncMeta.pending) {
+    $("loginBtnText").textContent = "重抓雲端...";
+    await tryCloudSync({ force: true });
+    if (finishLogin()) showSnackbar("已改用雲端正式資料登入");
+  }
+  if (!currentUser) {
     err.textContent = "帳號或密碼錯誤。";
     err.classList.remove("hidden");
   }
