@@ -56,7 +56,7 @@
   </main>
 
   <script>
-    const API_URL = "https://script.google.com/macros/s/AKfycbxC4Pk1v6rkdmd96cR_2r_xPhbcNjrQ0bNdikGKyqbR9OMMeCwN9L5t9mE1j-AoS-ie/exec";
+    const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiTI5Z8c76YNlcPMYWyR17HGaU4QvzHJm32nWeCHsnaknVx/exec";
     const COURSE_CATALOG = {
       A60: { name: "A課程 60分", duration: 60, price: 1800 },
       C120: { name: "C課程 120分", duration: 120, price: 2800 },
@@ -68,6 +68,7 @@
     };
     const params = new URLSearchParams(window.location.search);
     const query = {
+      selectionId: params.get("selection") || params.get("id") || "",
       date: params.get("date") || "",
       time: (params.get("time") || "").slice(0, 5),
       service: params.get("service") || "C120",
@@ -138,6 +139,14 @@
       raw.schedules ||= {};
       raw.appointments ||= {};
       raw.customers ||= {};
+      raw.clientSelections ||= {};
+      Object.entries(raw.customers).forEach(([key, customer]) => {
+        if (!key.startsWith(CLIENT_SELECTION_PREFIX)) return;
+        try {
+          const selection = JSON.parse(customer.notes || "{}");
+          if (selection.id) raw.clientSelections[selection.id] = selection;
+        } catch {}
+      });
       Object.entries(raw.customers).forEach(([key, customer]) => {
         if (!key.startsWith(THERAPIST_PROFILE_PREFIX)) return;
         const id = key.replace(THERAPIST_PROFILE_PREFIX, "");
@@ -151,6 +160,27 @@
         appt.time = normalizeTime(appt.time);
       });
       return raw;
+    }
+
+    function applySelectionFromRecord() {
+      if (!query.selectionId) return true;
+      const selection = db.clientSelections?.[query.selectionId];
+      if (!selection) {
+        $("noticeBox").className = "card mb-5 p-5 text-center font-black text-rose-600";
+        $("noticeBox").textContent = "找不到這筆客選連結，請向店家確認連結是否正確。";
+        return false;
+      }
+      if (["confirmed", "rejected", "cancelled"].includes(selection.status)) {
+        $("noticeBox").className = "card mb-5 p-5 text-center font-black text-amber-700";
+        $("noticeBox").textContent = "這筆客選連結已處理，如需調整請聯繫店家。";
+        return false;
+      }
+      query.date = selection.date || query.date;
+      query.time = String(selection.time || query.time || "").slice(0, 5);
+      query.service = selection.service || query.service;
+      query.therapistIds = Array.isArray(selection.therapistIds) ? selection.therapistIds : [];
+      query.limit = Number(selection.limit || query.limit || 5);
+      return true;
     }
 
     function candidateCompleteness(profile = {}) {
@@ -250,14 +280,16 @@
       }
       $("submitBtn").disabled = true;
       $("submitBtn").textContent = "送出中...";
-      const id = `SEL-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+      const id = query.selectionId || `SEL-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
       const selection = {
         id,
         status: "pending",
+        source: query.selectionId ? "staff-generated-link" : "public-link",
         date: query.date,
         time: query.time,
         service: query.service,
         duration: COURSE_CATALOG[query.service]?.duration || 120,
+        therapistIds: query.therapistIds,
         selectedTherapistId,
         selectedTherapistName: therapistName(selectedTherapistId),
         customerName: $("customerName").value.trim(),
@@ -271,13 +303,8 @@
           method: "POST",
           mode: "no-cors",
           body: JSON.stringify({
-            action: "saveCustomer",
-            data: {
-              phone: `${CLIENT_SELECTION_PREFIX}${id}`,
-              name: `待確認-${selection.customerName || selection.customerContact}-${selection.selectedTherapistName}`,
-              notes: JSON.stringify(selection),
-              records: []
-            }
+            action: "submitClientSelection",
+            data: selection
           })
         });
         const accepted = res.ok || res.type === "opaque" || res.status === 302 || res.type === "opaqueredirect" || (res.status >= 200 && res.status < 400);
@@ -294,16 +321,25 @@
     }
 
     async function boot() {
-      $("selectionMeta").textContent = `${query.date || "未指定日期"} ${query.time || "未指定時間"} · ${courseName(query.service)}${query.therapistIds.length ? ` · 店家精選 ${query.therapistIds.length} 位` : ""}`;
-      if (!query.date || !query.time) {
-        $("noticeBox").className = "card mb-5 p-5 text-center font-black text-rose-600";
-        $("noticeBox").textContent = "缺少日期或時間參數，請使用店家提供的連結。";
-        return;
-      }
       try {
-        const res = await fetch(`${API_URL}?t=${Date.now()}`);
+        const safeUrl = new URL(API_URL);
+        safeUrl.searchParams.set("mode", "clientSelection");
+        safeUrl.searchParams.set("t", Date.now());
+        if (query.selectionId) safeUrl.searchParams.set("selection", query.selectionId);
+        if (query.date) safeUrl.searchParams.set("date", query.date);
+        if (query.time) safeUrl.searchParams.set("time", query.time);
+        if (query.service) safeUrl.searchParams.set("service", query.service);
+        if (query.therapistIds.length) safeUrl.searchParams.set("therapists", query.therapistIds.join(","));
+        const res = await fetch(safeUrl.toString());
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         db = normalizeDb(await res.json());
+        if (!applySelectionFromRecord()) return;
+        $("selectionMeta").textContent = `${query.date || "未指定日期"} ${query.time || "未指定時間"} · ${courseName(query.service)}${query.therapistIds.length ? ` · 店家精選 ${query.therapistIds.length} 位` : ""}`;
+        if (!query.date || !query.time) {
+          $("noticeBox").className = "card mb-5 p-5 text-center font-black text-rose-600";
+          $("noticeBox").textContent = "缺少日期或時間參數，請使用店家提供的連結。";
+          return;
+        }
         renderCandidates(availableCandidates());
       } catch (error) {
         $("candidateList").innerHTML = `<div class="card p-8 text-center font-black text-rose-600 md:col-span-2">無法讀取可選名單，請稍後再試。</div>`;

@@ -359,7 +359,8 @@
     </div>
 
     <script>
-        const API_URL = "https://script.google.com/macros/s/AKfycbxC4Pk1v6rkdmd96cR_2r_xPhbcNjrQ0bNdikGKyqbR9OMMeCwN9L5t9mE1j-AoS-ie/exec"; 
+        const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiTI5Z8c76YNlcPMYWyR17HGaU4QvzHJm32nWeCHsnaknVx/exec";
+        const FRONTDESK_LOGIN_LOG_KEY = "SYS_FRONTDESK_LOGIN_LOG";
         
         let globalDB = { therapists: {}, schedules: {}, appointments: {}, customers: {}, approvals: {} };
         let currentUserId = null;
@@ -460,6 +461,20 @@
             }
             el.value = val;
         };
+
+        function todayKey() {
+            return new Date().toISOString().split('T')[0];
+        }
+
+        function centerTodayInDateScroll(root = document) {
+            const today = todayKey();
+            root.querySelectorAll(`[data-date-key="${today}"]`).forEach((node) => {
+                const scroller = node.closest('[data-date-scroll], .overflow-x-auto, .table-wrap');
+                if (!scroller || scroller.scrollWidth <= scroller.clientWidth) return;
+                const left = node.offsetLeft - (scroller.clientWidth / 2) + (node.clientWidth / 2);
+                scroller.scrollTo({ left: Math.max(0, left), behavior: 'smooth' });
+            });
+        }
 
         function timeToMinutes(timeStr) {
             if(!timeStr) return 0;
@@ -608,6 +623,30 @@
             }
         }
 
+        async function recordFrontdeskLogin(id) {
+            if (!id) return;
+            if (!globalDB.customers) globalDB.customers = {};
+            const store = globalDB.customers[FRONTDESK_LOGIN_LOG_KEY] || { name: "前台師傅登入紀錄", notes: "", records: [] };
+            store.records = store.records || [];
+            store.records.push({
+                id: `FDLOGIN-${Date.now().toString(36).toUpperCase()}`,
+                at: new Date().toISOString(),
+                therapistId: id,
+                therapistName: therapistName(id),
+                source: location.hostname || "local",
+                path: location.pathname || "",
+                device: navigator.userAgent || "",
+                width: window.innerWidth || 0
+            });
+            store.records = store.records.slice(-200);
+            globalDB.customers[FRONTDESK_LOGIN_LOG_KEY] = store;
+            try {
+                await postToDatabase({ action: 'saveCustomer', data: { phone: FRONTDESK_LOGIN_LOG_KEY, ...store } });
+            } catch (e) {
+                console.warn("前台登入紀錄寫入失敗，不影響登入。", e);
+            }
+        }
+
         async function createApprovalRequest(type, data, before = {}) {
             if (!currentUserId) throw new Error("尚未登入");
             const id = `REQ-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`.toUpperCase();
@@ -706,12 +745,12 @@
                     </form>
                     <form id="passwordChangeForm" class="rounded-3xl border border-zinc-200 bg-zinc-50 p-5 h-fit">
                         <h3 class="text-lg font-black text-zinc-900">變更登入密碼</h3>
-                        <p class="mt-1 mb-4 text-sm font-medium text-zinc-500">新密碼限 4 位數字，送出後需管理員核可。</p>
+                        <p class="mt-1 mb-4 text-sm font-medium text-zinc-500">新密碼限 4 位數字，更新後下次請用新 PIN 登入。</p>
                         <div class="space-y-3">
                             <input name="currentPin" type="password" inputmode="numeric" maxlength="8" class="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none font-bold" placeholder="目前 PIN">
                             <input name="newPin" type="password" inputmode="numeric" maxlength="4" class="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none font-bold" placeholder="新 PIN，4 位數字">
                             <input name="confirmPin" type="password" inputmode="numeric" maxlength="4" class="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl outline-none font-bold" placeholder="再次輸入新 PIN">
-                            <button class="w-full bg-zinc-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-zinc-800">送出密碼變更審核</button>
+                            <button class="w-full bg-zinc-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-zinc-800">更新密碼</button>
                         </div>
                         <p id="passwordChangeMsg" class="mt-3 hidden text-sm font-bold text-rose-600"></p>
                     </form>
@@ -744,15 +783,18 @@
                     msg.innerText = "兩次輸入的新 PIN 不一致。"; msg.classList.remove('hidden'); return;
                 }
                 const btn = event.currentTarget.querySelector('button');
-                btn.disabled = true; btn.innerText = "送審中...";
+                btn.disabled = true; btn.innerText = "更新中...";
                 try {
-                    await createApprovalRequest("password", { pin: cleanPin(data.newPin) }, { pin: profile.pin });
+                    const nextPin = cleanPin(data.newPin);
+                    globalDB.therapists[currentUserId] = { ...profile, pin: nextPin };
+                    await postToDatabase({ action: 'addTherapist', data: { ...globalDB.therapists[currentUserId], id: currentUserId, pin: sheetText(nextPin) } });
+                    await fetchDatabase();
                     event.currentTarget.reset();
-                    showSnackbar("✅ 密碼變更已送出審核。", "success");
+                    showSnackbar("✅ 密碼已更新，下次請用新 PIN 登入。", "success");
                 } catch(e) {
-                    showSnackbar("❌ 送審失敗，請稍後再試。", "error");
+                    showSnackbar("❌ 密碼更新失敗，請稍後再試。", "error");
                 } finally {
-                    btn.disabled = false; btn.innerText = "送出密碼變更審核";
+                    btn.disabled = false; btn.innerText = "更新密碼";
                 }
             };
         };
@@ -828,7 +870,7 @@
                     let startColClass = index === 0 ? (firstDayMap[d.rawDay] || '') : '';
                     
                     container.innerHTML += `
-                        <div class="flex flex-col border rounded-2xl p-4 ${bg} ${startColClass} transition-all hover:border-zinc-300">
+                        <div data-date-key="${d.key}" class="flex flex-col border rounded-2xl p-4 ${bg} ${startColClass} transition-all hover:border-zinc-300">
                             <div class="flex justify-between items-center mb-3">
                                 <span class="text-[10px] uppercase tracking-widest ${dateLabelCol}">${d.dayOfWeek}</span>
                                 <span class="text-xs font-bold text-zinc-500">${fullDateDisplay}</span>
@@ -841,6 +883,7 @@
                 
                 document.getElementById('queryResultArea').classList.remove('hidden');
                 setTimeout(() => document.getElementById('queryResultArea').classList.add('opacity-100'), 50);
+                setTimeout(() => centerTodayInDateScroll(document.getElementById('queryResultArea')), 100);
             } catch (e) {
                 err.innerText = "資料庫連線異常。"; err.classList.remove('hidden');
             } finally {
@@ -869,6 +912,7 @@
                     switchPortalTab('profile');
                     document.getElementById('loginForm').classList.add('hidden');
                     document.getElementById('editForm').classList.remove('hidden');
+                    recordFrontdeskLogin(id);
                 } else { err.innerText = "身分驗證失敗，請檢查編號或密碼。"; err.classList.remove('hidden'); }
             } catch (error) { err.innerText = `連線異常，請稍後重試。`; err.classList.remove('hidden'); } 
             finally { btn.disabled = false; btnText.innerText = "登入專屬中樞"; loader.classList.add('hidden'); }

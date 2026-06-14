@@ -1,6 +1,6 @@
 "use strict";
 
-const API_URL = "https://script.google.com/macros/s/AKfycbxC4Pk1v6rkdmd96cR_2r_xPhbcNjrQ0bNdikGKyqbR9OMMeCwN9L5t9mE1j-AoS-ie/exec";
+const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiTI5Z8c76YNlcPMYWyR17HGaU4QvzHJm32nWeCHsnaknVx/exec";
 const STORAGE_KEY = "morgan-ops-hub-v2";
 const SYNC_META_KEY = `${STORAGE_KEY}-sync-meta`;
 const LOCAL_BACKUP_PREFIX = `${STORAGE_KEY}-backup`;
@@ -116,6 +116,7 @@ const APPROVAL_PREFIX = "SYS_APPROVAL_";
 const CLIENT_SELECTION_PREFIX = "SYS_CLIENT_SELECTION_";
 const APPOINTMENT_META_PREFIX = "SYS_APPT_META_";
 const ADMIN_LOGIN_LOG_KEY = "SYS_ADMIN_LOGIN_LOG";
+const FRONTDESK_LOGIN_LOG_KEY = "SYS_FRONTDESK_LOGIN_LOG";
 const approvalKey = (id) => `${APPROVAL_PREFIX}${id}`;
 const clientSelectionKey = (id) => `${CLIENT_SELECTION_PREFIX}${id}`;
 const appointmentMetaKey = (id) => `${APPOINTMENT_META_PREFIX}${id}`;
@@ -427,15 +428,17 @@ async function tryCloudSync(options = {}) {
     const cloudDb = normalizeDb(await res.json());
     if (syncMeta.pending && !force) {
       $("sysStatus").textContent = "雲端已連線；此裝置有未同步資料，暫保留本機版本";
-      return;
+      return false;
     }
     backupLocalDb(force ? "before-force-cloud-sync" : "before-cloud-authoritative-sync");
     db = cloudDb;
     persist();
     markSyncPending(false);
     $("sysStatus").textContent = "已連線雲端資料";
+    return true;
   } catch {
     $("sysStatus").textContent = "雲端未連線，使用本機測試資料";
+    return false;
   } finally {
     clearTimeout(timeout);
   }
@@ -477,6 +480,21 @@ async function saveCloudActions(actions, successMessage = "已儲存到雲端", 
     results.push(await postCloud(item.action, item.data));
   }
   const ok = results.every(Boolean);
+  if (ok && options.verify !== false) {
+    const verified = await tryCloudSync({ force: true });
+    if (!verified) {
+      markSyncPending(true, "verify-after-write-failed");
+      showSnackbar("已送出寫入，但無法回讀雲端確認；請稍後按更新資料");
+      return false;
+    }
+    if (typeof options.verifyCloud === "function" && !options.verifyCloud(db)) {
+      markSyncPending(true, "verify-after-write-mismatch");
+      showSnackbar("已送出寫入，但雲端回讀內容未確認更新；請稍後按更新資料");
+      return false;
+    }
+    showSnackbar(successMessage);
+    return true;
+  }
   showSnackbar(ok ? successMessage : "已保存在此裝置；雲端寫入失敗時，重新開啟會保留本機版本");
   return ok;
 }
@@ -590,7 +608,7 @@ function systemRecordStats(data = db) {
     approvals: keys.filter((key) => key.startsWith(APPROVAL_PREFIX)).length,
     clientSelections: keys.filter((key) => key.startsWith(CLIENT_SELECTION_PREFIX)).length,
     appointmentMeta: keys.filter((key) => key.startsWith(APPOINTMENT_META_PREFIX)).length,
-    logs: keys.filter((key) => key === ADMIN_LOGIN_LOG_KEY || key === "SYS_DOOR_PWD").length
+    logs: keys.filter((key) => key === ADMIN_LOGIN_LOG_KEY || key === FRONTDESK_LOGIN_LOG_KEY || key === "SYS_DOOR_PWD").length
   };
 }
 
@@ -665,6 +683,12 @@ function adminLoginLogStore() {
 
 function adminLoginRecords(limit = 80) {
   return [...(db.customers[ADMIN_LOGIN_LOG_KEY]?.records || [])]
+    .sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")))
+    .slice(0, limit);
+}
+
+function frontdeskLoginRecords(limit = 80) {
+  return [...(db.customers[FRONTDESK_LOGIN_LOG_KEY]?.records || [])]
     .sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")))
     .slice(0, limit);
 }
@@ -1140,14 +1164,47 @@ async function updateClientSelection(selection, status, extra = {}) {
   renderAll();
 }
 
-function clientSelectionUrl({ date, time, service, therapistIds = [] }) {
+function clientSelectionUrl({ selectionId = "", date, time, service, therapistIds = [] }) {
   const url = new URL("client-selection.html", window.location.href);
+  if (selectionId) {
+    url.searchParams.set("selection", selectionId);
+    return url.href;
+  }
   url.searchParams.set("date", date);
   url.searchParams.set("time", time);
   if (service) url.searchParams.set("service", service);
   if (therapistIds.length) url.searchParams.set("therapists", therapistIds.join(","));
   else url.searchParams.set("limit", "5");
   return url.href;
+}
+
+async function createClientSelectionLink(date, time, service, therapistIds = []) {
+  const id = `CSL-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  const selection = {
+    id,
+    status: "link",
+    source: "staff-generated-link",
+    date,
+    time,
+    service,
+    duration: COURSE_CATALOG[service]?.duration || 120,
+    therapistIds,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  db.clientSelections[id] = selection;
+  db.customers[clientSelectionKey(id)] = {
+    name: `客選連結-${date}-${time}`,
+    notes: JSON.stringify(selection),
+    records: []
+  };
+  const ok = await saveCloudActions(
+    [{ action: "saveCustomer", data: { phone: clientSelectionKey(id), ...db.customers[clientSelectionKey(id)] } }],
+    "客選頁面已建立",
+    { verifyCloud: (cloudDb) => Boolean(cloudDb.clientSelections?.[id]) }
+  );
+  if (!ok) throw new Error("client selection link write failed");
+  return clientSelectionUrl({ selectionId: id });
 }
 
 function parseLineTrialMessage(text = "") {
@@ -1316,6 +1373,16 @@ function hydrateResponsiveTables(root = document) {
       });
       hydrateLayeredTableRow(row, headers);
     });
+  });
+}
+
+function centerTodayInDateScroll(root = document) {
+  const today = todayKey();
+  root.querySelectorAll(`[data-date-key="${today}"]`).forEach((node) => {
+    const scroller = node.closest("[data-date-scroll], .table-wrap, .overflow-x-auto");
+    if (!scroller || scroller.scrollWidth <= scroller.clientWidth) return;
+    const left = node.offsetLeft - (scroller.clientWidth / 2) + (node.clientWidth / 2);
+    scroller.scrollTo({ left: Math.max(0, left), behavior: "smooth" });
   });
 }
 
@@ -1897,17 +1964,29 @@ function openClientSelectionLinkModal(date, time, service) {
     $("clientSelectionLinkBox").classList.add("hidden");
     refreshPickedState();
   };
-  $("buildClientSelectionUrlBtn").onclick = () => {
+  $("buildClientSelectionUrlBtn").onclick = async () => {
     const picked = selectedIds();
     if (!picked.length) {
       $("clientSelectionPickError").textContent = "請至少勾選一位師傅。";
       $("clientSelectionPickError").classList.remove("hidden");
       return;
     }
-    $("clientSelectionUrlInput").value = clientSelectionUrl({ date, time, service, therapistIds: picked });
-    $("clientSelectionLinkBox").classList.remove("hidden");
-    $("clientSelectionUrlInput").select();
-    showSnackbar(`已產生 ${picked.length} 位師傅的客選頁面`);
+    const button = $("buildClientSelectionUrlBtn");
+    button.disabled = true;
+    button.dataset.originalText = button.textContent;
+    button.textContent = "建立中...";
+    try {
+      $("clientSelectionUrlInput").value = await createClientSelectionLink(date, time, service, picked);
+      $("clientSelectionLinkBox").classList.remove("hidden");
+      $("clientSelectionUrlInput").select();
+      showSnackbar(`已建立 ${picked.length} 位師傅的客選頁面`);
+    } catch {
+      $("clientSelectionPickError").textContent = "客選頁面建立失敗，請確認雲端寫入權限後再試。";
+      $("clientSelectionPickError").classList.remove("hidden");
+    } finally {
+      button.disabled = false;
+      button.textContent = button.dataset.originalText || "產生客選頁面";
+    }
   };
   $("copyClientSelectionUrlBtn").onclick = async () => {
     const input = $("clientSelectionUrlInput");
@@ -2768,9 +2847,10 @@ function buildDateRange(start, end) {
 
 function drawScheduleTable() {
   currentScheduleViewDates = buildDateRange(scheduleFilterStart, scheduleFilterEnd);
-  $("scheduleHeader").innerHTML = `<th class="sticky left-0 z-10 bg-slate-50">按摩師</th>` + currentScheduleViewDates.map((d) => `<th class="${d.isWeekend ? "text-rose-600" : ""}">${esc(d.displayShort)}</th>`).join("");
-  $("scheduleRows").innerHTML = Object.keys(db.therapists).map((id) => `<tr><td class="sticky left-0 bg-white font-black">${esc(therapistName(id))} <button class="ml-2 rounded bg-slate-100 px-2 py-1 text-xs" data-edit-schedule="${id}">✎</button></td>${currentScheduleViewDates.map((d) => `<td class="${isWorking((db.schedules[id] || {})[d.key]) ? "font-bold text-slate-700" : "text-slate-400"}">${esc((db.schedules[id] || {})[d.key] || "休假")}</td>`).join("")}</tr>`).join("");
+  $("scheduleHeader").innerHTML = `<th class="sticky left-0 z-10 bg-slate-50">按摩師</th>` + currentScheduleViewDates.map((d) => `<th data-date-key="${esc(d.key)}" class="${d.isWeekend ? "text-rose-600" : ""} ${d.key === todayKey() ? "bg-teal-50 text-teal-700" : ""}">${esc(d.displayShort)}</th>`).join("");
+  $("scheduleRows").innerHTML = Object.keys(db.therapists).map((id) => `<tr><td class="sticky left-0 bg-white font-black">${esc(therapistName(id))} <button class="ml-2 rounded bg-slate-100 px-2 py-1 text-xs" data-edit-schedule="${id}">✎</button></td>${currentScheduleViewDates.map((d) => `<td data-date-key="${esc(d.key)}" class="${isWorking((db.schedules[id] || {})[d.key]) ? "font-bold text-slate-700" : "text-slate-400"} ${d.key === todayKey() ? "bg-teal-50/50" : ""}">${esc((db.schedules[id] || {})[d.key] || "休假")}</td>`).join("")}</tr>`).join("");
   $("scheduleRows").querySelectorAll("[data-edit-schedule]").forEach((btn) => btn.onclick = () => openScheduleModal(btn.dataset.editSchedule));
+  setTimeout(() => centerTodayInDateScroll($("view-personnel")), 80);
 }
 
 function openScheduleFilterModal() {
@@ -2901,7 +2981,7 @@ function renderApprovalDetail(item) {
     return `<div class="table-wrap mt-3"><table><thead><tr><th>日期</th><th>原班表</th><th>申請班表</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }
   if (item.type === "password") {
-    return `<div class="mt-3 rounded-xl bg-slate-50 p-3 text-sm font-bold text-slate-600">新 PIN 為 4 位數字，核可後才會更新登入密碼。</div>`;
+    return `<div class="mt-3 rounded-xl bg-slate-50 p-3 text-sm font-bold text-slate-600">舊版密碼審核紀錄；目前前台變更密碼已改為直接更新。</div>`;
   }
   const d = item.data || {};
   return `<div class="mt-3 grid gap-2 rounded-xl bg-slate-50 p-3 text-sm font-bold text-slate-600 sm:grid-cols-2">
@@ -2980,7 +3060,7 @@ function renderPersonnel() {
     <div class="card overflow-hidden">
       <div class="border-b bg-slate-50 p-5">
         <h3 class="font-black">前台變更審核</h3>
-        <p class="mt-1 text-sm font-bold text-slate-500">師傅在前台提出的人事資料、密碼與班表變更，都需在此核可後才會套用。</p>
+        <p class="mt-1 text-sm font-bold text-slate-500">師傅在前台提出的人事資料與班表變更，需在此核可後才會套用；密碼變更已改為前台直接更新。</p>
       </div>
       <div class="divide-y divide-slate-100">
         ${approvalsList().length ? approvalsList().map((item) => {
@@ -3039,7 +3119,7 @@ function renderPersonnel() {
           <button id="exportScheduleBtn" class="btn-teal">匯出班表</button>
         </div>
       </div>
-      <div class="table-wrap rounded-none border-0"><table><thead><tr id="scheduleHeader"></tr></thead><tbody id="scheduleRows"></tbody></table></div>
+      <div class="table-wrap rounded-none border-0" data-date-scroll><table><thead><tr id="scheduleHeader"></tr></thead><tbody id="scheduleRows"></tbody></table></div>
     </div>`;
   const adminPanel = `
     <div class="card overflow-hidden">
@@ -3077,7 +3157,10 @@ function renderPersonnel() {
       const id = btn.dataset.deleteTherapist;
       delete db.therapists[id];
       delete db.customers[therapistProfileKey(id)];
-      await saveCloudActions([{ action: "deleteCustomer", data: { phone: therapistProfileKey(id) } }], "按摩師資料已刪除");
+      await saveCloudActions([
+        { action: "deleteTherapist", data: { id } },
+        { action: "deleteCustomer", data: { phone: therapistProfileKey(id) } }
+      ], "按摩師資料已刪除");
       renderAll();
       persist();
     }));
@@ -3386,6 +3469,7 @@ function renderSystem() {
   const stats = dbStats();
   const backups = listLocalBackups().slice(0, 8);
   const loginRows = adminLoginRecords(80);
+  const frontdeskRows = frontdeskLoginRecords(80);
   const doorRows = [...(db.customers.SYS_DOOR_PWD?.records || [])].reverse().slice(0, 20);
   const courseRows = Object.entries(COURSE_CATALOG).map(([key, course]) => `<tr>
     <td class="font-mono font-black">${esc(key)}</td>
@@ -3408,6 +3492,12 @@ function renderSystem() {
     <td class="font-bold text-slate-600">${esc(item.source || "local")}</td>
     <td class="max-w-[360px] truncate text-xs font-bold text-slate-500">${esc(item.device || "未記錄")}</td>
   </tr>`).join("") : `<tr><td colspan="4" class="py-10 text-center font-bold text-slate-400">尚無後台管理登入紀錄</td></tr>`;
+  const frontdeskTableRows = frontdeskRows.length ? frontdeskRows.map((item) => `<tr>
+    <td class="font-mono font-black">${esc(backupLabelTime(item.at))}</td>
+    <td><div class="font-black">${esc(item.therapistName || item.therapistId || "未知師傅")}</div><div class="mt-1 font-mono text-xs font-bold text-slate-400">${esc(item.therapistId || "")}</div></td>
+    <td class="font-bold text-slate-600">${esc(item.source || "local")}</td>
+    <td class="max-w-[360px] truncate text-xs font-bold text-slate-500">${esc(item.device || "未記錄")}</td>
+  </tr>`).join("") : `<tr><td colspan="4" class="py-10 text-center font-bold text-slate-400">尚無前台師傅登入紀錄</td></tr>`;
   const doorTableRows = doorRows.length ? doorRows.map((item) => `<tr>
     <td class="font-mono font-black">${esc(item.at || "")}</td>
     <td class="font-mono text-lg font-black">${esc(item.value || "")}</td>
@@ -3451,6 +3541,13 @@ function renderSystem() {
         </div>
         <div class="table-wrap"><table><thead><tr><th>時間</th><th>管理員</th><th>來源</th><th>裝置</th></tr></thead><tbody>${loginTableRows}</tbody></table></div>
       </div>
+    </div>
+    <div class="card p-5">
+      <div class="mb-4 flex items-center justify-between gap-3 border-b pb-4">
+        <div><h3 class="font-black">前台師傅登入紀錄</h3><p class="text-xs font-bold text-slate-500">記錄師傅從前台系統登入的時間、來源與裝置。</p></div>
+        <span class="badge bg-teal-50 text-teal-700">${frontdeskRows.length}</span>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>時間</th><th>師傅</th><th>來源</th><th>裝置</th></tr></thead><tbody>${frontdeskTableRows}</tbody></table></div>
     </div>
     <div class="grid gap-5 xl:grid-cols-2">
       ${lineTrialPanelHtml()}
