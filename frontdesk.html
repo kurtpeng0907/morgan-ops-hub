@@ -670,7 +670,7 @@
         function profileFieldsHtml(profile = {}) {
             return `
                 <input type="hidden" name="id" value="${esc(currentUserId)}">
-                <div><label class="block text-xs font-bold text-zinc-500 mb-1.5">暱稱</label><input name="nickname" class="w-full px-4 py-3 soft-input rounded-xl outline-none font-bold" value="${esc(profile.nickname || "")}"></div>
+                <div><label class="block text-xs font-bold text-zinc-500 mb-1.5">暱稱</label><div class="w-full px-4 py-3 bg-zinc-100 border border-zinc-200 rounded-xl font-black text-zinc-500">${esc(profile.nickname || "由後台設定")}</div><p class="mt-1 text-[11px] font-bold text-zinc-400">暱稱由後台管理，前台不可自行修改。</p></div>
                 <div><label class="block text-xs font-bold text-zinc-500 mb-1.5">姓名</label><input name="name" class="w-full px-4 py-3 soft-input rounded-xl outline-none font-bold" value="${esc(profile.name || "")}"></div>
                 <div><label class="block text-xs font-bold text-zinc-500 mb-1.5">聯絡方式</label><input name="contact" class="w-full px-4 py-3 soft-input rounded-xl outline-none font-bold" value="${esc(profile.contact || "")}"></div>
                 <div class="md:col-span-2"><label class="block text-xs font-bold text-zinc-500 mb-1.5">照片網址</label><input name="photoUrl" class="w-full px-4 py-3 soft-input rounded-xl outline-none font-bold" value="${esc(profile.photoUrl || "")}" placeholder="貼上公開圖片網址"></div>
@@ -685,6 +685,7 @@
         function collectProfile(form) {
             const data = Object.fromEntries(new FormData(form).entries());
             Object.keys(THERAPIST_PROFILE_DEFAULTS).forEach((key) => data[key] = String(data[key] || "").trim());
+            data.nickname = globalDB.therapists[currentUserId]?.nickname || "";
             data.id = currentUserId;
             return data;
         }
@@ -1095,12 +1096,100 @@
                 </div>`;
         };
 
+        const therapistCutFor = (appt = {}) => Number(COURSE_CATALOG[appt.service]?.therapistCut || 0);
+        const companyCutFor = (appt = {}) => Math.max(0, Number(appt.price || 0) - therapistCutFor(appt));
+        const remittanceDueFor = (appt = {}) => {
+            const manual = String(appt.remittanceDue || "").trim();
+            return manual ? Math.max(0, Number(manual) || 0) : companyCutFor(appt);
+        };
+        const hasRemittance = (appt = {}) => Number(appt.collectedPrice || 0) > 0 || String(appt.remittancePaid) === 'true';
+        const isCompletedAppt = (appt = {}) => appt.isCompleted === true || String(appt.isCompleted) === 'true';
+        const formatMoney = (value = 0) => `$${(Number(value) || 0).toLocaleString()}`;
+        const dateKeyFromDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        const addDays = (date, days) => {
+            const next = new Date(date);
+            next.setDate(next.getDate() + days);
+            return next;
+        };
+        const servicePeriodStats = (appointments, start, end) => {
+            const inRange = appointments.filter((appt) => appt.date >= start && appt.date <= end);
+            const completed = inRange.filter(isCompletedAppt);
+            const unpaid = completed.filter((appt) => !hasRemittance(appt));
+            const paid = completed.filter(hasRemittance);
+            return {
+                items: inRange,
+                completed,
+                unpaid,
+                paid,
+                guests: completed.length,
+                therapistCut: completed.reduce((sum, appt) => sum + therapistCutFor(appt), 0)
+            };
+        };
+        const periodCardHtml = (label, stats) => `
+            <div class="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+                <p class="text-xs font-black text-zinc-500">${label}</p>
+                <div class="mt-3 grid grid-cols-2 gap-3">
+                    <div><p class="text-[11px] font-bold text-zinc-400">服務客數</p><p class="text-2xl font-black text-zinc-900">${stats.guests}</p></div>
+                    <div><p class="text-[11px] font-bold text-zinc-400">抽成</p><p class="text-2xl font-black text-teal-700">${formatMoney(stats.therapistCut)}</p></div>
+                    <div><p class="text-[11px] font-bold text-zinc-400">已回款</p><p class="text-lg font-black text-indigo-700">${stats.paid.length} 筆</p></div>
+                    <div><p class="text-[11px] font-bold text-zinc-400">未回款</p><p class="text-lg font-black ${stats.unpaid.length ? 'text-rose-700' : 'text-zinc-400'}">${stats.unpaid.length} 筆</p></div>
+                </div>
+            </div>`;
+        const upcomingItemHtml = (appt) => `
+            <button onclick="openTherapistRecordModal('${appt.id}')" class="w-full rounded-2xl border border-zinc-200 bg-white p-4 text-left transition-colors hover:border-teal-300">
+                <div class="flex items-start justify-between gap-3">
+                    <div><p class="font-black text-zinc-900">${appt.date} ${appt.time}</p><p class="mt-1 text-sm font-bold text-zinc-500">${esc(appt.customerName || '顧客')} · ${esc(COURSE_CATALOG[appt.service]?.name || appt.service || '服務')}</p></div>
+                    <span class="rounded-full bg-teal-50 px-3 py-1 text-xs font-black text-teal-700">${appt.room === 'OUT' ? '外出' : `${appt.room || '-'}房`}</span>
+                </div>
+            </button>`;
+        const remittanceRowsHtml = (items) => items.length ? items.map((appt) => `
+            <div class="flex flex-col justify-between gap-2 rounded-xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm sm:flex-row sm:items-center">
+                <div><p class="font-black text-zinc-900">${appt.date} ${appt.time} · ${esc(appt.customerName || '顧客')}</p><p class="text-xs font-bold text-zinc-500">${esc(COURSE_CATALOG[appt.service]?.name || appt.service || '服務')}</p></div>
+                <div class="font-black text-rose-700">應回 ${formatMoney(remittanceDueFor(appt))}</div>
+            </div>`).join("") : `<div class="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-center text-sm font-bold text-zinc-400">目前沒有未回款明細</div>`;
+        const therapistOpsSummaryHtml = (appointments) => {
+            const now = new Date();
+            const today = dateKeyFromDate(now);
+            const day = now.getDay() || 7;
+            const weekStart = dateKeyFromDate(addDays(now, -day + 1));
+            const weekEnd = dateKeyFromDate(addDays(now, 7 - day));
+            const monthStart = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`;
+            const monthEnd = monthDatesList[monthDatesList.length - 1]?.key || today;
+            const currentMins = now.getHours() * 60 + now.getMinutes();
+            const upcoming = appointments
+                .filter((appt) => !isCompletedAppt(appt) && (appt.date > today || (appt.date === today && (timeToMinutes(appt.time) + (parseInt(appt.duration) || 60)) >= currentMins)))
+                .slice(0, 3);
+            const todayStats = servicePeriodStats(appointments, today, today);
+            const weekStats = servicePeriodStats(appointments, weekStart, weekEnd);
+            const monthStats = servicePeriodStats(appointments, monthStart, monthEnd);
+            return `
+                <div class="grid gap-5 xl:grid-cols-[1.2fr_.8fr]">
+                    <div class="rounded-3xl border border-zinc-200 bg-zinc-50 p-5">
+                        <div class="mb-4 flex items-center justify-between gap-3">
+                            <div><h3 class="text-xl font-black text-zinc-900">我的服務總覽</h3><p class="text-sm font-bold text-zinc-500">以已完成服務計算客數與抽成，未回款列在下方。</p></div>
+                            <span class="rounded-full bg-white px-3 py-1 text-xs font-black text-zinc-500">本月 ${monthStats.items.length} 筆排程</span>
+                        </div>
+                        <div class="grid gap-3 lg:grid-cols-3">${periodCardHtml('今日', todayStats)}${periodCardHtml('本週', weekStats)}${periodCardHtml('本月', monthStats)}</div>
+                    </div>
+                    <div class="rounded-3xl border border-zinc-200 bg-white p-5">
+                        <h3 class="text-lg font-black text-zinc-900">即將到來</h3>
+                        <div class="mt-4 space-y-3">${upcoming.length ? upcoming.map(upcomingItemHtml).join("") : `<div class="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-center text-sm font-bold text-zinc-400">目前沒有即將到來的行程</div>`}</div>
+                    </div>
+                </div>
+                <div class="rounded-3xl border border-zinc-200 bg-white p-5">
+                    <div class="mb-4 flex items-center justify-between gap-3">
+                        <div><h3 class="font-black text-zinc-900">未回款明細</h3><p class="text-xs font-bold text-zinc-500">僅列本月已完成但尚未回款的服務。</p></div>
+                        <span class="rounded-full ${monthStats.unpaid.length ? 'bg-rose-50 text-rose-700' : 'bg-zinc-100 text-zinc-500'} px-3 py-1 text-xs font-black">${monthStats.unpaid.length} 筆</span>
+                    </div>
+                    <div class="space-y-2">${remittanceRowsHtml(monthStats.unpaid)}</div>
+                </div>`;
+        };
+
         window.renderMyAppointments = function() {
             const listContainer = document.getElementById('myAppointmentsContainer');
             const calContainer = document.getElementById('myAppointmentsCalendarGrid');
             if(!listContainer || !calContainer) return;
             
-            listContainer.innerHTML = '';
             calContainer.innerHTML = '';
             
             const allApptsData = Object.values(globalDB.appointments || {});
@@ -1114,7 +1203,7 @@
 
             // ===== 渲染列表模式 (智慧時序分類) =====
             if (myAppts.length === 0) {
-                listContainer.innerHTML = `<div class="py-12 text-center text-zinc-400 font-medium border border-dashed border-zinc-200 rounded-2xl bg-zinc-50 w-full">本月目前尚無您的預約排程</div>`;
+                listContainer.innerHTML = therapistOpsSummaryHtml(myAppts) + `<div class="py-12 text-center text-zinc-400 font-medium border border-dashed border-zinc-200 rounded-2xl bg-zinc-50 w-full">本月目前尚無您的預約排程</div>`;
             } else {
                 const now = new Date();
                 const formatD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -1189,7 +1278,7 @@
                         </div>`;
                 }
 
-                listContainer.innerHTML = listHtml;
+                listContainer.innerHTML = therapistOpsSummaryHtml(myAppts) + listHtml;
             }
 
             // ===== 渲染日曆模式 =====
