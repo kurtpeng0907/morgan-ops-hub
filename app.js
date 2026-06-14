@@ -117,6 +117,7 @@ const CLIENT_SELECTION_PREFIX = "SYS_CLIENT_SELECTION_";
 const APPOINTMENT_META_PREFIX = "SYS_APPT_META_";
 const ADMIN_LOGIN_LOG_KEY = "SYS_ADMIN_LOGIN_LOG";
 const FRONTDESK_LOGIN_LOG_KEY = "SYS_FRONTDESK_LOGIN_LOG";
+const SYSTEM_NOTE_KEY = "SYS_SYSTEM_NOTE";
 const approvalKey = (id) => `${APPROVAL_PREFIX}${id}`;
 const clientSelectionKey = (id) => `${CLIENT_SELECTION_PREFIX}${id}`;
 const appointmentMetaKey = (id) => `${APPOINTMENT_META_PREFIX}${id}`;
@@ -608,7 +609,7 @@ function systemRecordStats(data = db) {
     approvals: keys.filter((key) => key.startsWith(APPROVAL_PREFIX)).length,
     clientSelections: keys.filter((key) => key.startsWith(CLIENT_SELECTION_PREFIX)).length,
     appointmentMeta: keys.filter((key) => key.startsWith(APPOINTMENT_META_PREFIX)).length,
-    logs: keys.filter((key) => key === ADMIN_LOGIN_LOG_KEY || key === FRONTDESK_LOGIN_LOG_KEY || key === "SYS_DOOR_PWD").length
+    logs: keys.filter((key) => key === ADMIN_LOGIN_LOG_KEY || key === FRONTDESK_LOGIN_LOG_KEY || key === SYSTEM_NOTE_KEY || key === "SYS_DOOR_PWD").length
   };
 }
 
@@ -691,6 +692,30 @@ function frontdeskLoginRecords(limit = 80) {
   return [...(db.customers[FRONTDESK_LOGIN_LOG_KEY]?.records || [])]
     .sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")))
     .slice(0, limit);
+}
+
+function systemNoteStore() {
+  db.customers[SYSTEM_NOTE_KEY] ||= { name: "系統備忘", notes: "", records: [] };
+  db.customers[SYSTEM_NOTE_KEY].records ||= [];
+  return db.customers[SYSTEM_NOTE_KEY];
+}
+
+async function saveSystemNote() {
+  const textarea = $("systemNoteText");
+  if (!textarea) return;
+  const note = textarea.value.trim();
+  const store = systemNoteStore();
+  store.notes = note;
+  store.records.push({
+    id: `SYSNOTE-${Date.now().toString(36).toUpperCase()}`,
+    at: new Date().toISOString(),
+    adminId: currentUser?.id || "",
+    adminName: currentUser?.name || "",
+    length: note.length
+  });
+  store.records = store.records.slice(-40);
+  await saveCloudActions([{ action: "saveCustomer", data: { phone: SYSTEM_NOTE_KEY, ...store } }], "系統 Note 已儲存");
+  renderSystem();
 }
 
 async function recordAdminLogin(id) {
@@ -3503,6 +3528,47 @@ function renderSystem() {
     <td class="font-mono text-lg font-black">${esc(item.value || "")}</td>
     <td class="font-bold text-slate-600">${esc(item.reason || "未記錄")}</td>
   </tr>`).join("") : `<tr><td colspan="3" class="py-10 text-center font-bold text-slate-400">尚無大門密碼修改紀錄</td></tr>`;
+  const noteStore = systemNoteStore();
+  const noteRows = [...(noteStore.records || [])].reverse().slice(0, 6);
+  const noteRecordHtml = noteRows.length ? `<div class="mt-4 rounded-xl border bg-slate-50 p-3">
+    <p class="mb-2 text-xs font-black text-slate-500">最近更新</p>
+    <div class="space-y-2">${noteRows.map((item) => `<div class="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-500"><span>${esc(backupLabelTime(item.at))}</span><span>${esc(item.adminName || item.adminId || "系統")} · ${Number(item.length || 0)} 字</span></div>`).join("")}</div>
+  </div>` : "";
+  const primaryActionCards = [
+    {
+      id: "systemRefreshDataBtn",
+      title: "重新同步資料",
+      desc: "從雲端重新讀取最新資料。",
+      tone: "light"
+    },
+    {
+      id: "systemUploadLocalBtn",
+      title: syncMeta.pending ? "上傳本機資料" : "上傳目前資料",
+      desc: syncMeta.pending ? "這台裝置有待同步內容，建議先處理。" : "必要時將這台裝置資料寫回雲端。",
+      tone: syncMeta.pending ? "teal" : "light"
+    },
+    {
+      id: "systemDownloadBackupBtn",
+      title: "下載完整備份",
+      desc: "匯出目前所有營運資料。",
+      tone: "teal"
+    },
+    {
+      id: "systemOpenHistoryBtn",
+      title: "修改紀錄 / 復原",
+      desc: "查看快照、下載或復原資料。",
+      tone: "light"
+    },
+    {
+      id: "systemDiagnosticsBtn",
+      title: "同步診斷",
+      desc: "比對本機與雲端資料量。",
+      tone: "light"
+    }
+  ].map((item) => `<button id="${item.id}" class="${item.tone === "teal" ? "border-teal-200 bg-teal-50 text-teal-800 hover:bg-teal-100" : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"} rounded-xl border p-4 text-left transition">
+    <span class="block text-sm font-black">${item.title}</span>
+    <span class="mt-1 block text-xs font-bold leading-relaxed text-slate-500">${item.desc}</span>
+  </button>`).join("");
 
   section.innerHTML = `
     <div class="grid gap-5 xl:grid-cols-[1.15fr_.85fr]">
@@ -3511,14 +3577,7 @@ function renderSystem() {
           <div>
             <span class="badge bg-slate-100 text-slate-700">系統維護</span>
             <h3 class="mt-2 text-2xl font-black">資料與同步</h3>
-            <p class="mt-1 text-sm font-bold text-slate-500">集中管理備份、修改紀錄、同步狀態與系統資料。</p>
-          </div>
-          <div class="flex flex-wrap gap-2">
-            <button id="systemRefreshDataBtn" class="btn-light">重新同步</button>
-            <button id="systemDiagnosticsBtn" class="btn-light">同步診斷</button>
-            <button id="systemUploadLocalBtn" class="${syncMeta.pending ? "btn-teal" : "btn-light"}">上傳本機資料</button>
-            <button id="systemOpenHistoryBtn" class="btn-light">修改紀錄</button>
-            <button id="systemDownloadBackupBtn" class="btn-teal">下載備份</button>
+            <p class="mt-1 text-sm font-bold text-slate-500">先看同步狀態，再處理備份、修改紀錄與系統備忘。</p>
           </div>
         </div>
         <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
@@ -3535,22 +3594,43 @@ function renderSystem() {
         <p class="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">若這台 Mac 看得到資料、其他裝置看不到，請按「上傳本機資料」，把此裝置資料寫成雲端正式資料。</p>
       </div>
       <div class="card p-5">
-        <div class="mb-4 flex items-center justify-between gap-3 border-b pb-4">
-          <div><h3 class="font-black">後台管理登入紀錄</h3><p class="text-xs font-bold text-slate-500">僅記錄管理員登入，不含師傅前台。</p></div>
-          <span class="badge bg-slate-100 text-slate-700">${loginRows.length}</span>
+        <div class="mb-4 border-b pb-4">
+          <span class="badge bg-teal-50 text-teal-700">下一步</span>
+          <h3 class="mt-2 font-black">快速操作</h3>
+          <p class="mt-1 text-xs font-bold text-slate-500">日常維護只需要從這裡選擇動作。</p>
         </div>
-        <div class="table-wrap"><table><thead><tr><th>時間</th><th>管理員</th><th>來源</th><th>裝置</th></tr></thead><tbody>${loginTableRows}</tbody></table></div>
+        <div class="grid gap-3">${primaryActionCards}</div>
       </div>
     </div>
-    <div class="card p-5">
-      <div class="mb-4 flex items-center justify-between gap-3 border-b pb-4">
-        <div><h3 class="font-black">前台師傅登入紀錄</h3><p class="text-xs font-bold text-slate-500">記錄師傅從前台系統登入的時間、來源與裝置。</p></div>
-        <span class="badge bg-teal-50 text-teal-700">${frontdeskRows.length}</span>
+    <div class="grid gap-5 xl:grid-cols-[.9fr_1.1fr]">
+      <div class="card p-5">
+        <div class="mb-4 border-b pb-4">
+          <span class="badge bg-amber-50 text-amber-700">Note</span>
+          <h3 class="mt-2 font-black">系統備忘</h3>
+          <p class="mt-1 text-xs font-bold text-slate-500">可以放部署提醒、資料庫注意事項、待處理設定或交接內容。</p>
+        </div>
+        <textarea id="systemNoteText" class="input min-h-44 resize-y leading-relaxed" placeholder="例如：下次部署後要測試前台登入、客選連結、預約狀態回寫...">${esc(noteStore.notes || "")}</textarea>
+        <div class="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <p class="text-xs font-bold text-slate-500">儲存後會寫入雲端，其他裝置重新整理後也看得到。</p>
+          <button id="systemSaveNoteBtn" class="btn-teal shrink-0">儲存 Note</button>
+        </div>
+        ${noteRecordHtml}
       </div>
-      <div class="table-wrap"><table><thead><tr><th>時間</th><th>師傅</th><th>來源</th><th>裝置</th></tr></thead><tbody>${frontdeskTableRows}</tbody></table></div>
+      ${lineTrialPanelHtml()}
     </div>
     <div class="grid gap-5 xl:grid-cols-2">
-      ${lineTrialPanelHtml()}
+      ${collapsibleCardHtml({ title: "登入紀錄", desc: `後台 ${loginRows.length} 筆、前台 ${frontdeskRows.length} 筆。需要查來源或裝置時再展開。`, open: false, body: `
+        <div class="grid gap-5 xl:grid-cols-2">
+          <div>
+            <div class="mb-3 flex items-center justify-between"><h4 class="font-black">後台管理登入</h4><span class="badge bg-slate-100 text-slate-700">${loginRows.length}</span></div>
+            <div class="table-wrap"><table><thead><tr><th>時間</th><th>管理員</th><th>來源</th><th>裝置</th></tr></thead><tbody>${loginTableRows}</tbody></table></div>
+          </div>
+          <div>
+            <div class="mb-3 flex items-center justify-between"><h4 class="font-black">前台師傅登入</h4><span class="badge bg-teal-50 text-teal-700">${frontdeskRows.length}</span></div>
+            <div class="table-wrap"><table><thead><tr><th>時間</th><th>師傅</th><th>來源</th><th>裝置</th></tr></thead><tbody>${frontdeskTableRows}</tbody></table></div>
+          </div>
+        </div>
+      ` })}
       <div class="card p-5">
         <div class="mb-4 flex items-center justify-between gap-3 border-b pb-4">
           <div><h3 class="font-black">最近修改紀錄</h3><p class="text-xs font-bold text-slate-500">更完整的復原流程請按「修改紀錄」。</p></div>
@@ -3558,28 +3638,12 @@ function renderSystem() {
         </div>
         <div class="table-wrap"><table><thead><tr><th>時間</th><th>來源</th><th class="text-right">預約</th><th class="text-right">顧客</th><th class="text-right">操作</th></tr></thead><tbody>${backupRows}</tbody></table></div>
       </div>
-      <div class="card p-5">
-        <div class="mb-4 flex items-center justify-between gap-3 border-b pb-4">
-          <div><h3 class="font-black">大門密碼紀錄</h3><p class="text-xs font-bold text-slate-500">目前密碼仍在總覽快速設定。</p></div>
-          <span class="badge bg-teal-50 text-teal-700">${esc(db.customers.SYS_DOOR_PWD?.notes || "未設定")}</span>
-        </div>
-        <div class="table-wrap"><table><thead><tr><th>時間</th><th>密碼</th><th>來源</th></tr></thead><tbody>${doorTableRows}</tbody></table></div>
-      </div>
     </div>
-    <div class="card p-5">
-      <div class="mb-4 border-b pb-4">
-        <h3 class="font-black">資料模型摘要</h3>
-        <p class="text-xs font-bold text-slate-500">正式資料與系統資料分開檢視；系統資料目前仍暫存於 Google Sheet 的 customers 分區，但前端會分類呈現。</p>
-      </div>
-      ${modelSummaryHtml(db)}
+    <div class="grid gap-5 xl:grid-cols-2">
+      ${collapsibleCardHtml({ title: "大門密碼紀錄", desc: `目前密碼：${esc(db.customers.SYS_DOOR_PWD?.notes || "未設定")}。`, open: false, body: `<div class="table-wrap"><table><thead><tr><th>時間</th><th>密碼</th><th>來源</th></tr></thead><tbody>${doorTableRows}</tbody></table></div>` })}
+      ${collapsibleCardHtml({ title: "資料模型摘要", desc: "正式資料與系統資料分開檢視，用來排查同步或資料結構問題。", open: false, body: modelSummaryHtml(db) })}
     </div>
-    <div class="card p-5">
-      <div class="mb-4 border-b pb-4">
-        <h3 class="font-black">營運規則檢視</h3>
-        <p class="text-xs font-bold text-slate-500">目前先集中顯示課程、金額與抽成；下一階段可改成可編輯設定。</p>
-      </div>
-      <div class="table-wrap"><table><thead><tr><th>代碼</th><th>課程</th><th class="text-right">時長</th><th class="text-right">金額</th><th class="text-right">師傅抽成</th><th class="text-right">店家應收</th></tr></thead><tbody>${courseRows}</tbody></table></div>
-    </div>`;
+    ${collapsibleCardHtml({ title: "營運規則檢視", desc: "目前先集中顯示課程、金額與抽成；下一階段可改成可編輯設定。", open: false, body: `<div class="table-wrap"><table><thead><tr><th>代碼</th><th>課程</th><th class="text-right">時長</th><th class="text-right">金額</th><th class="text-right">師傅抽成</th><th class="text-right">店家應收</th></tr></thead><tbody>${courseRows}</tbody></table></div>` })}`;
 
   $("systemRefreshDataBtn").onclick = refreshDashboardData;
   $("systemDiagnosticsBtn").onclick = openSyncDiagnosticsModal;
@@ -3587,6 +3651,7 @@ function renderSystem() {
   $("systemOpenHistoryBtn").onclick = openChangeHistoryModal;
   $("systemOpenHistoryBtn2").onclick = openChangeHistoryModal;
   $("systemDownloadBackupBtn").onclick = downloadCurrentBackup;
+  $("systemSaveNoteBtn").onclick = saveSystemNote;
   $("openLineTrialBtn").onclick = openLineTrialModal;
   section.querySelectorAll("[data-download-backup]").forEach((btn) => btn.onclick = () => downloadBackupEntry(btn.dataset.downloadBackup));
   hydrateResponsiveTables(section);
