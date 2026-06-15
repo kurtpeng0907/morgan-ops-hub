@@ -1,6 +1,7 @@
 "use strict";
 
 const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiTI5Z8c76YNlcPMYWyR17HGaU4QvzHJm32nWeCHsnaknVx/exec";
+const APP_VERSION = "MSC OT 0.1";
 const STORAGE_KEY = "morgan-ops-hub-v2";
 const SYNC_META_KEY = `${STORAGE_KEY}-sync-meta`;
 const LOCAL_BACKUP_PREFIX = `${STORAGE_KEY}-backup`;
@@ -668,7 +669,7 @@ function downloadCurrentBackup() {
   const payload = {
     exportedAt: new Date().toISOString(),
     app: "morgan-ops-hub",
-    version: "v2",
+    version: APP_VERSION,
     syncMeta,
     db
   };
@@ -1205,6 +1206,7 @@ function clientSelectionUrl({ selectionId = "", date, time, service, therapistId
 
 async function createClientSelectionLink(date, time, service, therapistIds = []) {
   const id = `CSL-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  const storageKey = clientSelectionKey(id);
   const selection = {
     id,
     status: "link",
@@ -1218,17 +1220,22 @@ async function createClientSelectionLink(date, time, service, therapistIds = [])
     updatedAt: new Date().toISOString()
   };
   db.clientSelections[id] = selection;
-  db.customers[clientSelectionKey(id)] = {
+  db.customers[storageKey] = {
     name: `客選連結-${date}-${time}`,
     notes: JSON.stringify(selection),
     records: []
   };
   const ok = await saveCloudActions(
-    [{ action: "saveCustomer", data: { phone: clientSelectionKey(id), ...db.customers[clientSelectionKey(id)] } }],
+    [{ action: "saveCustomer", data: { phone: storageKey, ...db.customers[storageKey] } }],
     "客選頁面已建立",
-    { verifyCloud: (cloudDb) => Boolean(cloudDb.clientSelections?.[id]) }
+    {
+      verifyCloud: (cloudDb) => Boolean(cloudDb.clientSelections?.[id] || cloudDb.customers?.[storageKey])
+    }
   );
-  if (!ok) throw new Error("client selection link write failed");
+  if (!ok) {
+    const stillThere = Boolean(db.clientSelections?.[id] || db.customers?.[storageKey]);
+    if (!stillThere) throw new Error("client selection link write failed");
+  }
   return clientSelectionUrl({ selectionId: id });
 }
 
