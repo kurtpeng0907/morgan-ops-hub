@@ -455,12 +455,12 @@ async function postCloud(action, data) {
   try {
     const res = await fetch(API_URL, {
       method: "POST",
+      mode: "no-cors",
       body: JSON.stringify({ action, data }),
-      redirect: "manual",
       signal: controller.signal,
       cache: "no-store"
     });
-    const accepted = res.ok || res.status === 302 || res.type === "opaqueredirect" || (res.status >= 200 && res.status < 400);
+    const accepted = res.ok || res.type === "opaque" || res.status === 302 || res.type === "opaqueredirect" || (res.status >= 200 && res.status < 400);
     if (!accepted) throw new Error(`HTTP ${res.status}`);
     if (!hadFailedWrite) markSyncPending(false);
     return true;
@@ -2012,7 +2012,8 @@ function openClientSelectionLinkModal(date, time, service) {
       $("clientSelectionLinkBox").classList.remove("hidden");
       $("clientSelectionUrlInput").select();
       showSnackbar(`已建立 ${picked.length} 位師傅的客選頁面`);
-    } catch {
+    } catch (error) {
+      console.error("Client selection link creation failed", error);
       $("clientSelectionPickError").textContent = "客選頁面建立失敗，請確認雲端寫入權限後再試。";
       $("clientSelectionPickError").classList.remove("hidden");
     } finally {
