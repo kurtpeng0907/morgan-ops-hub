@@ -2465,6 +2465,7 @@ function bookingCardHtml(appt, tone = "slate") {
     <div class="flex items-start justify-between gap-3"><span class="font-mono text-sm font-black">${esc(appt.date)} ${esc(appt.time || "--:--")}</span><span class="badge ${bookingStageClass(appt.bookingStage)}">${esc(bookingStageLabel(appt.bookingStage))}</span></div>
     <div class="mt-2 font-black text-slate-900">${esc(customerDisplay(appt.phone, appt.customerName))}</div>
     <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs font-bold text-slate-500"><span>${esc(therapistName(appt.therapistId))}</span><span>${esc(courseName(appt.service))}</span><span>${appt.room === "OUT" ? "外出" : `${esc(appt.room || "-")}房`}</span><span>${money(appt.price)}</span></div>
+    <div class="mt-3 rounded-lg bg-white/70 px-3 py-2 text-xs font-black text-slate-700">下一步：${esc(bookingNextAction(appt))}</div>
   </button>`;
 }
 
@@ -2482,6 +2483,23 @@ function bookingStageBoardHtml(monthAppts) {
       <div class="space-y-2">${lane.items.slice(0, 6).map((appt) => bookingCardHtml(appt, lane.tone)).join("") || `<p class="rounded-xl bg-slate-50 p-4 text-center text-sm font-bold text-slate-400">${lane.empty}</p>`}</div>
     </section>`).join("")}
   </div>`;
+}
+
+function bookingNextAction(appt = {}) {
+  const stage = normalizeBookingStage(appt.bookingStage, appt);
+  if (stage === "inquiry") return "整理需求，查時段或給客選";
+  if (stage === "candidate_sent") return "等待客人選擇師傅";
+  if (stage === "therapist_match") return "確認師傅可接";
+  if (stage === "customer_confirm") return "回覆顧客確認課程與金額";
+  if (stage === "confirmed") return appt.date === todayKey() ? "行前通知師傅房型與密碼" : "等待行前通知";
+  if (stage === "pre_notice") return "服務後補回款與紀錄";
+  if (stage === "completed") {
+    const record = appointmentRecord(appt) || {};
+    if (!String(appt.collectedPrice || "").trim()) return "補實際回款";
+    if (!String(record.notes || "").trim()) return "補服務紀錄";
+    return "已完成";
+  }
+  return "檢查預約資料";
 }
 
 function bookingStageRailHtml(currentStage = "confirmed") {
@@ -2601,7 +2619,7 @@ function renderAppointmentListPage(appts) {
       <td class="font-bold">${esc(therapistName(a.therapistId))}</td>
       <td>${roomBadge(a.room)}</td>
       <td>${esc(courseName(a.service))}</td>
-      <td><span class="badge ${bookingStageClass(a.bookingStage)}">${esc(bookingStageLabel(a.bookingStage))}</span></td>
+      <td><span class="badge ${bookingStageClass(a.bookingStage)}">${esc(bookingStageLabel(a.bookingStage))}</span><div class="mt-1 text-xs font-bold text-slate-500">${esc(bookingNextAction(a))}</div></td>
       <td class="max-w-[220px] truncate text-slate-600">${esc(a.notes || "無")}</td>
       <td class="text-right font-black text-rose-600">${money(a.price)}</td>
       <td class="text-right font-black text-teal-700">${money(Number(a.price || 0) - cut)}</td>
@@ -2624,7 +2642,7 @@ function renderAppointmentListPage(appts) {
       ${metric("已確認", visibleConfirmed.length, "text-teal-700")}
       ${metric("待回報", visibleAppts.filter((a) => String(a.isCompleted) !== "true").length, "text-indigo-700")}
     </div>
-    <div class="table-wrap mt-5"><table><thead><tr><th>預約時間</th><th>顧客</th><th>師傅</th><th>空間</th><th>服務</th><th>進度</th><th>備註</th><th class="text-right">金額</th><th class="text-right">店收</th><th class="text-right">操作</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="table-wrap mt-5"><table><thead><tr><th>預約時間</th><th>顧客</th><th>師傅</th><th>空間</th><th>服務</th><th>進度 / 下一步</th><th>備註</th><th class="text-right">金額</th><th class="text-right">店收</th><th class="text-right">操作</th></tr></thead><tbody>${rows}</tbody></table></div>
   </div>`;
 }
 
@@ -2639,7 +2657,7 @@ function renderAppointmentDetailForm(appt, allAppts) {
   return `<div class="grid gap-5 xl:grid-cols-[1fr_360px]">
     <form id="appointmentDetailForm" class="card p-5 appointment-detail-form">
       <div class="mb-5 flex flex-col justify-between gap-4 border-b pb-5 sm:flex-row sm:items-center">
-        <div><p class="text-xs font-black uppercase tracking-widest text-slate-500">預約資料</p><h3 class="text-xl font-black">${esc(customerDisplay(appt.phone, appt.customerName))}</h3><p class="text-xs font-bold text-slate-500">ID：${esc(appt.id)}</p></div>
+        <div><p class="text-xs font-black uppercase tracking-widest text-slate-500">預約資料</p><h3 class="text-xl font-black">${esc(customerDisplay(appt.phone, appt.customerName))}</h3><p class="mt-1 text-xs font-bold text-slate-500">ID：${esc(appt.id)}</p><p class="mt-2 inline-flex rounded-full bg-teal-50 px-3 py-1 text-xs font-black text-teal-700">下一步：${esc(bookingNextAction(appt))}</p></div>
         <div class="flex gap-2"><button id="backToAppointmentListBtn" type="button" class="btn-light">返回清單</button><button data-delete-appt="${esc(appt.id)}" type="button" class="rounded-xl bg-rose-50 px-4 py-2 font-black text-rose-700">刪除</button></div>
       </div>
       ${bookingStageRailHtml(appt.bookingStage || "confirmed")}
