@@ -665,6 +665,26 @@ function downloadJSON(payload, filename) {
   URL.revokeObjectURL(link.href);
 }
 
+async function copyText(value, successMessage = "已複製") {
+  const text = String(value || "");
+  if (!text) return false;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const helper = document.createElement("textarea");
+    helper.value = text;
+    helper.setAttribute("readonly", "");
+    helper.style.position = "fixed";
+    helper.style.left = "-9999px";
+    document.body.appendChild(helper);
+    helper.select();
+    document.execCommand("copy");
+    helper.remove();
+  }
+  showSnackbar(successMessage);
+  return true;
+}
+
 function downloadCurrentBackup() {
   const payload = {
     exportedAt: new Date().toISOString(),
@@ -1908,14 +1928,18 @@ function openClientSelectionLinkModal(date, time, service) {
   const candidates = availableTherapistCandidates({ date, time, service, duration: course.duration || 120, limit: Infinity });
   showModal(`<div class="modal max-w-3xl">
     <div class="mb-5 border-b pb-4">
-      <h3 class="text-xl font-black">建立客選頁面</h3>
-      <p class="mt-1 text-sm font-bold text-slate-500">${esc(date)} ${esc(time)} · ${esc(courseName(service))} · 先勾選要給客人看的師傅</p>
+      <h3 class="text-xl font-black">產生客選分享連結</h3>
+      <p class="mt-1 text-sm font-bold text-slate-500">${esc(date)} ${esc(time)} · ${esc(courseName(service))} · 勾選要讓客人看到的師傅</p>
     </div>
-    <div id="clientSelectionLinkBox" class="hidden rounded-xl border bg-slate-50 p-3">
-      <label class="label">分享連結</label>
+    <div id="clientSelectionLinkBox" class="hidden rounded-2xl border border-teal-200 bg-teal-50 p-4">
+      <div class="mb-3 flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+        <div><p class="text-sm font-black text-teal-900">連結已產生</p><p class="text-xs font-bold text-teal-700">下一步：複製給客人，等客人送出選擇後再到預約系統確認。</p></div>
+        <span id="clientSelectionLinkStatus" class="badge bg-white text-teal-700">可分享</span>
+      </div>
       <div class="flex flex-col gap-2 sm:flex-row">
         <input id="clientSelectionUrlInput" class="input bg-white text-sm" readonly value="">
-        <button id="copyClientSelectionUrlBtn" class="btn-teal shrink-0">複製</button>
+        <button id="copyClientSelectionUrlBtn" class="btn-teal shrink-0">複製連結</button>
+        <button id="previewClientSelectionUrlBtn" class="btn-light shrink-0">預覽</button>
       </div>
     </div>
     <div class="mt-5 flex flex-col justify-between gap-3 rounded-xl border bg-white p-4 sm:flex-row sm:items-center">
@@ -1945,7 +1969,7 @@ function openClientSelectionLinkModal(date, time, service) {
     <p id="clientSelectionPickError" class="mt-3 hidden text-sm font-black text-rose-600"></p>
     <div class="mt-5 flex flex-col-reverse justify-end gap-3 border-t pt-4 sm:flex-row">
       <button class="btn-light" data-close-modal>關閉</button>
-      <button id="buildClientSelectionUrlBtn" class="btn-teal" ${candidates.length ? "" : "disabled"}>產生客選頁面</button>
+      <button id="buildClientSelectionUrlBtn" class="btn-teal" ${candidates.length ? "" : "disabled"}>產生分享連結</button>
     </div>
   </div>`);
   const selectedIds = () => Array.from(document.querySelectorAll("[data-client-selection-candidate]:checked")).map((input) => input.value);
@@ -1975,32 +1999,33 @@ function openClientSelectionLinkModal(date, time, service) {
     const button = $("buildClientSelectionUrlBtn");
     button.disabled = true;
     button.dataset.originalText = button.textContent;
-    button.textContent = "建立中...";
+    button.textContent = "產生中...";
     try {
-      $("clientSelectionUrlInput").value = await createClientSelectionLink(date, time, service, picked);
+      const url = await createClientSelectionLink(date, time, service, picked);
+      $("clientSelectionUrlInput").value = url;
       $("clientSelectionLinkBox").classList.remove("hidden");
       $("clientSelectionUrlInput").select();
-      showSnackbar(`已建立 ${picked.length} 位師傅的客選頁面`);
+      $("clientSelectionLinkStatus").textContent = `已選 ${picked.length} 位`;
+      await copyText(url, "客選連結已產生並複製");
+      button.dataset.originalText = "重新產生連結";
     } catch (error) {
       console.error("Client selection link creation failed", error);
-      $("clientSelectionPickError").textContent = "客選頁面建立失敗，請確認雲端寫入權限後再試。";
+      $("clientSelectionPickError").textContent = "客選連結產生失敗，請重新選擇師傅後再試。";
       $("clientSelectionPickError").classList.remove("hidden");
     } finally {
       button.disabled = false;
-      button.textContent = button.dataset.originalText || "產生客選頁面";
+      button.textContent = button.dataset.originalText || "產生分享連結";
     }
   };
   $("copyClientSelectionUrlBtn").onclick = async () => {
     const input = $("clientSelectionUrlInput");
     if (!input.value) return;
     input.select();
-    try {
-      await navigator.clipboard.writeText(input.value);
-      showSnackbar("客選連結已複製");
-    } catch {
-      document.execCommand("copy");
-      showSnackbar("客選連結已複製");
-    }
+    await copyText(input.value, "客選連結已複製");
+  };
+  $("previewClientSelectionUrlBtn").onclick = () => {
+    const input = $("clientSelectionUrlInput");
+    if (input.value) window.open(input.value, "_blank", "noopener");
   };
   refreshPickedState();
 }
@@ -2368,14 +2393,8 @@ function renderAppointmentDetail() {
     const target = $(btn.dataset.copyNotice);
     if (!target) return;
     const label = btn.dataset.copyNotice === "customerNoticeText" ? "給顧客" : "給師傅";
-    try {
-      await navigator.clipboard.writeText(target.value);
-      showSnackbar(`${label}通知已複製`);
-    } catch {
-      target.select();
-      document.execCommand("copy");
-      showSnackbar(`${label}通知已複製`);
-    }
+    target.select();
+    await copyText(target.value, `${label}通知已複製`);
   });
   const backBtn = $("backToAppointmentListBtn");
   if (backBtn) backBtn.onclick = () => { activeAppointmentId = null; renderAppointmentDetail(); };
