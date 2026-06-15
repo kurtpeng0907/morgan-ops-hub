@@ -668,11 +668,6 @@
                 records: []
             };
             await postToDatabase({ action: 'saveCustomer', data: { phone: approvalKey(id), ...globalDB.customers[approvalKey(id)] } });
-            try {
-                await fetchDatabase();
-            } catch (e) {
-                console.warn("審核已送出，但即時重新同步失敗，保留本機送審狀態。");
-            }
             renderApprovalStatusBlocks();
             return request;
         }
@@ -788,7 +783,7 @@
                     const nextPin = cleanPin(data.newPin);
                     globalDB.therapists[currentUserId] = { ...profile, pin: nextPin };
                     await postToDatabase({ action: 'addTherapist', data: { ...globalDB.therapists[currentUserId], id: currentUserId, pin: sheetText(nextPin) } });
-                    await fetchDatabase();
+                    profile.pin = nextPin;
                     event.currentTarget.reset();
                     showSnackbar("✅ 密碼已更新，下次請用新 PIN 登入。", "success");
                 } catch(e) {
@@ -1447,13 +1442,6 @@
 
                 globalDB.customers[currentReportingPhone] = cust;
                 globalDB.appointments[currentReportingApptId] = appt;
-
-                await fetchDatabase();
-                
-                if (globalDB.appointments[currentReportingApptId]) {
-                    globalDB.appointments[currentReportingApptId].collectedPrice = collectedPrice;
-                    globalDB.appointments[currentReportingApptId].isCompleted = isCompleted;
-                }
 
                 renderMyAppointments(); 
                 closeTherapistRecordModal();

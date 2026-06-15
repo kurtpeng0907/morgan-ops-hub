@@ -208,6 +208,7 @@ function therapistDisplayMeta(therapist = {}) {
 }
 
 let syncMeta = loadSyncMeta();
+let loadedLocalDbFromStorage = false;
 let db = seedDatabase();
 
 function customerCode(phone = "") {
@@ -235,7 +236,10 @@ function seedDatabase() {
   };
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-    if (syncMeta.pending && saved?.therapists && saved?.appointments) return normalizeDb(saved);
+    if (saved?.therapists && saved?.appointments) {
+      loadedLocalDbFromStorage = true;
+      return normalizeDb(saved);
+    }
   } catch {}
   return normalizeDb(base);
 }
@@ -431,8 +435,15 @@ async function tryCloudSync(options = {}) {
     const res = await fetch(`${API_URL}?t=${Date.now()}`, { signal: controller.signal, cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const cloudDb = normalizeDb(await res.json());
+    const localDb = normalizeDb(JSON.parse(JSON.stringify(db)));
     if (syncMeta.pending && !force) {
       $("sysStatus").textContent = "雲端已連線；此裝置有未同步資料，暫保留本機版本";
+      return false;
+    }
+    if (!force && loadedLocalDbFromStorage && canonicalJson(localDb) !== canonicalJson(cloudDb)) {
+      markSyncPending(true, "local-cloud-differ");
+      persist("本機與雲端不同，保留本機版本");
+      $("sysStatus").textContent = "雲端已連線；本機資料與雲端不同，暫保留本機版本";
       return false;
     }
     backupLocalDb(force ? "before-force-cloud-sync" : "before-cloud-authoritative-sync");
@@ -465,7 +476,6 @@ async function postCloud(action, data) {
     });
     const accepted = res.ok || res.type === "opaque" || res.status === 302 || res.type === "opaqueredirect" || (res.status >= 200 && res.status < 400);
     if (!accepted) throw new Error(`HTTP ${res.status}`);
-    if (!hadFailedWrite) markSyncPending(false);
     return true;
   } catch {
     markSyncPending(true, "last-write-failed");
@@ -485,7 +495,11 @@ async function saveCloudActions(actions, successMessage = "已儲存到雲端", 
     results.push(await postCloud(item.action, item.data));
   }
   const ok = results.every(Boolean);
-  if (ok && options.verify !== false) {
+  if (ok) {
+    markSyncPending(true, "awaiting-cloud-confirmation");
+    persist(successMessage);
+  }
+  if (ok && options.verify === true) {
     const verified = await tryCloudSync({ force: true });
     if (!verified) {
       markSyncPending(true, "verify-after-write-failed");
@@ -500,7 +514,7 @@ async function saveCloudActions(actions, successMessage = "已儲存到雲端", 
     showSnackbar(successMessage);
     return true;
   }
-  showSnackbar(ok ? successMessage : "已保存在此裝置；雲端寫入失敗時，重新開啟會保留本機版本");
+  showSnackbar(ok ? `${successMessage}，本機已保留最新資料` : "已保存在此裝置；雲端寫入失敗時，重新開啟會保留本機版本");
   return ok;
 }
 
@@ -726,12 +740,20 @@ function readLocalSystemNote() {
   }
 }
 
-function writeLocalSystemNote(store) {
+function latestSystemNoteTime(store = {}) {
+  if (!store) return 0;
+  const localSavedAt = store.savedAt || "";
+  const recordTimes = Array.isArray(store.records) ? store.records.map((item) => item?.at || "").filter(Boolean) : [];
+  const latestRecordAt = recordTimes.sort().at(-1) || "";
+  return Math.max(Date.parse(localSavedAt) || 0, Date.parse(latestRecordAt) || 0);
+}
+
+function writeLocalSystemNote(store, savedAt = new Date().toISOString()) {
   try {
     localStorage.setItem(SYSTEM_NOTE_LOCAL_KEY, JSON.stringify({
       notes: String(store?.notes || ""),
       records: store?.records || [],
-      savedAt: new Date().toISOString()
+      savedAt
     }));
   } catch {}
 }
@@ -740,9 +762,13 @@ function systemNoteStore() {
   db.customers[SYSTEM_NOTE_KEY] ||= { name: "系統備忘", notes: "", records: [] };
   db.customers[SYSTEM_NOTE_KEY].records ||= [];
   const localNote = readLocalSystemNote();
-  if (localNote && !String(db.customers[SYSTEM_NOTE_KEY].notes || "").trim()) {
+  const cloudNote = db.customers[SYSTEM_NOTE_KEY];
+  const localIsNewer = latestSystemNoteTime(localNote) > latestSystemNoteTime(cloudNote);
+  const cloudIsEmpty = !String(cloudNote.notes || "").trim();
+  if (localNote && (localIsNewer || cloudIsEmpty)) {
     db.customers[SYSTEM_NOTE_KEY].notes = String(localNote.notes || "");
-    db.customers[SYSTEM_NOTE_KEY].records = localNote.records || db.customers[SYSTEM_NOTE_KEY].records;
+    db.customers[SYSTEM_NOTE_KEY].records = localNote.records || cloudNote.records;
+    db.customers[SYSTEM_NOTE_KEY].savedAt = localNote.savedAt || "";
   }
   return db.customers[SYSTEM_NOTE_KEY];
 }
@@ -752,16 +778,18 @@ async function saveSystemNote() {
   if (!textarea) return;
   const note = textarea.value.trim();
   const store = systemNoteStore();
+  const savedAt = new Date().toISOString();
   store.notes = note;
+  store.savedAt = savedAt;
   store.records.push({
     id: `SYSNOTE-${Date.now().toString(36).toUpperCase()}`,
-    at: new Date().toISOString(),
+    at: savedAt,
     adminId: currentUser?.id || "",
     adminName: currentUser?.name || "",
     length: note.length
   });
   store.records = store.records.slice(-40);
-  writeLocalSystemNote(store);
+  writeLocalSystemNote(store, savedAt);
   await saveCloudActions([{ action: "saveCustomer", data: { phone: SYSTEM_NOTE_KEY, ...store } }], "系統 Note 已儲存", { verify: false });
   renderSystem();
 }
@@ -867,6 +895,20 @@ async function fetchCloudDbSnapshot() {
   }
 }
 
+async function confirmPendingCloudSync() {
+  const localDb = normalizeDb(JSON.parse(JSON.stringify(db)));
+  const cloudDb = await fetchCloudDbSnapshot();
+  if (canonicalJson(localDb) === canonicalJson(cloudDb)) {
+    db = cloudDb;
+    persist("雲端同步已確認");
+    markSyncPending(false);
+    return true;
+  }
+  persist("保留本機最新資料");
+  markSyncPending(true, "cloud-not-caught-up");
+  return false;
+}
+
 async function uploadLocalDbToCloud() {
   const button = $("systemUploadLocalBtn");
   if (button) {
@@ -897,11 +939,8 @@ async function uploadLocalDbToCloud() {
       }
     });
     if (ok) {
-      markSyncPending(false);
-      syncMeta.reason = "";
-      saveSyncMeta();
+      markSyncPending(true, "awaiting-cloud-confirmation");
       persist("本機資料已上傳雲端");
-      await tryCloudSync();
       renderAll();
     }
   } finally {
@@ -1595,8 +1634,23 @@ async function refreshDashboardData() {
     button.dataset.originalText = button.textContent;
     button.textContent = "更新中...";
   }
+  if (syncMeta.pending) {
+    showSnackbar("正在確認雲端是否已同步...");
+    try {
+      const confirmed = await confirmPendingCloudSync();
+      renderAll();
+      showSnackbar(confirmed ? "雲端已同步，資料已更新" : "雲端尚未追上，已保留本機最新版");
+    } catch {
+      showSnackbar("雲端暫時無法確認，已保留本機最新版");
+    }
+    if (button) {
+      button.disabled = false;
+      button.textContent = button.dataset.originalText || "更新資料";
+    }
+    return;
+  }
   showSnackbar("正在更新雲端資料...");
-  await tryCloudSync({ force: true });
+  await tryCloudSync();
   renderAll();
   showSnackbar(syncMeta.pending ? "此裝置有未同步資料，已保留本機版本" : "資料已更新");
   if (button) {
