@@ -119,6 +119,7 @@ const APPOINTMENT_META_PREFIX = "SYS_APPT_META_";
 const ADMIN_LOGIN_LOG_KEY = "SYS_ADMIN_LOGIN_LOG";
 const FRONTDESK_LOGIN_LOG_KEY = "SYS_FRONTDESK_LOGIN_LOG";
 const SYSTEM_NOTE_KEY = "SYS_SYSTEM_NOTE";
+const SYSTEM_NOTE_LOCAL_KEY = `${STORAGE_KEY}-system-note`;
 const approvalKey = (id) => `${APPROVAL_PREFIX}${id}`;
 const clientSelectionKey = (id) => `${CLIENT_SELECTION_PREFIX}${id}`;
 const appointmentMetaKey = (id) => `${APPOINTMENT_META_PREFIX}${id}`;
@@ -717,9 +718,32 @@ function frontdeskLoginRecords(limit = 80) {
     .slice(0, limit);
 }
 
+function readLocalSystemNote() {
+  try {
+    return JSON.parse(localStorage.getItem(SYSTEM_NOTE_LOCAL_KEY) || "null") || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalSystemNote(store) {
+  try {
+    localStorage.setItem(SYSTEM_NOTE_LOCAL_KEY, JSON.stringify({
+      notes: String(store?.notes || ""),
+      records: store?.records || [],
+      savedAt: new Date().toISOString()
+    }));
+  } catch {}
+}
+
 function systemNoteStore() {
   db.customers[SYSTEM_NOTE_KEY] ||= { name: "系統備忘", notes: "", records: [] };
   db.customers[SYSTEM_NOTE_KEY].records ||= [];
+  const localNote = readLocalSystemNote();
+  if (localNote && !String(db.customers[SYSTEM_NOTE_KEY].notes || "").trim()) {
+    db.customers[SYSTEM_NOTE_KEY].notes = String(localNote.notes || "");
+    db.customers[SYSTEM_NOTE_KEY].records = localNote.records || db.customers[SYSTEM_NOTE_KEY].records;
+  }
   return db.customers[SYSTEM_NOTE_KEY];
 }
 
@@ -737,7 +761,8 @@ async function saveSystemNote() {
     length: note.length
   });
   store.records = store.records.slice(-40);
-  await saveCloudActions([{ action: "saveCustomer", data: { phone: SYSTEM_NOTE_KEY, ...store } }], "系統 Note 已儲存");
+  writeLocalSystemNote(store);
+  await saveCloudActions([{ action: "saveCustomer", data: { phone: SYSTEM_NOTE_KEY, ...store } }], "系統 Note 已儲存", { verify: false });
   renderSystem();
 }
 
