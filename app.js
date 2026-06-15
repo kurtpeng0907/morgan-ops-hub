@@ -1205,38 +1205,7 @@ function clientSelectionUrl({ selectionId = "", date, time, service, therapistId
 }
 
 async function createClientSelectionLink(date, time, service, therapistIds = []) {
-  const id = `CSL-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-  const storageKey = clientSelectionKey(id);
-  const selection = {
-    id,
-    status: "link",
-    source: "staff-generated-link",
-    date,
-    time,
-    service,
-    duration: COURSE_CATALOG[service]?.duration || 120,
-    therapistIds,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  };
-  db.clientSelections[id] = selection;
-  db.customers[storageKey] = {
-    name: `客選連結-${date}-${time}`,
-    notes: JSON.stringify(selection),
-    records: []
-  };
-  const ok = await saveCloudActions(
-    [{ action: "saveCustomer", data: { phone: storageKey, ...db.customers[storageKey] } }],
-    "客選頁面已建立",
-    {
-      verify: false
-    }
-  );
-  if (!ok) {
-    const stillThere = Boolean(db.clientSelections?.[id] || db.customers?.[storageKey]);
-    if (!stillThere) throw new Error("client selection link write failed");
-  }
-  return clientSelectionUrl({ selectionId: id });
+  return clientSelectionUrl({ date, time, service, therapistIds });
 }
 
 function parseLineTrialMessage(text = "") {
