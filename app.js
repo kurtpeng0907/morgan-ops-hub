@@ -166,6 +166,7 @@ function appointmentMetaFromAppointment(appt = {}) {
     remittanceDue: cleanPin(appt.remittanceDue || ""),
     remittancePaid: appt.remittancePaid === true || String(appt.remittancePaid) === "true",
     remittanceMethod: String(appt.remittanceMethod || "").trim(),
+    selectionId: String(appt.selectionId || "").trim(),
     updatedAt: new Date().toISOString()
   };
 }
@@ -319,7 +320,8 @@ function normalizeDb(data) {
       collectedPrice: meta.collectedPrice || appt.collectedPrice,
       remittanceDue: meta.remittanceDue || appt.remittanceDue,
       remittancePaid: meta.remittancePaid ?? appt.remittancePaid,
-      remittanceMethod: meta.remittanceMethod || appt.remittanceMethod
+      remittanceMethod: meta.remittanceMethod || appt.remittanceMethod,
+      selectionId: meta.selectionId || appt.selectionId
     });
     appt.id = appt.id || id;
     appt.date = normalizeDateField(appt.date);
@@ -1192,9 +1194,13 @@ function availableTherapistCandidates({ date, time, service = "", duration = 120
   return Number.isFinite(limit) ? results.slice(0, limit) : results;
 }
 
+function isOpenClientSelection(item = {}) {
+  return !item.appointmentId && !Object.values(db.appointments || {}).some((appt) => appt.selectionId === item.id);
+}
+
 function clientSelectionList(status = "") {
   return Object.values(db.clientSelections || {})
-    .filter((item) => !status || item.status === status)
+    .filter((item) => !status || (item.status === status && isOpenClientSelection(item)))
     .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
 }
 
@@ -2180,6 +2186,7 @@ async function saveAppointmentFromForm(form, date) {
   data.bookingStage = normalizeBookingStage(data.bookingStage || db.appointments[data.id]?.bookingStage || "confirmed", db.appointments[data.id] || {});
   data.isCompleted = data.bookingStage === "completed";
   data.collectedPrice = db.appointments[data.id]?.collectedPrice || "";
+  data.selectionId = pendingClientSelectionId || db.appointments[data.id]?.selectionId || "";
   data.customerName = String(data.customerName || "").trim();
   data.phone = String(data.phone || "").trim();
   if (!data.time || !data.phone) {
@@ -2298,7 +2305,8 @@ async function quickConfirmClientSelection(selectionId) {
     notes: String(selection.customerNote || "").trim(),
     bookingStage: "confirmed",
     isCompleted: false,
-    collectedPrice: ""
+    collectedPrice: "",
+    selectionId: selection.id
   };
   if (!data.phone) {
     showSnackbar("客選缺少聯絡方式，請用編輯建立補資料");
@@ -2327,7 +2335,7 @@ async function quickConfirmClientSelection(selectionId) {
       { action: "saveCustomer", data: { phone: clientSelectionKey(nextSelection.id), ...db.customers[clientSelectionKey(nextSelection.id)] } },
       metaAction
     ].filter(Boolean), "已快速建立確認預約");
-    activeAppointmentId = id;
+    activeAppointmentId = null;
     switchTab("dispatch");
   };
   if (conflict) confirmAction("仍要快速確認？", conflict, commit, "確認建立");
