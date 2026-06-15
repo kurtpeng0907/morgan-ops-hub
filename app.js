@@ -1229,7 +1229,7 @@ async function createClientSelectionLink(date, time, service, therapistIds = [])
     [{ action: "saveCustomer", data: { phone: storageKey, ...db.customers[storageKey] } }],
     "客選頁面已建立",
     {
-      verifyCloud: (cloudDb) => Boolean(cloudDb.clientSelections?.[id] || cloudDb.customers?.[storageKey])
+      verify: false
     }
   );
   if (!ok) {
