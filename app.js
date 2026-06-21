@@ -446,8 +446,8 @@ function effectiveSyncMeta() {
   return {
     pending: Boolean(syncMeta.pending),
     source: syncMeta.source || "local",
-    lastSync: String(syncMeta.lastSync || ""),
-    reason: String(syncMeta.reason || ""),
+    lastSync: "",
+    reason: syncMeta.pending ? String(syncMeta.reason || "") : "",
     updatedAt: String(syncMeta.updatedAt || ""),
     device: String(syncMeta.device || ""),
     path: String(syncMeta.path || "")
@@ -1008,7 +1008,7 @@ async function openSyncDiagnosticsModal() {
       <div class="grid gap-4 md:grid-cols-2">
         <div class="rounded-xl border bg-white p-4">
           <p class="text-xs font-black text-slate-500">此裝置狀態</p>
-          <p class="mt-2 text-xl font-black ${meta.pending ? "text-amber-700" : "text-teal-700"}">${meta.pending ? "資料還在同步" : "資料已更新"}</p>
+          <p class="mt-2 text-xl font-black ${meta.pending ? "text-amber-700" : "text-teal-700"}">${meta.pending ? "還沒同步" : "已同步"}</p>
           <p class="mt-1 text-xs font-bold text-slate-500">${esc(meta.reason || "目前正常")} · ${esc(meta.lastSync ? backupLabelTime(meta.lastSync) : "還沒有")}</p>
         </div>
         <div class="rounded-xl border bg-white p-4">
@@ -1666,7 +1666,7 @@ function focusDispatchTarget() {
 
 function syncStatusText() {
   const meta = effectiveSyncMeta();
-  if (meta.pending) return "資料還在同步";
+  if (meta.pending) return "還沒同步";
   if (!meta.lastSync) return "還沒更新過";
   const date = new Date(meta.lastSync);
   if (Number.isNaN(date.getTime())) return "還沒更新過";
@@ -3719,10 +3719,10 @@ function renderSystem() {
           ${metric("班表人員", stats.schedules, "text-amber-700")}
         </div>
         <div class="mt-5 grid gap-4 lg:grid-cols-2">
-          <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">資料狀態</p><p class="mt-2 text-lg font-black ${meta.pending ? "text-amber-700" : "text-teal-700"}">${meta.pending ? "還在更新" : "已更新"}</p></div>
+          <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">資料狀態</p><p class="mt-2 text-lg font-black ${meta.pending ? "text-amber-700" : "text-teal-700"}">${meta.pending ? "還沒同步" : "已同步"}</p></div>
           <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">上次更新</p><p class="mt-2 text-sm font-black text-slate-700">${esc(meta.lastSync ? backupLabelTime(meta.lastSync) : "還沒有")}</p></div>
         </div>
-        <p class="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">如果資料看起來沒變，先按一次「重新整理資料」。</p>
+        <p class="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">如果資料沒變，先按一次「重新整理資料」。</p>
       </div>
       <div class="card p-5">
         <div class="mb-4 border-b pb-4">
