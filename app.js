@@ -504,7 +504,7 @@ async function tryCloudSync(options = {}) {
     $("sysStatus").textContent = "已連線雲端資料";
     return true;
   } catch {
-    $("sysStatus").textContent = "雲端未連線，暫停更新";
+    $("sysStatus").textContent = "目前連線不穩，先暫停更新";
     return false;
   } finally {
     clearTimeout(timeout);
@@ -555,7 +555,7 @@ async function saveCloudActions(actions, successMessage = "已儲存到雲端", 
     return false;
   }
   if (typeof options.verifyCloud === "function" && !options.verifyCloud(db)) {
-    showSnackbar("雲端已回讀，但內容尚未符合預期；請再按一次更新資料");
+    showSnackbar("資料已送出，但內容還沒完全對上，請再按一次更新資料");
     return false;
   }
   markSyncPending(false);
@@ -978,7 +978,7 @@ async function uploadLocalDbToCloud() {
     const ok = await saveCloudActions(actions, "雲端資料已更新", {
       onProgress(done, total) {
         if (button) button.textContent = `同步 ${done}/${total}`;
-        if (done === 1 || done === total || done % 10 === 0) showSnackbar(`正在同步雲端資料 ${done}/${total}`);
+        if (done === 1 || done === total || done % 10 === 0) showSnackbar(`正在更新資料 ${done}/${total}`);
       }
     });
     if (ok) {
@@ -990,7 +990,7 @@ async function uploadLocalDbToCloud() {
   } finally {
     if (button) {
       button.disabled = false;
-      button.textContent = button.dataset.originalText || "同步雲端資料";
+      button.textContent = button.dataset.originalText || "更新資料";
     }
   }
 }
@@ -1008,11 +1008,11 @@ async function openSyncDiagnosticsModal() {
       <div class="grid gap-4 md:grid-cols-2">
         <div class="rounded-xl border bg-white p-4">
           <p class="text-xs font-black text-slate-500">此裝置狀態</p>
-          <p class="mt-2 text-xl font-black ${meta.pending ? "text-amber-700" : "text-teal-700"}">${meta.pending ? "雲端同步待確認" : "雲端正式資料"}</p>
-          <p class="mt-1 text-xs font-bold text-slate-500">${esc(meta.reason || "無異常")} · ${esc(meta.lastSync ? backupLabelTime(meta.lastSync) : "尚未記錄同步時間")}</p>
+          <p class="mt-2 text-xl font-black ${meta.pending ? "text-amber-700" : "text-teal-700"}">${meta.pending ? "資料還在同步" : "資料已更新"}</p>
+          <p class="mt-1 text-xs font-bold text-slate-500">${esc(meta.reason || "目前正常")} · ${esc(meta.lastSync ? backupLabelTime(meta.lastSync) : "還沒有")}</p>
         </div>
         <div class="rounded-xl border bg-white p-4">
-          <p class="text-xs font-black text-slate-500">雲端連線</p>
+          <p class="text-xs font-black text-slate-500">連線狀態</p>
           <p class="mt-2 text-xl font-black text-teal-700">可讀取</p>
           <p class="mt-1 text-xs font-bold text-slate-500">Google Apps Script 已回傳資料</p>
         </div>
@@ -1666,10 +1666,10 @@ function focusDispatchTarget() {
 
 function syncStatusText() {
   const meta = effectiveSyncMeta();
-  if (meta.pending) return "雲端同步待確認";
-  if (!meta.lastSync) return "尚未更新";
+  if (meta.pending) return "資料還在同步";
+  if (!meta.lastSync) return "還沒更新過";
   const date = new Date(meta.lastSync);
-  if (Number.isNaN(date.getTime())) return "尚未更新";
+  if (Number.isNaN(date.getTime())) return "還沒更新過";
   return `已更新 ${date.toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
 }
 
@@ -1685,9 +1685,9 @@ async function refreshDashboardData() {
     const synced = await tryCloudSync({ force: true });
     if (synced) await writeCloudSyncMeta("重新同步資料");
     renderAll();
-    showSnackbar("雲端資料已更新");
+    showSnackbar("資料已更新");
   } catch {
-    showSnackbar("雲端暫時無法確認，請稍後再試");
+    showSnackbar("現在暫時讀不到雲端，請稍後再試");
   }
   if (button) {
     button.disabled = false;
@@ -3675,14 +3675,14 @@ function renderSystem() {
   const primaryActionCards = [
     {
       id: "systemRefreshDataBtn",
-      title: "重新同步資料",
-      desc: "從雲端重新讀取最新資料。",
+      title: "重新整理資料",
+      desc: "再抓一次最新資料。",
       tone: "light"
     },
     {
       id: "systemUploadLocalBtn",
-      title: "同步雲端資料",
-      desc: "將目前畫面資料重新寫入雲端並立刻回讀確認。",
+      title: "更新到雲端",
+      desc: "把目前資料寫回雲端。",
       tone: "teal"
     },
     {
@@ -3707,9 +3707,9 @@ function renderSystem() {
       <div class="card p-5">
         <div class="mb-5 flex flex-col justify-between gap-4 border-b pb-5 lg:flex-row lg:items-start">
           <div>
-            <span class="badge bg-slate-100 text-slate-700">系統維護</span>
+            <span class="badge bg-slate-100 text-slate-700">系統</span>
             <h3 class="mt-2 text-2xl font-black">系統工具</h3>
-            <p class="mt-1 text-sm font-bold text-slate-500">先處理同步，再看備份、修改紀錄與系統備忘。</p>
+            <p class="mt-1 text-sm font-bold text-slate-500">先更新資料，再看備份、紀錄和備忘。</p>
           </div>
         </div>
         <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
@@ -3719,10 +3719,10 @@ function renderSystem() {
           ${metric("班表人員", stats.schedules, "text-amber-700")}
         </div>
         <div class="mt-5 grid gap-4 lg:grid-cols-2">
-          <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">同步狀態</p><p class="mt-2 text-lg font-black ${meta.pending ? "text-amber-700" : "text-teal-700"}">${meta.pending ? "同步待確認" : "雲端同步"}</p></div>
-          <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">最後同步</p><p class="mt-2 text-sm font-black text-slate-700">${esc(meta.lastSync ? backupLabelTime(meta.lastSync) : "尚未更新")}</p></div>
+          <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">資料狀態</p><p class="mt-2 text-lg font-black ${meta.pending ? "text-amber-700" : "text-teal-700"}">${meta.pending ? "還在更新" : "已更新"}</p></div>
+          <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">上次更新</p><p class="mt-2 text-sm font-black text-slate-700">${esc(meta.lastSync ? backupLabelTime(meta.lastSync) : "還沒有")}</p></div>
         </div>
-        <p class="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">若資料看起來沒更新，先按一次「重新同步資料」。</p>
+        <p class="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">如果資料看起來沒變，先按一次「重新整理資料」。</p>
       </div>
       <div class="card p-5">
         <div class="mb-4 border-b pb-4">
@@ -3775,7 +3775,7 @@ function renderSystem() {
     </div>`;
 
   $("systemRefreshDataBtn").onclick = refreshDashboardData;
-  $("systemUploadLocalBtn").onclick = () => confirmAction("同步雲端資料", "會以目前畫面資料重新寫入雲端，並立刻回讀確認。", uploadLocalDbToCloud);
+  $("systemUploadLocalBtn").onclick = () => confirmAction("更新到雲端", "會把目前資料寫回雲端。", uploadLocalDbToCloud);
   $("systemOpenHistoryBtn").onclick = openChangeHistoryModal;
   $("systemOpenHistoryBtn2").onclick = openChangeHistoryModal;
   $("systemDownloadBackupBtn").onclick = downloadCurrentBackup;
@@ -3934,7 +3934,7 @@ async function handleLogin() {
   if (!finishLogin() && effectiveSyncMeta().pending) {
     $("loginBtnText").textContent = "重抓雲端...";
     await tryCloudSync({ force: true });
-    if (finishLogin()) showSnackbar("已改用雲端正式資料登入");
+    if (finishLogin()) showSnackbar("已改用最新資料登入");
   }
   if (!currentUser) {
     err.textContent = "帳號或密碼錯誤。";
