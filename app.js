@@ -3629,12 +3629,6 @@ function renderSystem() {
       title: "修改紀錄 / 復原",
       desc: "查看快照、下載或復原資料。",
       tone: "light"
-    },
-    {
-      id: "systemDiagnosticsBtn",
-      title: "同步診斷",
-      desc: "比對目前與雲端資料量。",
-      tone: "light"
     }
   ].map((item) => `<button id="${item.id}" class="${item.tone === "teal" ? "border-teal-200 bg-teal-50 text-teal-800 hover:bg-teal-100" : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"} rounded-xl border p-4 text-left transition">
     <span class="block text-sm font-black">${item.title}</span>
@@ -3647,8 +3641,8 @@ function renderSystem() {
         <div class="mb-5 flex flex-col justify-between gap-4 border-b pb-5 lg:flex-row lg:items-start">
           <div>
             <span class="badge bg-slate-100 text-slate-700">系統維護</span>
-            <h3 class="mt-2 text-2xl font-black">資料與同步</h3>
-            <p class="mt-1 text-sm font-bold text-slate-500">先看同步狀態，再處理備份、修改紀錄與系統備忘。</p>
+            <h3 class="mt-2 text-2xl font-black">系統工具</h3>
+            <p class="mt-1 text-sm font-bold text-slate-500">先處理同步，再看備份、修改紀錄與系統備忘。</p>
           </div>
         </div>
         <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
@@ -3657,12 +3651,11 @@ function renderSystem() {
           ${metric("顧客", stats.customers, "text-indigo-700")}
           ${metric("班表人員", stats.schedules, "text-amber-700")}
         </div>
-        <div class="mt-5 grid gap-4 lg:grid-cols-3">
+        <div class="mt-5 grid gap-4 lg:grid-cols-2">
           <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">同步狀態</p><p class="mt-2 text-lg font-black ${syncMeta.pending ? "text-amber-700" : "text-teal-700"}">${syncMeta.pending ? "同步待確認" : "雲端同步"}</p></div>
           <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">最後同步</p><p class="mt-2 text-sm font-black text-slate-700">${esc(syncMeta.lastSync ? backupLabelTime(syncMeta.lastSync) : "尚未更新")}</p></div>
-          <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">資料來源</p><p class="mt-2 text-sm font-black text-slate-700">${esc(syncMeta.source || "local")}${syncMeta.reason ? ` · ${esc(syncMeta.reason)}` : ""}</p></div>
         </div>
-        <p class="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">若你發現資料未同步，請按「同步雲端資料」重新寫入並回讀確認。</p>
+        <p class="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">若資料看起來沒更新，先按一次「重新同步資料」。</p>
       </div>
       <div class="card p-5">
         <div class="mb-4 border-b pb-4">
@@ -3712,12 +3705,9 @@ function renderSystem() {
     </div>
     <div class="grid gap-5 xl:grid-cols-2">
       ${collapsibleCardHtml({ title: "大門密碼紀錄", desc: `目前密碼：${esc(db.customers.SYS_DOOR_PWD?.notes || "未設定")}。`, open: false, body: `<div class="table-wrap"><table><thead><tr><th>時間</th><th>密碼</th><th>來源</th></tr></thead><tbody>${doorTableRows}</tbody></table></div>` })}
-      ${collapsibleCardHtml({ title: "資料模型摘要", desc: "用來排查雲端資料結構與同步狀態。", open: false, body: modelSummaryHtml(db) })}
-    </div>
-    ${collapsibleCardHtml({ title: "營運規則檢視", desc: "目前先集中顯示課程、金額與抽成；下一階段可改成可編輯設定。", open: false, body: `<div class="table-wrap"><table><thead><tr><th>代碼</th><th>課程</th><th class="text-right">時長</th><th class="text-right">金額</th><th class="text-right">師傅抽成</th><th class="text-right">店家應收</th></tr></thead><tbody>${courseRows}</tbody></table></div>` })}`;
+    </div>`;
 
   $("systemRefreshDataBtn").onclick = refreshDashboardData;
-  $("systemDiagnosticsBtn").onclick = openSyncDiagnosticsModal;
   $("systemUploadLocalBtn").onclick = () => confirmAction("同步雲端資料", "會以目前畫面資料重新寫入雲端，並立刻回讀確認。", uploadLocalDbToCloud);
   $("systemOpenHistoryBtn").onclick = openChangeHistoryModal;
   $("systemOpenHistoryBtn2").onclick = openChangeHistoryModal;
