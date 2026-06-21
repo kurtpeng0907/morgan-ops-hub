@@ -423,6 +423,16 @@
             return normalized;
         };
         const therapistName = (id) => globalDB.therapists[id]?.nickname || globalDB.therapists[id]?.name || id || "未知";
+        const therapistWritePayload = (id, therapist = {}) => {
+            const displayName = String(therapist.nickname || therapist.name || id || "").trim();
+            return {
+                ...therapist,
+                id,
+                nickname: displayName,
+                name: displayName,
+                pin: sheetText(therapist.pin || "")
+            };
+        };
         const esc = (value = "") => String(value ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
         const compactStats = (therapist = {}) => [
             therapist.age ? `${therapist.age}歲` : "",
@@ -782,7 +792,7 @@
                 try {
                     const nextPin = cleanPin(data.newPin);
                     globalDB.therapists[currentUserId] = { ...profile, pin: nextPin };
-                    await postToDatabase({ action: 'addTherapist', data: { ...globalDB.therapists[currentUserId], id: currentUserId, pin: sheetText(nextPin) } });
+                    await postToDatabase({ action: 'addTherapist', data: therapistWritePayload(currentUserId, { ...globalDB.therapists[currentUserId], pin: nextPin }) });
                     profile.pin = nextPin;
                     event.currentTarget.reset();
                     showSnackbar("✅ 密碼已更新，下次請用新 PIN 登入。", "success");
@@ -921,6 +931,9 @@
                 const end = `${monthStr}/${week[week.length-1].dayDisplay}`;
                 sel.innerHTML += `<option value="${idx}">第 ${idx+1} 週 （${start} - ${end}）</option>`;
             });
+            const todayKey = new Date().toISOString().split('T')[0];
+            const currentWeekIdx = monthWeeksList.findIndex((week) => week.some((d) => d.key === todayKey));
+            sel.value = currentWeekIdx >= 0 ? String(currentWeekIdx) : '0';
         };
 
         window.renderEditInputs = function() {

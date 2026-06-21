@@ -58,6 +58,16 @@ const todayKey = () => toDateKey(new Date());
 const money = (n) => `$${(Number(n) || 0).toLocaleString()}`;
 const courseName = (code) => COURSE_CATALOG[code]?.name || code || "自訂服務";
 const therapistName = (id) => db.therapists[id]?.nickname || db.therapists[id]?.name || "未知";
+const therapistWritePayload = (id, therapist = {}) => {
+  const displayName = String(therapist.nickname || therapist.name || id || "").trim();
+  return {
+    ...therapist,
+    id,
+    nickname: displayName,
+    name: displayName,
+    pin: sheetText(therapist.pin || "")
+  };
+};
 const isSystemCustomerKey = (key = "") => String(key).startsWith("SYS_");
 const cleanPin = (value = "") => String(value ?? "").replace(/^'/, "").trim();
 const sheetText = (value = "") => {
@@ -234,13 +244,6 @@ function seedDatabase() {
     appointments: {},
     customers: { SYS_DOOR_PWD: { name: "設定", notes: "", records: [] } }
   };
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-    if (saved?.therapists && saved?.appointments) {
-      loadedLocalDbFromStorage = true;
-      return normalizeDb(saved);
-    }
-  } catch {}
   return normalizeDb(base);
 }
 
@@ -435,17 +438,6 @@ async function tryCloudSync(options = {}) {
     const res = await fetch(`${API_URL}?t=${Date.now()}`, { signal: controller.signal, cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const cloudDb = normalizeDb(await res.json());
-    const localDb = normalizeDb(JSON.parse(JSON.stringify(db)));
-    if (syncMeta.pending && !force) {
-      $("sysStatus").textContent = "雲端已連線；此裝置有未同步資料，暫保留本機版本";
-      return false;
-    }
-    if (!force && loadedLocalDbFromStorage && canonicalJson(localDb) !== canonicalJson(cloudDb)) {
-      markSyncPending(true, "local-cloud-differ");
-      persist("本機與雲端不同，保留本機版本");
-      $("sysStatus").textContent = "雲端已連線；本機資料與雲端不同，暫保留本機版本";
-      return false;
-    }
     backupLocalDb(force ? "before-force-cloud-sync" : "before-cloud-authoritative-sync");
     db = cloudDb;
     persist();
@@ -453,7 +445,7 @@ async function tryCloudSync(options = {}) {
     $("sysStatus").textContent = "已連線雲端資料";
     return true;
   } catch {
-    $("sysStatus").textContent = "雲端未連線，使用本機測試資料";
+    $("sysStatus").textContent = "雲端未連線，暫停更新";
     return false;
   } finally {
     clearTimeout(timeout);
@@ -462,8 +454,6 @@ async function tryCloudSync(options = {}) {
 
 async function postCloud(action, data) {
   persist();
-  const hadFailedWrite = syncMeta.pending && syncMeta.reason === "last-write-failed";
-  if (!hadFailedWrite) markSyncPending(true, "uploading");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20000);
   try {
@@ -495,27 +485,24 @@ async function saveCloudActions(actions, successMessage = "已儲存到雲端", 
     results.push(await postCloud(item.action, item.data));
   }
   const ok = results.every(Boolean);
-  if (ok) {
-    markSyncPending(true, "awaiting-cloud-confirmation");
-    persist(successMessage);
+  if (!ok) {
+    await tryCloudSync({ force: true });
+    showSnackbar("雲端寫入失敗，已重新讀取雲端現況");
+    return false;
   }
-  if (ok && options.verify === true) {
-    const verified = await tryCloudSync({ force: true });
-    if (!verified) {
-      markSyncPending(true, "verify-after-write-failed");
-      showSnackbar("已送出寫入，但無法回讀雲端確認；請稍後按更新資料");
-      return false;
-    }
-    if (typeof options.verifyCloud === "function" && !options.verifyCloud(db)) {
-      markSyncPending(true, "verify-after-write-mismatch");
-      showSnackbar("已送出寫入，但雲端回讀內容未確認更新；請稍後按更新資料");
-      return false;
-    }
-    showSnackbar(successMessage);
-    return true;
+  const verified = await tryCloudSync({ force: true });
+  if (!verified) {
+    showSnackbar("已送出寫入，但無法回讀雲端確認；請稍後再試");
+    return false;
   }
-  showSnackbar(ok ? `${successMessage}，本機已保留最新資料` : "已保存在此裝置；雲端寫入失敗時，重新開啟會保留本機版本");
-  return ok;
+  if (typeof options.verifyCloud === "function" && !options.verifyCloud(db)) {
+    showSnackbar("雲端已回讀，但內容尚未符合預期；請再按一次更新資料");
+    return false;
+  }
+  markSyncPending(false);
+  persist(successMessage);
+  showSnackbar(successMessage);
+  return true;
 }
 
 function setFormBusy(form, busy, label = "寫入雲端...") {
@@ -857,7 +844,7 @@ function restoreActionsFor(targetDb, currentDb) {
     if (dataChanged(schedule, currentDb.schedules?.[id])) actions.push({ action: "saveSchedule", data: { id, schedule } });
   });
   Object.entries(targetDb.therapists || {}).forEach(([id, therapist]) => {
-    if (dataChanged(therapist, currentDb.therapists?.[id])) actions.push({ action: "addTherapist", data: { ...therapist, id, pin: sheetText(therapist.pin) } });
+    if (dataChanged(therapist, currentDb.therapists?.[id])) actions.push({ action: "addTherapist", data: therapistWritePayload(id, therapist) });
   });
   Object.entries(targetDb.admins || {}).forEach(([id, admin]) => {
     if (id === "admin") return;
@@ -896,17 +883,11 @@ async function fetchCloudDbSnapshot() {
 }
 
 async function confirmPendingCloudSync() {
-  const localDb = normalizeDb(JSON.parse(JSON.stringify(db)));
   const cloudDb = await fetchCloudDbSnapshot();
-  if (canonicalJson(localDb) === canonicalJson(cloudDb)) {
-    db = cloudDb;
-    persist("雲端同步已確認");
-    markSyncPending(false);
-    return true;
-  }
-  persist("保留本機最新資料");
-  markSyncPending(true, "cloud-not-caught-up");
-  return false;
+  db = cloudDb;
+  persist("雲端同步已確認");
+  markSyncPending(false);
+  return true;
 }
 
 async function uploadLocalDbToCloud() {
@@ -922,31 +903,31 @@ async function uploadLocalDbToCloud() {
     try {
       cloudDb = await fetchCloudDbSnapshot();
     } catch {
-      showSnackbar("雲端資料讀取失敗，改以覆寫/新增方式上傳本機資料");
+      showSnackbar("雲端資料讀取失敗，將以目前資料重新整理雲端內容");
     }
     const actions = restoreActionsFor(localDb, cloudDb);
     if (!actions.length) {
       markSyncPending(false);
-      persist("本機資料已確認同步");
+      persist("雲端資料已確認同步");
       renderAll();
-      showSnackbar("本機與雲端已一致");
+      showSnackbar("雲端資料已一致");
       return;
     }
-    const ok = await saveCloudActions(actions, "本機資料已上傳雲端", {
+    const ok = await saveCloudActions(actions, "雲端資料已更新", {
       onProgress(done, total) {
-        if (button) button.textContent = `上傳 ${done}/${total}`;
-        if (done === 1 || done === total || done % 10 === 0) showSnackbar(`正在上傳本機資料 ${done}/${total}`);
+        if (button) button.textContent = `同步 ${done}/${total}`;
+        if (done === 1 || done === total || done % 10 === 0) showSnackbar(`正在同步雲端資料 ${done}/${total}`);
       }
     });
     if (ok) {
-      markSyncPending(true, "awaiting-cloud-confirmation");
-      persist("本機資料已上傳雲端");
+      markSyncPending(false);
+      persist("雲端資料已上傳");
       renderAll();
     }
   } finally {
     if (button) {
       button.disabled = false;
-      button.textContent = button.dataset.originalText || "上傳本機資料";
+      button.textContent = button.dataset.originalText || "同步雲端資料";
     }
   }
 }
@@ -963,7 +944,7 @@ async function openSyncDiagnosticsModal() {
       <div class="grid gap-4 md:grid-cols-2">
         <div class="rounded-xl border bg-white p-4">
           <p class="text-xs font-black text-slate-500">此裝置狀態</p>
-          <p class="mt-2 text-xl font-black ${syncMeta.pending ? "text-amber-700" : "text-teal-700"}">${syncMeta.pending ? "本機有待同步資料" : "雲端正式資料"}</p>
+          <p class="mt-2 text-xl font-black ${syncMeta.pending ? "text-amber-700" : "text-teal-700"}">${syncMeta.pending ? "雲端同步待確認" : "雲端正式資料"}</p>
           <p class="mt-1 text-xs font-bold text-slate-500">${esc(syncMeta.reason || "無異常")} · ${esc(syncMeta.lastSync ? backupLabelTime(syncMeta.lastSync) : "尚未記錄同步時間")}</p>
         </div>
         <div class="rounded-xl border bg-white p-4">
@@ -973,7 +954,7 @@ async function openSyncDiagnosticsModal() {
         </div>
       </div>
       <div class="rounded-xl border bg-white p-4">
-        <h4 class="mb-3 font-black">本機摘要</h4>
+        <h4 class="mb-3 font-black">目前摘要</h4>
         ${modelSummaryHtml(db)}
       </div>
       <div class="rounded-xl border bg-white p-4">
@@ -981,7 +962,7 @@ async function openSyncDiagnosticsModal() {
         ${modelSummaryHtml(cloudDb)}
       </div>
       <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-600">
-        本機 / 雲端差異：按摩師 ${localStats.therapists - cloudStats.therapists}、預約 ${localStats.appointments - cloudStats.appointments}、顧客 ${localStats.customers - cloudStats.customers}、班表人員 ${localStats.schedules - cloudStats.schedules}
+        目前 / 雲端差異：按摩師 ${localStats.therapists - cloudStats.therapists}、預約 ${localStats.appointments - cloudStats.appointments}、顧客 ${localStats.customers - cloudStats.customers}、班表人員 ${localStats.schedules - cloudStats.schedules}
       </div>`;
     hydrateResponsiveTables(body);
   } catch {
@@ -1620,7 +1601,7 @@ function focusDispatchTarget() {
 }
 
 function syncStatusText() {
-  if (syncMeta.pending) return "本機有待同步資料";
+  if (syncMeta.pending) return "雲端同步待確認";
   if (!syncMeta.lastSync) return "尚未更新";
   const date = new Date(syncMeta.lastSync);
   if (Number.isNaN(date.getTime())) return "尚未更新";
@@ -1634,25 +1615,14 @@ async function refreshDashboardData() {
     button.dataset.originalText = button.textContent;
     button.textContent = "更新中...";
   }
-  if (syncMeta.pending) {
-    showSnackbar("正在確認雲端是否已同步...");
-    try {
-      const confirmed = await confirmPendingCloudSync();
-      renderAll();
-      showSnackbar(confirmed ? "雲端已同步，資料已更新" : "雲端尚未追上，已保留本機最新版");
-    } catch {
-      showSnackbar("雲端暫時無法確認，已保留本機最新版");
-    }
-    if (button) {
-      button.disabled = false;
-      button.textContent = button.dataset.originalText || "更新資料";
-    }
-    return;
+  showSnackbar("正在重新讀取雲端資料...");
+  try {
+    await tryCloudSync({ force: true });
+    renderAll();
+    showSnackbar("雲端資料已更新");
+  } catch {
+    showSnackbar("雲端暫時無法確認，請稍後再試");
   }
-  showSnackbar("正在更新雲端資料...");
-  await tryCloudSync();
-  renderAll();
-  showSnackbar(syncMeta.pending ? "此裝置有未同步資料，已保留本機版本" : "資料已更新");
   if (button) {
     button.disabled = false;
     button.textContent = button.dataset.originalText || "更新資料";
@@ -3080,7 +3050,7 @@ async function saveTherapistProfile(data) {
   const { pin, ...profile } = db.therapists[data.id];
   db.customers[therapistProfileKey(data.id)] = { name: profile.nickname || profile.name || data.id, notes: JSON.stringify(profile), records: [] };
   return saveCloudActions([
-    { action: "addTherapist", data: { ...db.therapists[data.id], id: data.id, pin: sheetText(data.pin) } },
+    { action: "addTherapist", data: therapistWritePayload(data.id, { ...db.therapists[data.id], pin: data.pin }) },
     { action: "saveCustomer", data: { phone: therapistProfileKey(data.id), ...db.customers[therapistProfileKey(data.id)] } }
   ], "按摩師資料已寫入雲端");
 }
@@ -3141,12 +3111,12 @@ async function approveRequest(id) {
     const { pin, ...profile } = db.therapists[therapistId];
     db.customers[therapistProfileKey(therapistId)] = { name: profile.nickname || profile.name || therapistId, notes: JSON.stringify(profile), records: [] };
     actions.push(
-      { action: "addTherapist", data: { ...db.therapists[therapistId], id: therapistId, pin: sheetText(pin) } },
+      { action: "addTherapist", data: therapistWritePayload(therapistId, { ...db.therapists[therapistId], pin }) },
       { action: "saveCustomer", data: { phone: therapistProfileKey(therapistId), ...db.customers[therapistProfileKey(therapistId)] } }
     );
   } else if (item.type === "password") {
     db.therapists[therapistId] = normalizeTherapistProfile({ ...therapist, pin: cleanPin(item.data?.pin) });
-    actions.push({ action: "addTherapist", data: { ...db.therapists[therapistId], id: therapistId, pin: sheetText(db.therapists[therapistId].pin) } });
+    actions.push({ action: "addTherapist", data: therapistWritePayload(therapistId, db.therapists[therapistId]) });
   } else if (item.type === "schedule") {
     db.schedules[therapistId] = { ...(db.schedules[therapistId] || {}), ...(item.data?.schedule || {}) };
     actions.push({ action: "saveSchedule", data: { id: therapistId, schedule: db.schedules[therapistId] } });
@@ -3279,7 +3249,7 @@ function renderPersonnel() {
   if (activePersonnelPanel === "staff") {
     $("openTherapistCreateBtn").onclick = openTherapistCreator;
     section.querySelectorAll("[data-edit-therapist]").forEach((btn) => btn.onclick = () => openTherapistEditor(btn.dataset.editTherapist));
-    section.querySelectorAll("[data-delete-therapist]").forEach((btn) => btn.onclick = () => confirmAction("刪除按摩師", "排班資料會保留於本機資料中，但人員不再顯示。", async () => {
+    section.querySelectorAll("[data-delete-therapist]").forEach((btn) => btn.onclick = () => confirmAction("刪除按摩師", "排班資料會保留於資料庫記錄中，但人員不再顯示。", async () => {
       const id = btn.dataset.deleteTherapist;
       delete db.therapists[id];
       delete db.customers[therapistProfileKey(id)];
@@ -3611,7 +3581,7 @@ function renderSystem() {
     <td class="text-right font-black">${item.stats.appointments}</td>
     <td class="text-right font-black">${item.stats.customers}</td>
     <td class="text-right"><button class="btn-light px-3 py-1 text-xs" data-download-backup="${esc(item.key)}">下載</button></td>
-  </tr>`).join("") : `<tr><td colspan="5" class="py-10 text-center font-bold text-slate-400">尚無本機修改快照</td></tr>`;
+  </tr>`).join("") : `<tr><td colspan="5" class="py-10 text-center font-bold text-slate-400">尚無修改快照</td></tr>`;
   const loginTableRows = loginRows.length ? loginRows.map((item) => `<tr>
     <td class="font-mono font-black">${esc(backupLabelTime(item.at))}</td>
     <td><div class="font-black">${esc(item.adminName || item.adminId || "未知管理員")}</div><div class="mt-1 font-mono text-xs font-bold text-slate-400">${esc(item.adminId || "")}</div></td>
@@ -3644,9 +3614,9 @@ function renderSystem() {
     },
     {
       id: "systemUploadLocalBtn",
-      title: syncMeta.pending ? "上傳本機資料" : "上傳目前資料",
-      desc: syncMeta.pending ? "這台裝置有待同步內容，建議先處理。" : "必要時將這台裝置資料寫回雲端。",
-      tone: syncMeta.pending ? "teal" : "light"
+      title: "同步雲端資料",
+      desc: "將目前畫面資料重新寫入雲端並立刻回讀確認。",
+      tone: "teal"
     },
     {
       id: "systemDownloadBackupBtn",
@@ -3663,7 +3633,7 @@ function renderSystem() {
     {
       id: "systemDiagnosticsBtn",
       title: "同步診斷",
-      desc: "比對本機與雲端資料量。",
+      desc: "比對目前與雲端資料量。",
       tone: "light"
     }
   ].map((item) => `<button id="${item.id}" class="${item.tone === "teal" ? "border-teal-200 bg-teal-50 text-teal-800 hover:bg-teal-100" : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"} rounded-xl border p-4 text-left transition">
@@ -3688,11 +3658,11 @@ function renderSystem() {
           ${metric("班表人員", stats.schedules, "text-amber-700")}
         </div>
         <div class="mt-5 grid gap-4 lg:grid-cols-3">
-          <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">同步狀態</p><p class="mt-2 text-lg font-black ${syncMeta.pending ? "text-amber-700" : "text-teal-700"}">${syncMeta.pending ? "本機待同步" : "雲端同步"}</p></div>
+          <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">同步狀態</p><p class="mt-2 text-lg font-black ${syncMeta.pending ? "text-amber-700" : "text-teal-700"}">${syncMeta.pending ? "同步待確認" : "雲端同步"}</p></div>
           <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">最後同步</p><p class="mt-2 text-sm font-black text-slate-700">${esc(syncMeta.lastSync ? backupLabelTime(syncMeta.lastSync) : "尚未更新")}</p></div>
           <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">資料來源</p><p class="mt-2 text-sm font-black text-slate-700">${esc(syncMeta.source || "local")}${syncMeta.reason ? ` · ${esc(syncMeta.reason)}` : ""}</p></div>
         </div>
-        <p class="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">若這台 Mac 看得到資料、其他裝置看不到，請按「上傳本機資料」，把此裝置資料寫成雲端正式資料。</p>
+        <p class="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">若你發現資料未同步，請按「同步雲端資料」重新寫入並回讀確認。</p>
       </div>
       <div class="card p-5">
         <div class="mb-4 border-b pb-4">
@@ -3742,13 +3712,13 @@ function renderSystem() {
     </div>
     <div class="grid gap-5 xl:grid-cols-2">
       ${collapsibleCardHtml({ title: "大門密碼紀錄", desc: `目前密碼：${esc(db.customers.SYS_DOOR_PWD?.notes || "未設定")}。`, open: false, body: `<div class="table-wrap"><table><thead><tr><th>時間</th><th>密碼</th><th>來源</th></tr></thead><tbody>${doorTableRows}</tbody></table></div>` })}
-      ${collapsibleCardHtml({ title: "資料模型摘要", desc: "正式資料與系統資料分開檢視，用來排查同步或資料結構問題。", open: false, body: modelSummaryHtml(db) })}
+      ${collapsibleCardHtml({ title: "資料模型摘要", desc: "用來排查雲端資料結構與同步狀態。", open: false, body: modelSummaryHtml(db) })}
     </div>
     ${collapsibleCardHtml({ title: "營運規則檢視", desc: "目前先集中顯示課程、金額與抽成；下一階段可改成可編輯設定。", open: false, body: `<div class="table-wrap"><table><thead><tr><th>代碼</th><th>課程</th><th class="text-right">時長</th><th class="text-right">金額</th><th class="text-right">師傅抽成</th><th class="text-right">店家應收</th></tr></thead><tbody>${courseRows}</tbody></table></div>` })}`;
 
   $("systemRefreshDataBtn").onclick = refreshDashboardData;
   $("systemDiagnosticsBtn").onclick = openSyncDiagnosticsModal;
-  $("systemUploadLocalBtn").onclick = () => confirmAction("上傳本機資料到雲端", "會以這台 Mac 目前看到的資料作為正式版本，其他裝置重新整理後會讀取這份資料。", uploadLocalDbToCloud);
+  $("systemUploadLocalBtn").onclick = () => confirmAction("同步雲端資料", "會以目前畫面資料重新寫入雲端，並立刻回讀確認。", uploadLocalDbToCloud);
   $("systemOpenHistoryBtn").onclick = openChangeHistoryModal;
   $("systemOpenHistoryBtn2").onclick = openChangeHistoryModal;
   $("systemDownloadBackupBtn").onclick = downloadCurrentBackup;
@@ -3764,6 +3734,7 @@ function renderPortal() {
     section.innerHTML = `<div class="card p-8 text-center font-bold text-slate-500">請以按摩師帳號登入。</div>`;
     return;
   }
+  const activeWeek = monthWeeks.find((week) => week.some((d) => d.key === todayKey())) || monthWeeks[0] || [];
   const monthKeys = new Set(monthDates.map((d) => d.key));
   const appts = Object.values(db.appointments).filter((a) => a.therapistId === currentUser.id && monthKeys.has(a.date)).sort((a, b) => a.date === b.date ? sortByTime(a, b) : a.date.localeCompare(b.date));
   section.innerHTML = `
@@ -3783,7 +3754,7 @@ function renderPortal() {
       </div>
       <div class="card p-5">
         <div class="mb-4 flex items-center justify-between gap-3"><div><h4 class="font-black">本週排班</h4><p class="text-xs font-bold text-slate-500">填寫後同步後台班表</p></div><button id="savePortalScheduleBtn" class="btn-teal px-3 py-2 text-xs">儲存</button></div>
-        <div id="portalScheduleInputs" class="space-y-3">${(monthWeeks[0] || []).map((d) => `<label class="block rounded-xl border bg-slate-50 p-3"><span class="label">${esc(d.displayFull)}</span><input class="input py-2" data-portal-shift="${d.key}" value="${esc((db.schedules[currentUser.id] || {})[d.key] || "")}"></label>`).join("")}</div>
+        <div id="portalScheduleInputs" class="space-y-3">${activeWeek.map((d) => `<label class="block rounded-xl border bg-slate-50 p-3"><span class="label">${esc(d.displayFull)}</span><input class="input py-2" data-portal-shift="${d.key}" value="${esc((db.schedules[currentUser.id] || {})[d.key] || "")}"></label>`).join("")}</div>
       </div>
     </div>`;
   $("savePortalScheduleBtn").onclick = async () => {

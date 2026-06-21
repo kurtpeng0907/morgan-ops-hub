@@ -74,6 +74,8 @@ function doPost(e) {
       saveCustomer(data);
     } else if (action === 'deleteCustomer') {
       deleteRow(SHEET_CUSTOMERS, data.phone);
+    } else if (action === 'repairTherapists') {
+      repairTherapistRows();
     } else if (action === 'submitClientSelection') {
       saveClientSelectionSubmission(data);
     } else if (action === 'sendEmailNotification') {
@@ -95,6 +97,8 @@ function getAllData() {
   getSheetData(SHEET_THERAPISTS).forEach(row => {
     const id = cleanCellId_(row[0]);
     if (!id || id === '編號') return;
+    if (db.therapists[id] && db.therapists[id].name) return;
+    if (db.therapists[id] && !String(row[1] || '').trim()) return;
     db.therapists[id] = {
       name: String(row[1] || ''),
       pin: cleanPin_(row[2])
@@ -252,6 +256,31 @@ function saveTherapist(data) {
     String(data.nickname || data.name || ''),
     sheetText_(data.pin || '')
   ]);
+}
+
+function repairTherapistRows() {
+  initSheets();
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_THERAPISTS);
+  const data = sheet.getDataRange().getValues();
+  const seen = {};
+  const clearRanges = [];
+
+  for (let i = 0; i < data.length; i++) {
+    const id = cleanCellId_(data[i][0]);
+    if (!id) continue;
+    if (id === '編號') {
+      if (i > 0) clearRanges.push(sheet.getRange(i + 1, 1, 1, 3));
+      continue;
+    }
+    if (seen[id]) {
+      clearRanges.push(sheet.getRange(i + 1, 1, 1, 3));
+      continue;
+    }
+    seen[id] = true;
+  }
+
+  clearRanges.forEach(range => range.clearContent());
+  return clearRanges.length;
 }
 
 function saveAppointment(data) {
