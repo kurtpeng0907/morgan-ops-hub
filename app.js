@@ -129,6 +129,7 @@ const APPOINTMENT_META_PREFIX = "SYS_APPT_META_";
 const ADMIN_LOGIN_LOG_KEY = "SYS_ADMIN_LOGIN_LOG";
 const FRONTDESK_LOGIN_LOG_KEY = "SYS_FRONTDESK_LOGIN_LOG";
 const SYSTEM_NOTE_KEY = "SYS_SYSTEM_NOTE";
+const CLOUD_SYNC_META_KEY = "SYS_SYNC_META";
 const SYSTEM_NOTE_LOCAL_KEY = `${STORAGE_KEY}-system-note`;
 const approvalKey = (id) => `${APPROVAL_PREFIX}${id}`;
 const clientSelectionKey = (id) => `${CLIENT_SELECTION_PREFIX}${id}`;
@@ -416,6 +417,64 @@ function saveSyncMeta() {
   localStorage.setItem(SYNC_META_KEY, JSON.stringify(syncMeta));
 }
 
+function parseSyncMeta(value = "") {
+  try {
+    const meta = JSON.parse(String(value || "{}"));
+    return meta && typeof meta === "object" ? meta : {};
+  } catch {
+    return {};
+  }
+}
+
+function cloudSyncMetaStore() {
+  return parseSyncMeta(db.customers?.[CLOUD_SYNC_META_KEY]?.notes || "");
+}
+
+function effectiveSyncMeta() {
+  const cloud = cloudSyncMetaStore();
+  if (Object.keys(cloud).length) {
+    return {
+      pending: Boolean(cloud.pending),
+      source: cloud.source || "cloud",
+      lastSync: String(cloud.lastSync || cloud.updatedAt || ""),
+      reason: String(cloud.reason || ""),
+      updatedAt: String(cloud.updatedAt || ""),
+      device: String(cloud.device || ""),
+      path: String(cloud.path || "")
+    };
+  }
+  return {
+    pending: Boolean(syncMeta.pending),
+    source: syncMeta.source || "local",
+    lastSync: String(syncMeta.lastSync || ""),
+    reason: String(syncMeta.reason || ""),
+    updatedAt: String(syncMeta.updatedAt || ""),
+    device: String(syncMeta.device || ""),
+    path: String(syncMeta.path || "")
+  };
+}
+
+async function writeCloudSyncMeta(reason = "", extra = {}) {
+  const savedAt = new Date().toISOString();
+  const payload = {
+    pending: false,
+    source: "cloud",
+    lastSync: savedAt,
+    reason: String(reason || ""),
+    updatedAt: savedAt,
+    device: navigator.userAgent || "",
+    path: location.pathname || "",
+    ...extra
+  };
+  db.customers[CLOUD_SYNC_META_KEY] = {
+    name: "雲端同步狀態",
+    notes: JSON.stringify(payload),
+    records: []
+  };
+  await postCloud("saveCustomer", { phone: CLOUD_SYNC_META_KEY, ...db.customers[CLOUD_SYNC_META_KEY] });
+  return payload;
+}
+
 function backupLocalDb(reason) {
   try {
     saveBackupSnapshot(reason, JSON.stringify(db));
@@ -500,6 +559,7 @@ async function saveCloudActions(actions, successMessage = "已儲存到雲端", 
     return false;
   }
   markSyncPending(false);
+  await writeCloudSyncMeta(successMessage);
   persist(successMessage);
   showSnackbar(successMessage);
   return true;
@@ -887,6 +947,7 @@ async function confirmPendingCloudSync() {
   db = cloudDb;
   persist("雲端同步已確認");
   markSyncPending(false);
+  await writeCloudSyncMeta("雲端同步已確認");
   return true;
 }
 
@@ -908,6 +969,7 @@ async function uploadLocalDbToCloud() {
     const actions = restoreActionsFor(localDb, cloudDb);
     if (!actions.length) {
       markSyncPending(false);
+      await writeCloudSyncMeta("雲端資料已確認同步");
       persist("雲端資料已確認同步");
       renderAll();
       showSnackbar("雲端資料已一致");
@@ -921,6 +983,7 @@ async function uploadLocalDbToCloud() {
     });
     if (ok) {
       markSyncPending(false);
+      await writeCloudSyncMeta("雲端資料已上傳");
       persist("雲端資料已上傳");
       renderAll();
     }
@@ -939,13 +1002,14 @@ async function openSyncDiagnosticsModal() {
     const cloudDb = await fetchCloudDbSnapshot();
     const localStats = dbStats(db);
     const cloudStats = dbStats(cloudDb);
+    const meta = effectiveSyncMeta();
     body.className = "space-y-5";
     body.innerHTML = `
       <div class="grid gap-4 md:grid-cols-2">
         <div class="rounded-xl border bg-white p-4">
           <p class="text-xs font-black text-slate-500">此裝置狀態</p>
-          <p class="mt-2 text-xl font-black ${syncMeta.pending ? "text-amber-700" : "text-teal-700"}">${syncMeta.pending ? "雲端同步待確認" : "雲端正式資料"}</p>
-          <p class="mt-1 text-xs font-bold text-slate-500">${esc(syncMeta.reason || "無異常")} · ${esc(syncMeta.lastSync ? backupLabelTime(syncMeta.lastSync) : "尚未記錄同步時間")}</p>
+          <p class="mt-2 text-xl font-black ${meta.pending ? "text-amber-700" : "text-teal-700"}">${meta.pending ? "雲端同步待確認" : "雲端正式資料"}</p>
+          <p class="mt-1 text-xs font-bold text-slate-500">${esc(meta.reason || "無異常")} · ${esc(meta.lastSync ? backupLabelTime(meta.lastSync) : "尚未記錄同步時間")}</p>
         </div>
         <div class="rounded-xl border bg-white p-4">
           <p class="text-xs font-black text-slate-500">雲端連線</p>
@@ -1601,9 +1665,10 @@ function focusDispatchTarget() {
 }
 
 function syncStatusText() {
-  if (syncMeta.pending) return "雲端同步待確認";
-  if (!syncMeta.lastSync) return "尚未更新";
-  const date = new Date(syncMeta.lastSync);
+  const meta = effectiveSyncMeta();
+  if (meta.pending) return "雲端同步待確認";
+  if (!meta.lastSync) return "尚未更新";
+  const date = new Date(meta.lastSync);
   if (Number.isNaN(date.getTime())) return "尚未更新";
   return `已更新 ${date.toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
 }
@@ -1617,7 +1682,8 @@ async function refreshDashboardData() {
   }
   showSnackbar("正在重新讀取雲端資料...");
   try {
-    await tryCloudSync({ force: true });
+    const synced = await tryCloudSync({ force: true });
+    if (synced) await writeCloudSyncMeta("重新同步資料");
     renderAll();
     showSnackbar("雲端資料已更新");
   } catch {
@@ -3563,6 +3629,7 @@ function renderSystem() {
   const section = $("view-system");
   if (!section) return;
   const stats = dbStats();
+  const meta = effectiveSyncMeta();
   const backups = listLocalBackups().slice(0, 8);
   const loginRows = adminLoginRecords(80);
   const frontdeskRows = frontdeskLoginRecords(80);
@@ -3652,8 +3719,8 @@ function renderSystem() {
           ${metric("班表人員", stats.schedules, "text-amber-700")}
         </div>
         <div class="mt-5 grid gap-4 lg:grid-cols-2">
-          <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">同步狀態</p><p class="mt-2 text-lg font-black ${syncMeta.pending ? "text-amber-700" : "text-teal-700"}">${syncMeta.pending ? "同步待確認" : "雲端同步"}</p></div>
-          <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">最後同步</p><p class="mt-2 text-sm font-black text-slate-700">${esc(syncMeta.lastSync ? backupLabelTime(syncMeta.lastSync) : "尚未更新")}</p></div>
+          <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">同步狀態</p><p class="mt-2 text-lg font-black ${meta.pending ? "text-amber-700" : "text-teal-700"}">${meta.pending ? "同步待確認" : "雲端同步"}</p></div>
+          <div class="rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">最後同步</p><p class="mt-2 text-sm font-black text-slate-700">${esc(meta.lastSync ? backupLabelTime(meta.lastSync) : "尚未更新")}</p></div>
         </div>
         <p class="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">若資料看起來沒更新，先按一次「重新同步資料」。</p>
       </div>
@@ -3864,7 +3931,7 @@ async function handleLogin() {
   $("loginBtnText").textContent = "連線中...";
   $("loginLoader").classList.remove("hidden");
   await tryCloudSync();
-  if (!finishLogin() && syncMeta.pending) {
+  if (!finishLogin() && effectiveSyncMeta().pending) {
     $("loginBtnText").textContent = "重抓雲端...";
     await tryCloudSync({ force: true });
     if (finishLogin()) showSnackbar("已改用雲端正式資料登入");
