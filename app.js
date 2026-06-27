@@ -549,15 +549,21 @@ async function saveCloudActions(actions, successMessage = "已儲存到雲端", 
     showSnackbar("雲端寫入失敗，已重新讀取雲端現況");
     return false;
   }
-  const verified = await tryCloudSync({ force: true });
-  if (!verified) {
-    showSnackbar("已送出寫入，但無法回讀雲端確認；請稍後再試");
+  let cloudDb = null;
+  try {
+    cloudDb = await fetchCloudDbSnapshot();
+  } catch {
+    markSyncPending(true, "cloud-read-failed");
+    showSnackbar("已送出，但雲端還沒回應；請稍後按一次重新整理資料");
     return false;
   }
-  if (typeof options.verifyCloud === "function" && !options.verifyCloud(db)) {
-    showSnackbar("資料已送出，但內容還沒完全對上，請再按一次更新資料");
+  if (typeof options.verifyCloud === "function" && !options.verifyCloud(cloudDb)) {
+    markSyncPending(true, "cloud-awaiting-refresh");
+    showSnackbar("已送出，但雲端還沒完全更新；請稍後再試一次");
     return false;
   }
+  db = cloudDb;
+  persist();
   markSyncPending(false);
   await writeCloudSyncMeta(successMessage);
   persist(successMessage);
@@ -1673,6 +1679,12 @@ function syncStatusText() {
   return `已更新 ${date.toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
 }
 
+async function ensureCloudSyncMeta(reason = "登入後讀取雲端資料") {
+  if (cloudSyncMetaStore()?.lastSync) return false;
+  await writeCloudSyncMeta(reason);
+  return true;
+}
+
 async function refreshDashboardData() {
   const button = $("refreshOverviewBtn");
   if (button) {
@@ -1751,7 +1763,8 @@ function renderOverview() {
   const now = new Date();
   const currentMins = now.getHours() * 60 + now.getMinutes();
   const todayRevenue = todayAppts.reduce((s, a) => s + Number(a.price || 0), 0);
-  const todayCompanyCut = todayAppts.reduce((s, a) => s + companyCutFor(a), 0);
+  const todayCompanyCut = todayAppts.reduce((s, a) => s + remittanceDueFor(a), 0);
+  const todayCompanyPaid = todayAppts.reduce((s, a) => s + (isRemittancePaid(a) ? remittanceDueFor(a) : 0), 0);
   const finishedToday = todayAppts.filter((a) => String(a.isCompleted) === "true").length;
   const ongoing = todayAppts.filter((a) => currentMins >= timeToMinutes(a.time) && currentMins < timeToMinutes(a.time) + Number(a.duration || 60));
   const upcoming = todayAppts.filter((a) => timeToMinutes(a.time) >= currentMins).slice(0, 4);
@@ -1845,9 +1858,9 @@ function renderOverview() {
             <p class="mt-1 text-xs font-bold text-slate-400">平均 ${money(todayAppts.length ? Math.round(todayRevenue / todayAppts.length) : 0)}</p>
           </div>
           <div class="overview-remittance-metric bg-white p-5">
-            <p class="text-xs font-black text-slate-500">今日回帳</p>
+            <p class="text-xs font-black text-slate-500">今日應回帳</p>
             <p class="mt-1 text-3xl font-black text-slate-900">${money(todayCompanyCut)}</p>
-            <p class="mt-1 text-xs font-bold text-slate-400">師傅抽成 ${money(todayRevenue - todayCompanyCut)}</p>
+            <p class="mt-1 text-xs font-bold text-slate-400">已回帳 ${money(todayCompanyPaid)} · 未回帳 ${money(Math.max(0, todayCompanyCut - todayCompanyPaid))}</p>
           </div>
           <div class="overview-confirm-strip bg-slate-50 p-4 md:col-span-2 xl:col-span-3">
             <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -2371,19 +2384,29 @@ function findAppointmentConflict(data) {
 }
 
 async function deleteAppointment(id) {
-  const appt = db.appointments[id];
-  delete db.appointments[id];
-  if (appt && db.customers[appt.phone]?.records) db.customers[appt.phone].records = db.customers[appt.phone].records.filter((r) => r.id !== id);
-  delete db.appointmentMeta?.[id];
-  delete db.customers[appointmentMetaKey(id)];
-  if (activeAppointmentId === id) activeAppointmentId = null;
-  const actions = [
-    { action: "deleteAppointment", data: { appId: id } },
-    { action: "deleteCustomer", data: { phone: appointmentMetaKey(id) } }
-  ];
-  if (appt?.phone && db.customers[appt.phone]) actions.push({ action: "saveCustomer", data: { phone: appt.phone, ...db.customers[appt.phone] } });
-  await saveCloudActions(actions, "預約已刪除");
-  renderAll();
+  try {
+    const appt = db.appointments[id];
+    delete db.appointments[id];
+    if (appt && db.customers[appt.phone]?.records) db.customers[appt.phone].records = db.customers[appt.phone].records.filter((r) => r.id !== id);
+    delete db.appointmentMeta?.[id];
+    delete db.customers[appointmentMetaKey(id)];
+    if (activeAppointmentId === id) activeAppointmentId = null;
+    switchTab("dispatch", { clearAppointment: true });
+    const actions = [
+      { action: "deleteAppointment", data: { appId: id } },
+      { action: "deleteCustomer", data: { phone: appointmentMetaKey(id) } }
+    ];
+    if (appt?.phone && db.customers[appt.phone]) actions.push({ action: "saveCustomer", data: { phone: appt.phone, ...db.customers[appt.phone] } });
+    const synced = await saveCloudActions(actions, "預約已刪除", {
+      verifyCloud: (cloudDb) => !cloudDb.appointments?.[id] && !cloudDb.customers?.[appointmentMetaKey(id)]
+    });
+    if (!synced) markSyncPending(true, "delete-appointment-awaiting-sync");
+    renderAll();
+  } catch (error) {
+    console.error("deleteAppointment failed", error);
+    showSnackbar("刪除已先套用，雲端稍後再同步");
+    renderAll();
+  }
 }
 
 async function updateAppointmentStage(id, stage) {
@@ -2474,6 +2497,7 @@ function renderAppointmentDetail() {
   const section = $("view-dispatch") || $("appointmentDataPanel") || $("view-appointmentDetail");
   if (!section) return;
   const appts = Object.values(db.appointments).sort((a, b) => a.date === b.date ? sortByTime(a, b) : String(b.date).localeCompare(String(a.date)));
+  if (activeAppointmentId && !db.appointments[activeAppointmentId]) activeAppointmentId = null;
   const active = activeAppointmentId ? db.appointments[activeAppointmentId] : null;
   section.innerHTML = active ? renderAppointmentDetailForm(active, appts) : renderAppointmentListPage(appts);
   bindAppointmentQueryControls();
@@ -2641,13 +2665,14 @@ function bookingStageRailHtml(currentStage = "confirmed") {
   </div>`;
 }
 
-function therapistNoticeText(appt, companyCut) {
+function therapistNoticeText(appt) {
+  const remittanceDue = remittanceDueFor(appt);
   return [
     `預約通知`,
     `時間：${appointmentNoticeDateTime(appt)}`,
     `課程：${noticeCourseName(appt)}`,
     `應收金額：${money(appt.price)}`,
-    `回款金額：${money(companyCut)}`
+    `應回帳金額：${money(remittanceDue)}`
   ].filter(Boolean).join("\n");
 }
 
@@ -2773,7 +2798,7 @@ function renderAppointmentDetailForm(appt, allAppts) {
   const record = appointmentRecord(appt) || {};
   const cut = COURSE_CATALOG[appt.service]?.therapistCut || 0;
   const companyCut = Number(appt.price || 0) - cut;
-  const therapistText = therapistNoticeText(appt, companyCut);
+  const therapistText = therapistNoticeText(appt);
   const customerText = customerNoticeText(appt);
   const sameCustomer = allAppts.filter((a) => a.phone && a.phone === appt.phone).length;
   const serviceOptions = [`<option value="">自訂/其他項目</option>`].concat(Object.entries(COURSE_CATALOG).map(([key, course]) => `<option value="${key}" ${appt.service === key ? "selected" : ""}>${esc(course.name)} (${money(course.price)})</option>`)).join("");
@@ -2923,8 +2948,10 @@ function drawCustomerRows() {
   rows.querySelectorAll("[data-record]").forEach((btn) => btn.onclick = () => openCustomerModal(btn.dataset.record, true));
   rows.querySelectorAll("[data-delete-customer]").forEach((btn) => btn.onclick = () => confirmAction("刪除 CRM 檔案", "顧客基本資料與服務紀錄將移除。", async () => {
     delete db.customers[btn.dataset.deleteCustomer];
-    await saveCloudActions([{ action: "deleteCustomer", data: { phone: btn.dataset.deleteCustomer } }], "顧客檔案已刪除");
     renderAll();
+    await saveCloudActions([{ action: "deleteCustomer", data: { phone: btn.dataset.deleteCustomer } }], "顧客檔案已刪除", {
+      verifyCloud: (cloudDb) => !cloudDb.customers?.[btn.dataset.deleteCustomer]
+    });
   }));
 }
 
@@ -3319,11 +3346,13 @@ function renderPersonnel() {
       const id = btn.dataset.deleteTherapist;
       delete db.therapists[id];
       delete db.customers[therapistProfileKey(id)];
+      renderAll();
       await saveCloudActions([
         { action: "deleteTherapist", data: { id } },
         { action: "deleteCustomer", data: { phone: therapistProfileKey(id) } }
-      ], "按摩師資料已刪除");
-      renderAll();
+      ], "按摩師資料已刪除", {
+        verifyCloud: (cloudDb) => !cloudDb.therapists?.[id] && !cloudDb.customers?.[therapistProfileKey(id)]
+      });
       persist();
     }));
     return;
@@ -3340,8 +3369,10 @@ function renderPersonnel() {
     section.querySelectorAll("[data-delete-admin]").forEach((btn) => btn.onclick = () => confirmAction("刪除管理員", "此帳號將無法登入。", async () => {
       const id = btn.dataset.deleteAdmin;
       delete db.admins[id];
-      await saveCloudActions([{ action: "deleteCustomer", data: { phone: `SYS_ADMIN_${id}` } }], "管理員權限已刪除");
       renderAll();
+      await saveCloudActions([{ action: "deleteCustomer", data: { phone: `SYS_ADMIN_${id}` } }], "管理員權限已刪除", {
+        verifyCloud: (cloudDb) => !cloudDb.customers?.[`SYS_ADMIN_${id}`]
+      });
     }));
   }
 }
@@ -3553,7 +3584,7 @@ function renderReport() {
         <div><h3 class="text-lg font-black">財務報表</h3><p class="text-sm font-bold text-slate-500">同一區間內切換營收、來客、回客與回帳分析。</p></div>
         <div class="flex flex-col gap-2 sm:flex-row"><div class="rounded-xl bg-slate-50 px-4 py-3 text-sm font-black text-slate-600">${esc(start)} 至 ${esc(end)}</div><button id="queryReportBtn" class="btn-light">設定區間</button><button id="exportReportBtn" class="btn-teal">輸出報表</button></div>
       </div>
-      <div class="mb-5 grid grid-cols-2 gap-4 xl:grid-cols-4">${metric("來客數", rows.length)}${metric("總營業額", money(total))}${metric("已回帳", money(collected), "text-emerald-700")}${metric("師傅抽成", money(therapistCut), "text-indigo-700")}</div>
+      <div class="mb-5 grid grid-cols-2 gap-4 xl:grid-cols-4">${metric("來客數", rows.length)}${metric("總營業額", money(total))}${metric("回款總額", money(collected), "text-emerald-700")}${metric("師傅抽成", money(therapistCut), "text-indigo-700")}</div>
       <div class="report-tabs mb-5 flex flex-wrap rounded-xl bg-slate-100 p-1">${reportTab("revenue", "營收明細")}${reportTab("guests", "來客數")}${reportTab("retention", "師傅回客率")}${reportTab("commission", "抽成回帳")}</div>
       ${panelContent}
     </div>`;
@@ -3880,9 +3911,14 @@ function closeModal() {
 
 function confirmAction(title, description, onConfirm, confirmText = "確認執行") {
   showModal(`<div class="modal max-w-sm text-center"><div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-50 text-2xl text-rose-600">!</div><h3 class="mb-2 text-xl font-black">${esc(title)}</h3><p class="mb-6 whitespace-pre-wrap text-sm font-bold leading-relaxed text-slate-600">${esc(description)}</p><div class="flex gap-3"><button class="btn-light w-full" data-close-modal>取消</button><button id="confirmActionBtn" class="w-full rounded-xl bg-rose-600 px-5 py-3 font-black text-white">${esc(confirmText)}</button></div></div>`);
-  $("confirmActionBtn").onclick = () => {
+  $("confirmActionBtn").onclick = async () => {
     closeModal();
-    onConfirm();
+    try {
+      await Promise.resolve(onConfirm?.());
+    } catch (error) {
+      console.error(error);
+      showSnackbar("動作失敗，請再試一次");
+    }
   };
 }
 
@@ -3930,10 +3966,12 @@ async function handleLogin() {
   $("loginBtn").disabled = true;
   $("loginBtnText").textContent = "連線中...";
   $("loginLoader").classList.remove("hidden");
-  await tryCloudSync();
+  const synced = await tryCloudSync();
+  if (synced) await ensureCloudSyncMeta("登入後讀取雲端資料");
   if (!finishLogin() && effectiveSyncMeta().pending) {
     $("loginBtnText").textContent = "重抓雲端...";
-    await tryCloudSync({ force: true });
+    const forceSynced = await tryCloudSync({ force: true });
+    if (forceSynced) await ensureCloudSyncMeta("登入後重抓雲端資料");
     if (finishLogin()) showSnackbar("已改用最新資料登入");
   }
   if (!currentUser) {
