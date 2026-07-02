@@ -5,6 +5,7 @@ const APP_VERSION = "MSC OT 0.1";
 const STORAGE_KEY = "morgan-ops-hub-v2";
 const SYNC_META_KEY = `${STORAGE_KEY}-sync-meta`;
 const LOCAL_BACKUP_PREFIX = `${STORAGE_KEY}-backup`;
+const MAX_LOCAL_BACKUPS = 12;
 
 const COURSE_CATALOG = {
   A60: { name: "A課程 60分", duration: 60, price: 1800, therapistCut: 1000 },
@@ -381,12 +382,53 @@ function saveBackupSnapshot(reason, snapshotText) {
     if (!snapshotText) return;
     const snapshot = JSON.parse(snapshotText);
     const key = `${LOCAL_BACKUP_PREFIX}-${Date.now()}`;
-    localStorage.setItem(key, JSON.stringify({
+    pruneLocalBackups(MAX_LOCAL_BACKUPS - 1);
+    safeLocalStorageSet(key, JSON.stringify({
       reason: reason || "資料修改前",
       at: new Date().toISOString(),
       db: snapshot
-    }));
+    }), { isBackup: true, silent: true });
   } catch {}
+}
+
+function localBackupKeys() {
+  try {
+    return Object.keys(localStorage)
+      .filter((key) => key.startsWith(`${LOCAL_BACKUP_PREFIX}-`))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+function pruneLocalBackups(keep = MAX_LOCAL_BACKUPS) {
+  const keys = localBackupKeys();
+  const removeCount = Math.max(0, keys.length - keep);
+  keys.slice(0, removeCount).forEach((key) => {
+    try { localStorage.removeItem(key); } catch {}
+  });
+}
+
+function isQuotaError(error) {
+  return error?.name === "QuotaExceededError" || /quota/i.test(String(error?.message || error || ""));
+}
+
+function safeLocalStorageSet(key, value, options = {}) {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (error) {
+    if (!isQuotaError(error)) throw error;
+    pruneLocalBackups(options.isBackup ? Math.max(0, Math.floor(MAX_LOCAL_BACKUPS / 2) - 1) : 0);
+    try {
+      localStorage.setItem(key, value);
+      if (!options.silent) showSnackbar("本機暫存已清理，操作可繼續");
+      return true;
+    } catch (retryError) {
+      if (!options.isBackup) throw retryError;
+      return false;
+    }
+  }
 }
 
 function persist(reason = "") {
@@ -395,7 +437,7 @@ function persist(reason = "") {
   if (!suppressPersistBackup && previous && previous !== next) {
     saveBackupSnapshot(reason || pendingBackupReason || "資料修改前", previous);
   }
-  localStorage.setItem(STORAGE_KEY, next);
+  safeLocalStorageSet(STORAGE_KEY, next);
   pendingBackupReason = "";
 }
 
@@ -414,7 +456,7 @@ function loadSyncMeta() {
 }
 
 function saveSyncMeta() {
-  localStorage.setItem(SYNC_META_KEY, JSON.stringify(syncMeta));
+  safeLocalStorageSet(SYNC_META_KEY, JSON.stringify(syncMeta), { silent: true });
 }
 
 function parseSyncMeta(value = "") {
@@ -810,11 +852,11 @@ function latestSystemNoteTime(store = {}) {
 
 function writeLocalSystemNote(store, savedAt = new Date().toISOString()) {
   try {
-    localStorage.setItem(SYSTEM_NOTE_LOCAL_KEY, JSON.stringify({
+    safeLocalStorageSet(SYSTEM_NOTE_LOCAL_KEY, JSON.stringify({
       notes: String(store?.notes || ""),
       records: store?.records || [],
       savedAt
-    }));
+    }), { silent: true });
   } catch {}
 }
 
