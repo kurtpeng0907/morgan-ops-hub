@@ -549,6 +549,13 @@ async function saveCloudActions(actions, successMessage = "已儲存到雲端", 
     showSnackbar("雲端寫入失敗，已重新讀取雲端現況");
     return false;
   }
+  if (options.verify === false || options.readBack === false) {
+    markSyncPending(false);
+    await writeCloudSyncMeta(successMessage);
+    persist(successMessage);
+    showSnackbar(successMessage);
+    return true;
+  }
   let cloudDb = null;
   try {
     cloudDb = await fetchCloudDbSnapshot();
@@ -3198,6 +3205,7 @@ async function approveRequest(id) {
   const therapistId = item.therapistId;
   const therapist = db.therapists[therapistId] || { pin: "" };
   const actions = [];
+  const schedulePatch = item.type === "schedule" ? { ...(item.data?.schedule || {}) } : {};
 
   if (item.type === "profile") {
     db.therapists[therapistId] = normalizeTherapistProfile({ ...therapist, ...item.data, id: therapistId, pin: therapist.pin });
@@ -3211,7 +3219,7 @@ async function approveRequest(id) {
     db.therapists[therapistId] = normalizeTherapistProfile({ ...therapist, pin: cleanPin(item.data?.pin) });
     actions.push({ action: "addTherapist", data: therapistWritePayload(therapistId, db.therapists[therapistId]) });
   } else if (item.type === "schedule") {
-    db.schedules[therapistId] = { ...(db.schedules[therapistId] || {}), ...(item.data?.schedule || {}) };
+    db.schedules[therapistId] = { ...(db.schedules[therapistId] || {}), ...schedulePatch };
     actions.push({ action: "saveSchedule", data: { id: therapistId, schedule: db.schedules[therapistId] } });
   }
 
@@ -3219,8 +3227,33 @@ async function approveRequest(id) {
   db.approvals[id] = next;
   db.customers[approvalKey(id)] = { name: `已核可-${approvalTypeLabel(item.type)}-${therapistName(therapistId)}`, notes: JSON.stringify(next), records: [] };
   actions.push({ action: "saveCustomer", data: { phone: approvalKey(id), ...db.customers[approvalKey(id)] } });
-  await saveCloudActions(actions, "申請已核可並套用");
+  persist("審核核可套用");
   renderAll();
+  const synced = await saveCloudActions(actions, "申請已核可並套用", { verify: false });
+  if (!synced) {
+    markSyncPending(true, "approval-awaiting-cloud-confirmation");
+    showSnackbar("已先套用，雲端確認中；稍後按更新資料即可確認");
+  }
+  renderAll();
+}
+
+async function handleApprovalAction(button, action) {
+  if (!button?.dataset) return;
+  const id = action === "approve" ? button.dataset.approveRequest : action === "reject" ? button.dataset.rejectRequest : button.dataset.dismissApproval;
+  if (!id || button.disabled) return;
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = action === "approve" ? "套用中..." : action === "reject" ? "處理中..." : originalText;
+  try {
+    if (action === "approve") await approveRequest(id);
+    else if (action === "reject") await rejectRequest(id);
+    else await dismissApproval(id);
+  } catch (error) {
+    console.error("approval action failed", error);
+    showSnackbar("審核動作失敗，請重新整理後再試一次");
+    button.disabled = false;
+    button.textContent = originalText;
+  }
 }
 
 async function rejectRequest(id) {
@@ -3358,9 +3391,6 @@ function renderPersonnel() {
     return;
   }
   if (activePersonnelPanel === "approvals") {
-    section.querySelectorAll("[data-approve-request]").forEach((btn) => btn.onclick = () => approveRequest(btn.dataset.approveRequest));
-    section.querySelectorAll("[data-reject-request]").forEach((btn) => btn.onclick = () => rejectRequest(btn.dataset.rejectRequest));
-    section.querySelectorAll("[data-dismiss-approval]").forEach((btn) => btn.onclick = () => dismissApproval(btn.dataset.dismissApproval));
     return;
   }
   if (activePersonnelPanel === "admins") {
@@ -4036,6 +4066,24 @@ function bindEvents() {
       event.preventDefault();
       if (jumpButton.dataset.personnelPanel) activePersonnelPanel = jumpButton.dataset.personnelPanel;
       switchTab(jumpButton.dataset.jumpTab, { clearAppointment: jumpButton.dataset.jumpTab === "dispatch", focus: jumpButton.dataset.dispatchFocus || "" });
+      return;
+    }
+    const approveButton = closestFromEvent(event, "[data-approve-request]");
+    if (approveButton) {
+      event.preventDefault();
+      handleApprovalAction(approveButton, "approve");
+      return;
+    }
+    const rejectButton = closestFromEvent(event, "[data-reject-request]");
+    if (rejectButton) {
+      event.preventDefault();
+      handleApprovalAction(rejectButton, "reject");
+      return;
+    }
+    const dismissApprovalButton = closestFromEvent(event, "[data-dismiss-approval]");
+    if (dismissApprovalButton) {
+      event.preventDefault();
+      handleApprovalAction(dismissApprovalButton, "dismiss");
       return;
     }
     const addButton = closestFromEvent(event, "[data-add-appointment]");
