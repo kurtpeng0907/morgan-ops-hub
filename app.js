@@ -3228,13 +3228,22 @@ async function approveRequest(id) {
   db.customers[approvalKey(id)] = { name: `已核可-${approvalTypeLabel(item.type)}-${therapistName(therapistId)}`, notes: JSON.stringify(next), records: [] };
   actions.push({ action: "saveCustomer", data: { phone: approvalKey(id), ...db.customers[approvalKey(id)] } });
   persist("審核核可套用");
-  renderAll();
-  const synced = await saveCloudActions(actions, "申請已核可並套用", { verify: false });
-  if (!synced) {
-    markSyncPending(true, "approval-awaiting-cloud-confirmation");
-    showSnackbar("已先套用，雲端確認中；稍後按更新資料即可確認");
-  }
-  renderAll();
+  renderPersonnel();
+  showSnackbar("已核可並套用，正在同步雲端");
+  saveCloudActions(actions, "申請已核可並套用", { verify: false })
+    .then((synced) => {
+      if (!synced) {
+        markSyncPending(true, "approval-awaiting-cloud-confirmation");
+        showSnackbar("已先套用，雲端確認中；稍後按更新資料即可確認");
+      }
+      renderPersonnel();
+    })
+    .catch((error) => {
+      console.error("approval cloud sync failed", error);
+      markSyncPending(true, "approval-cloud-sync-error");
+      showSnackbar("已先套用，雲端稍後再同步");
+      renderPersonnel();
+    });
 }
 
 async function handleApprovalAction(button, action) {
@@ -3250,7 +3259,7 @@ async function handleApprovalAction(button, action) {
     else await dismissApproval(id);
   } catch (error) {
     console.error("approval action failed", error);
-    showSnackbar("審核動作失敗，請重新整理後再試一次");
+    showSnackbar(`審核動作失敗：${error?.message || "請重新整理後再試一次"}`);
     button.disabled = false;
     button.textContent = originalText;
   }
