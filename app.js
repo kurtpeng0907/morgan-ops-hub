@@ -4088,7 +4088,7 @@ function renderSystem() {
     panelHtml = `
       <div class="system-panel-grid">
         <div class="card p-5">
-          <div class="mb-4 flex flex-col justify-between gap-3 border-b pb-4 sm:flex-row sm:items-start"><div><span class="badge bg-teal-50 text-teal-700">必要</span><h3 class="mt-2 text-lg font-black">雲端資料狀態</h3><p class="mt-1 text-xs font-bold text-slate-500">這裡只回答兩件事：目前讀到多少資料，以及最後一次何時成功更新。</p></div><span class="system-status-chip ${syncTone}">${iconHtml(meta.pending ? "triangle-alert" : "cloud-check")} ${esc(syncLabel)}</span></div>
+          <div class="mb-4 flex flex-col justify-between gap-3 border-b pb-4 sm:flex-row sm:items-start"><div><span class="badge bg-teal-50 text-teal-700">必要</span><h3 class="mt-2 text-lg font-black">雲端資料狀態</h3><p class="mt-1 text-xs font-bold text-slate-500">這裡只回答兩件事：目前讀到多少資料，以及最後一次何時成功更新。</p></div><span class="system-status-chip ${syncTone}">${iconHtml(meta.pending ? "triangle-alert" : "circle-check")} ${esc(syncLabel)}</span></div>
           <div class="system-summary-grid">
             ${metric("按摩師", stats.therapists)}
             ${metric("預約", stats.appointments, "text-teal-700")}
@@ -4117,7 +4117,7 @@ function renderSystem() {
   section.innerHTML = `<div class="system-page">
     <div class="card system-command">
       <div class="system-command-copy"><span class="badge bg-slate-100 text-slate-700">系統維護</span><h3>系統與資料管理</h3><p>日常先看狀態；備份、稽核與測試各自收進獨立工作區。</p></div>
-      <div class="system-status-line"><span class="system-status-chip ${syncTone}">${iconHtml(meta.pending ? "triangle-alert" : "cloud-check")} ${esc(syncLabel)}</span><span class="system-status-chip">${iconHtml("clock-3")} ${esc(lastSyncLabel)}</span><span class="system-status-chip">${esc(APP_VERSION)}</span></div>
+      <div class="system-status-line"><span class="system-status-chip ${syncTone}">${iconHtml(meta.pending ? "triangle-alert" : "circle-check")} ${esc(syncLabel)}</span><span class="system-status-chip">${iconHtml("clock-3")} ${esc(lastSyncLabel)}</span><span class="system-status-chip">${esc(APP_VERSION)}</span></div>
     </div>
     <nav class="system-tabs" role="tablist" aria-label="系統工作區">${systemTabsHtml}</nav>
     <div role="tabpanel">${panelHtml}</div>
