@@ -33,6 +33,9 @@ function setup() {
 function doGet(e) {
   try {
     const mode = String(e && e.parameter && e.parameter.mode || '');
+    if (mode === 'capabilities') {
+      return jsonOutput({ success: true, capabilities: { batch: true, clientSelection: true }, version: 'MSOT1.0' });
+    }
     if (mode === 'clientSelection') {
       return jsonOutput(getClientSelectionData(e.parameter || {}));
     }
@@ -49,6 +52,8 @@ function doGet(e) {
 }
 
 function doPost(e) {
+  let lock = null;
+  let lockHeld = false;
   try {
     const params = JSON.parse((e.postData && e.postData.contents) || '{}');
     const action = String(params.action || '');
@@ -59,34 +64,52 @@ function doPost(e) {
       return jsonOutput({ success: false, error: 'unauthorized' });
     }
 
-    if (action === 'saveSchedule') {
-      updateScheduleMerge(data.id, data.schedule || {});
-    } else if (action === 'addTherapist' || action === 'updatePin') {
-      saveTherapist(data);
-    } else if (action === 'deleteTherapist') {
-      deleteRow(SHEET_THERAPISTS, data.id);
-      deleteRow(SHEET_SCHEDULES, data.id);
-    } else if (action === 'addAppointment') {
-      saveAppointment(data);
-    } else if (action === 'deleteAppointment') {
-      deleteRow(SHEET_APPOINTMENTS, data.appId || data.id);
-    } else if (action === 'saveCustomer') {
-      saveCustomer(data);
-    } else if (action === 'deleteCustomer') {
-      deleteRow(SHEET_CUSTOMERS, data.phone);
-    } else if (action === 'repairTherapists') {
-      repairTherapistRows();
-    } else if (action === 'submitClientSelection') {
-      saveClientSelectionSubmission(data);
-    } else if (action === 'sendEmailNotification') {
-      sendEmailNotification(data);
+    if (action !== 'sendEmailNotification') {
+      lock = LockService.getScriptLock();
+      if (!lock.tryLock(20000)) throw new Error('資料庫忙碌中，請稍後再試');
+      lockHeld = true;
+    }
+
+    if (action === 'batch') {
+      const actions = Array.isArray(data.actions) ? data.actions : [];
+      if (!actions.length) throw new Error('Empty batch');
+      actions.forEach(item => executeAction_(String(item.action || ''), item.data || {}));
     } else {
-      throw new Error('Unknown action: ' + action);
+      executeAction_(action, data);
     }
 
     return jsonOutput({ success: true });
   } catch (err) {
     return jsonOutput({ success: false, error: String(err) });
+  } finally {
+    if (lockHeld && lock) lock.releaseLock();
+  }
+}
+
+function executeAction_(action, data) {
+  if (action === 'saveSchedule') {
+    updateScheduleMerge(data.id, data.schedule || {});
+  } else if (action === 'addTherapist' || action === 'updatePin') {
+    saveTherapist(data);
+  } else if (action === 'deleteTherapist') {
+    deleteRow(SHEET_THERAPISTS, data.id);
+    deleteRow(SHEET_SCHEDULES, data.id);
+  } else if (action === 'addAppointment') {
+    saveAppointment(data);
+  } else if (action === 'deleteAppointment') {
+    deleteRow(SHEET_APPOINTMENTS, data.appId || data.id);
+  } else if (action === 'saveCustomer') {
+    saveCustomer(data);
+  } else if (action === 'deleteCustomer') {
+    deleteRow(SHEET_CUSTOMERS, data.phone);
+  } else if (action === 'repairTherapists') {
+    repairTherapistRows();
+  } else if (action === 'submitClientSelection') {
+    saveClientSelectionSubmission(data);
+  } else if (action === 'sendEmailNotification') {
+    sendEmailNotification(data);
+  } else {
+    throw new Error('Unknown action: ' + action);
   }
 }
 

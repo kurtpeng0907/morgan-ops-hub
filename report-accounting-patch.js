@@ -2,12 +2,8 @@
 
 (function patchFinanceAccounting() {
   const grossAmount = (appt) => Number(appt.price || 0);
-  const defaultRemittanceDueAmount = (appt) => Math.max(0, grossAmount(appt) - Number(COURSE_CATALOG[appt.service]?.therapistCut || 0));
-  const remittanceDueAmount = (appt) => {
-    const manual = String(appt.remittanceDue ?? "").trim();
-    return manual ? Math.max(0, Number(manual) || 0) : defaultRemittanceDueAmount(appt);
-  };
-  const isRemitted = (appt) => String(appt.remittancePaid) === "true" || Number(appt.collectedPrice || 0) > 0;
+  const remittanceDueAmount = (appt) => remittanceDueFor(appt);
+  const isRemitted = (appt) => isRemittancePaid(appt);
   const remittedAmount = (appt) => isRemitted(appt) ? remittanceDueAmount(appt) : 0;
   const unremittedAmount = (appt) => isRemitted(appt) ? 0 : remittanceDueAmount(appt);
   const remittanceMethod = (appt) => isRemitted(appt) ? (appt.remittanceMethod || "未記錄") : "未回帳";
@@ -20,7 +16,13 @@
     .filter((appt) => appt.date >= start && appt.date <= end)
     .sort((a, b) => a.date === b.date ? sortByTime(a, b) : a.date.localeCompare(b.date));
 
-  const reportTab = (panel, label) => `<button class="rounded-lg px-4 py-2 text-sm font-black ${activeReportPanel === panel ? "bg-white text-amber-700 shadow" : "text-slate-500"}" data-report-panel="${panel}">${label}</button>`;
+  const reportTabs = {
+    revenue: { label: "營收明細", icon: "receipt-text" },
+    guests: { label: "每日來客", icon: "users" },
+    retention: { label: "回客分析", icon: "repeat-2" },
+    commission: { label: "回帳總表", icon: "wallet-cards" }
+  };
+  const reportTab = (panel) => `<button class="workspace-tab ${activeReportPanel === panel ? "active" : ""}" data-report-panel="${panel}">${iconHtml(reportTabs[panel].icon)}<span>${reportTabs[panel].label}</span></button>`;
 
   const revenueTableHtml = (rows) => `<div class="table-wrap"><table><thead><tr><th>預約日期時間</th><th>顧客</th><th>師傅</th><th>服務</th><th class="text-right">應收總額</th><th class="text-right">應回帳金額</th><th>已回帳</th><th>回帳管道</th></tr></thead><tbody>${rows.length ? rows.map((appt) => `<tr><td><button data-open-appt="${esc(appt.id)}" class="font-mono font-black text-teal-700 hover:text-teal-900">${esc(appt.date)} ${esc(appt.time)}</button></td><td><button data-open-appt="${esc(appt.id)}" class="font-black hover:text-teal-700">${esc(customerDisplay(appt.phone, appt.customerName))}</button></td><td>${esc(therapistName(appt.therapistId))}</td><td>${esc(courseName(appt.service))}</td><td class="text-right font-black text-rose-600">${money(grossAmount(appt))}</td><td class="text-right font-black text-teal-700">${money(remittanceDueAmount(appt))}</td><td>${paidBadge(appt)}</td><td class="font-bold text-slate-600">${esc(remittanceMethod(appt))}</td></tr>`).join("") : `<tr><td colspan="8" class="py-10 text-center font-bold text-slate-400">該區間無預約</td></tr>`}</tbody></table></div>`;
 
@@ -85,16 +87,40 @@
       retention: retentionTableHtml(rows),
       commission: remittanceTableHtml(rows)
     }[activeReportPanel] || revenueTableHtml(rows);
+    const panelDescriptions = {
+      revenue: "逐筆核對應收、應回帳金額、回帳狀態與管道。",
+      guests: "按日期比較來客、新客、回客與每日應收總額。",
+      retention: "檢視各師傅服務量、顧客結構與回客表現。",
+      commission: "集中追蹤應回帳、已回帳與尚未回帳的金額。"
+    };
 
     $("view-report").innerHTML = `
-      <div class="card p-5">
-        <div class="mb-5 flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
-          <div><h3 class="text-lg font-black">財務報表</h3><p class="text-sm font-bold text-slate-500">應收總額為客人支付總額；應回帳金額為店家抽成，可用已回帳與回帳管道追蹤狀態。</p></div>
-          <div class="flex flex-col gap-2 sm:flex-row"><input id="reportStartDate" type="date" class="input py-2" value="${start}"><input id="reportEndDate" type="date" class="input py-2" value="${end}"><button id="queryReportBtn" class="btn-primary px-5 py-3">查詢</button><button id="exportReportBtn" class="btn-teal">輸出報表</button></div>
+      <div class="page-workbench-header">
+        <div>
+          <span class="page-kicker">財務管理</span>
+          <h2>營運與回帳</h2>
+          <p>先掌握區間金額，再進入營收、來客、回客或回帳明細。</p>
         </div>
-        <div class="mb-5 grid grid-cols-2 gap-4 xl:grid-cols-4">${metric("來客數", rows.length)}${metric("應收總額", money(total), "text-rose-700")}${metric("應回帳金額", money(due), "text-teal-700")}${metric("未回帳金額", money(unremitted), "text-amber-700")}</div>
-        <div class="report-tabs mb-5 flex flex-wrap rounded-xl bg-slate-100 p-1">${reportTab("revenue", "營收明細")}${reportTab("guests", "來客數")}${reportTab("retention", "師傅回客率")}${reportTab("commission", "回帳總表")}</div>
-        ${panelContent}
+        <div class="workbench-actions report-filter-actions">
+          <label class="compact-date-field"><span>開始</span><input id="reportStartDate" type="date" value="${start}"></label>
+          <label class="compact-date-field"><span>結束</span><input id="reportEndDate" type="date" value="${end}"></label>
+          <button id="queryReportBtn" class="btn-light">${iconHtml("search")}查詢</button>
+          <button id="exportReportBtn" class="btn-teal">${iconHtml("download")}輸出</button>
+        </div>
+      </div>
+      <div class="report-summary-grid">
+        <div class="report-summary-card tone-slate"><span>${iconHtml("users")}</span><div><p>服務筆數</p><strong>${rows.length}</strong><small>${start === end ? "當日" : "所選區間"}</small></div></div>
+        <div class="report-summary-card tone-rose"><span>${iconHtml("circle-dollar-sign")}</span><div><p>應收總額</p><strong>${money(total)}</strong><small>顧客支付總額</small></div></div>
+        <div class="report-summary-card tone-indigo"><span>${iconHtml("landmark")}</span><div><p>應回帳</p><strong>${money(due)}</strong><small>店家應收</small></div></div>
+        <div class="report-summary-card tone-teal"><span>${iconHtml("badge-check")}</span><div><p>已回帳</p><strong>${money(remitted)}</strong><small>目前已登記</small></div></div>
+        <div class="report-summary-card tone-amber"><span>${iconHtml("clock-3")}</span><div><p>未回帳</p><strong>${money(unremitted)}</strong><small>尚待追蹤</small></div></div>
+      </div>
+      <div class="report-data-card card overflow-hidden">
+        <div class="report-data-head">
+          <div class="workspace-tabs report-tabs" role="tablist">${reportTab("revenue")}${reportTab("guests")}${reportTab("retention")}${reportTab("commission")}</div>
+          <p>${esc(panelDescriptions[activeReportPanel] || panelDescriptions.revenue)}</p>
+        </div>
+        <div class="report-data-body">${panelContent}</div>
       </div>`;
     $("queryReportBtn").onclick = renderReport;
     $("exportReportBtn").onclick = exportReportCSV;

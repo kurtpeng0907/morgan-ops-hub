@@ -55,42 +55,213 @@
         }
         .loader-white { border-top-color: #ffffff; border-color: rgba(255,255,255,0.3); }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        :root {
+            --fd-ink: #172033;
+            --fd-muted: #64748b;
+            --fd-line: #dbe3ed;
+            --fd-panel: #ffffff;
+            --fd-canvas: #eef3f7;
+            --fd-soft: #f4f7fa;
+            --fd-accent: #0f766e;
+            --fd-accent-strong: #0b5f59;
+            --fd-accent-soft: #e7f6f3;
+            --fd-warm: #b45309;
+        }
+        * { letter-spacing: 0 !important; }
+        body.frontdesk-app {
+            background: var(--fd-canvas);
+            color: var(--fd-ink);
+            padding: 0;
+        }
+        .frontdesk-shell { max-width: 1180px; margin: 0 auto; padding: 24px; }
+        .frontdesk-topbar {
+            min-height: 76px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+            margin-bottom: 18px;
+        }
+        .frontdesk-brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+        .frontdesk-brand-mark {
+            width: 42px;
+            height: 42px;
+            border-radius: 10px;
+            display: grid;
+            place-items: center;
+            background: var(--fd-ink);
+            color: white;
+            font-weight: 900;
+            flex: 0 0 auto;
+        }
+        .frontdesk-brand h1 { font-size: 18px; font-weight: 900; line-height: 1.25; }
+        .frontdesk-brand p { margin-top: 2px; color: var(--fd-muted); font-size: 12px; font-weight: 700; }
+        .month-control {
+            display: grid;
+            grid-template-columns: 38px minmax(126px, auto) 38px;
+            align-items: center;
+            min-height: 44px;
+            border: 1px solid var(--fd-line);
+            border-radius: 10px;
+            background: var(--fd-panel);
+        }
+        .month-control button { height: 42px; display: grid; place-items: center; color: var(--fd-muted); }
+        .month-control button:hover { color: var(--fd-ink); background: var(--fd-soft); }
+        .month-control span { text-align: center; color: var(--fd-ink); font-size: 14px; font-weight: 900; }
+        .mode-switch {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            width: 100%;
+            max-width: 440px;
+            padding: 4px;
+            margin: 0 0 20px;
+            border: 1px solid var(--fd-line);
+            border-radius: 10px;
+            background: #e4eaf0;
+        }
+        .mode-switch button { min-height: 42px; border-radius: 7px; font-size: 14px; font-weight: 800; color: var(--fd-muted); }
+        .mode-switch .tab-active { color: var(--fd-ink); background: white; box-shadow: 0 1px 3px rgba(15,23,42,.08); }
+        .workspace-card {
+            border: 1px solid var(--fd-line);
+            border-radius: 12px;
+            background: var(--fd-panel);
+            box-shadow: 0 10px 30px rgba(15,23,42,.04);
+        }
+        .query-workspace { padding: 24px; }
+        .workspace-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
+        .workspace-heading h2 { font-size: 24px; font-weight: 900; color: var(--fd-ink); }
+        .workspace-heading p { margin-top: 5px; color: var(--fd-muted); font-size: 13px; font-weight: 600; }
+        .query-search {
+            max-width: none;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 10px;
+            padding: 0;
+            margin: 0;
+            border: 0;
+            box-shadow: none;
+            background: transparent;
+        }
+        .query-search input { min-height: 48px; border: 1px solid var(--fd-line); border-radius: 9px; background: var(--fd-soft); padding: 0 16px; }
+        .query-search button { min-height: 48px; border-radius: 9px; background: var(--fd-ink); padding: 0 24px; }
+        #searchErrorMsg { margin: 12px 0 0; text-align: left; }
+        .login-shell { max-width: 460px; margin: 48px auto; padding: 28px; border-radius: 12px; }
+        .portal-shell { padding: 0; border-radius: 12px; overflow: hidden; }
+        .portal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 22px 24px;
+            border-bottom: 1px solid var(--fd-line);
+            background: #fff;
+        }
+        .portal-kicker { color: var(--fd-accent); font-size: 11px; font-weight: 900; text-transform: uppercase; }
+        .portal-header h2 { margin-top: 3px; color: var(--fd-ink); font-size: 22px; font-weight: 900; }
+        .portal-tabs {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 4px;
+            margin: 0;
+            padding: 8px 24px;
+            border-bottom: 1px solid var(--fd-line);
+            background: var(--fd-soft);
+        }
+        .portal-tabs button { min-height: 42px; padding: 0 14px; border-radius: 8px; color: var(--fd-muted); font-size: 14px; font-weight: 800; }
+        .portal-tabs .portal-tab-active { border: 0; color: var(--fd-accent-strong); background: white; box-shadow: 0 1px 3px rgba(15,23,42,.08); }
+        .portal-content { padding: 24px; }
+        #portalSectionAppointments > .appointment-toolbar { margin-bottom: 20px; }
+        #myAppointmentsContainer { gap: 20px; }
+        #myAppointmentsContainer > .ops-grid { display: grid; gap: 16px; grid-template-columns: minmax(0, 1.35fr) minmax(280px, .65fr); }
+        .ops-panel { border: 1px solid var(--fd-line); border-radius: 10px; background: white; padding: 18px; }
+        .ops-panel.soft { background: var(--fd-soft); }
+        .period-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
+        .period-card { border: 1px solid var(--fd-line); border-radius: 9px; background: white; padding: 14px; }
+        .period-card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+        .period-card .metric-value { margin-top: 2px; color: var(--fd-ink); font-size: 20px; font-weight: 900; }
+        .period-card .metric-value.accent { color: var(--fd-accent); }
+        .period-card .metric-value.small { font-size: 15px; }
+        .upcoming-item { width: 100%; border: 1px solid var(--fd-line); border-radius: 9px; background: white; padding: 13px; text-align: left; }
+        .upcoming-item:hover { border-color: #83c9c1; background: #fbfefd; }
+        #portalSectionProfile form, #portalSectionSchedule > div:not([id]) { border-radius: 10px !important; }
+        #profileApprovalStatus, #scheduleApprovalStatus { margin-bottom: 16px; }
+        #myAppointmentsCalendarGrid > div { border-radius: 9px !important; }
+        .soft-input { border-color: var(--fd-line); background: var(--fd-soft); }
+        .soft-input:focus { border-color: #6fbab2; box-shadow: 0 0 0 3px rgba(15,118,110,.10); }
+        button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid rgba(15,118,110,.18); outline-offset: 2px; }
+        @media (max-width: 767px) {
+            .frontdesk-shell { padding: 12px; }
+            .frontdesk-topbar { min-height: 58px; margin-bottom: 10px; gap: 10px; }
+            .frontdesk-brand-mark { width: 36px; height: 36px; border-radius: 8px; }
+            .frontdesk-brand h1 { font-size: 15px; }
+            .frontdesk-brand p { display: none; }
+            .month-control { grid-template-columns: 34px minmax(96px, auto) 34px; min-height: 40px; }
+            .month-control button { height: 38px; }
+            .month-control span { font-size: 12px; }
+            .mode-switch { max-width: none; margin-bottom: 12px; }
+            .query-workspace { padding: 16px; }
+            .workspace-heading { display: block; margin-bottom: 16px; }
+            .workspace-heading h2 { font-size: 20px; }
+            .query-search { grid-template-columns: 1fr; }
+            .query-search button { width: 100%; }
+            .login-shell { margin: 20px auto; padding: 20px; }
+            .portal-header { padding: 16px; }
+            .portal-header h2 { font-size: 19px; }
+            .portal-header .logout-label { display: none; }
+            .portal-tabs { padding: 6px; position: sticky; top: 0; z-index: 20; }
+            .portal-tabs button { min-height: 44px; padding: 0 6px; font-size: 12px; }
+            .portal-content { padding: 14px; }
+            #myAppointmentsContainer > .ops-grid { grid-template-columns: 1fr; }
+            .period-grid { grid-template-columns: 1fr; }
+            .period-card-grid { grid-template-columns: repeat(4, minmax(0,1fr)); }
+            .period-card .metric-value { font-size: 18px; }
+            .period-card .metric-value.small { font-size: 14px; }
+            #myAppointmentsCalendarContainer { overflow-x: auto; }
+            #myAppointmentsCalendarContainer > div { min-width: 650px; }
+            #queryScheduleContainer { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+        }
+        @media (max-width: 420px) {
+            .frontdesk-brand-mark { display: none; }
+            .period-card-grid { grid-template-columns: 1fr 1fr; }
+            .appointment-toolbar { align-items: stretch !important; }
+        }
     </style>
 </head>
-<body class="p-4 md:p-10 min-h-screen flex flex-col selection:bg-zinc-200">
+<body class="frontdesk-app min-h-screen selection:bg-zinc-200">
 
-    <div class="max-w-5xl mx-auto w-full flex-1">
+    <div class="frontdesk-shell w-full min-h-screen">
         
         <!-- 表頭設計 -->
-        <header class="mb-12 text-center pt-8">
-            <h1 class="text-3xl md:text-4xl font-black text-zinc-900 mb-4 tracking-tight">排班與預約管理</h1>
-            <div class="flex items-center justify-center gap-3 text-zinc-500">
-                <button onclick="changeMonth(-1)" class="p-2 hover:bg-zinc-100 rounded-full transition-colors">
+        <header class="frontdesk-topbar">
+            <div class="frontdesk-brand">
+                <div class="frontdesk-brand-mark">M</div>
+                <div><h1>Morgan 師傅工作台</h1><p>MSOT1.0 · 查班表、看行程、完成服務回報</p></div>
+            </div>
+            <div class="month-control">
+                <button onclick="changeMonth(-1)" aria-label="上個月">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
                 </button>
-                <span id="headerDateRange" class="text-lg font-bold text-zinc-800 w-32 tracking-wider">載入中...</span>
-                <button onclick="changeMonth(1)" class="p-2 hover:bg-zinc-100 rounded-full transition-colors">
+                <span id="headerDateRange">載入中...</span>
+                <button onclick="changeMonth(1)" aria-label="下個月">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
                 </button>
             </div>
         </header>
 
         <!-- 主導航 -->
-        <div class="flex flex-wrap justify-center bg-zinc-100/80 p-1.5 rounded-2xl mx-auto w-fit mb-10 border border-zinc-200/50">
-            <button onclick="switchTab('query')" id="tabQuery" class="px-8 py-2.5 rounded-xl tab-active transition-all text-sm tracking-wide">全域班表查詢</button>
-            <button onclick="switchTab('edit')" id="tabEdit" class="px-8 py-2.5 rounded-xl tab-inactive transition-all text-sm tracking-wide flex items-center gap-2">
-                個人管理中樞 
-                <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
-            </button>
+        <div class="mode-switch">
+            <button onclick="switchTab('query')" id="tabQuery" class="tab-active transition-all">班表查詢</button>
+            <button onclick="switchTab('edit')" id="tabEdit" class="tab-inactive transition-all">我的工作台</button>
         </div>
 
         <div id="mainContent">
             <!-- ==================== 查詢模式 ==================== -->
-            <div id="viewQuery" class="transition-opacity duration-300">
-                <div class="glass-card rounded-2xl p-2 max-w-xl mx-auto mb-12 flex items-center shadow-sm">
-                    <div class="pl-4 text-zinc-400"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg></div>
+            <div id="viewQuery" class="workspace-card query-workspace transition-opacity duration-300">
+                <div class="workspace-heading"><div><h2>查詢每月班表</h2><p>輸入師傅編號，即可查看該月每天的上班時段。</p></div></div>
+                <div class="query-search">
                     <input type="text" id="searchInput" placeholder="請輸入欲查詢的師傅編號，如：001" class="flex-1 px-4 py-3 bg-transparent text-zinc-800 placeholder-zinc-400 outline-none font-medium" onkeypress="if(event.key === 'Enter') handleSearch()">
-                    <button onclick="handleSearch()" id="searchBtn" class="bg-zinc-900 text-white px-6 py-3 rounded-xl hover:bg-zinc-800 font-medium text-sm flex items-center transition-all">
+                    <button onclick="handleSearch()" id="searchBtn" class="bg-zinc-900 text-white hover:bg-zinc-800 font-bold text-sm flex items-center justify-center transition-all">
                         <span id="searchBtnText">查詢</span>
                         <div id="searchLoader" class="loader loader-white hidden ml-2"></div>
                     </button>
@@ -119,7 +290,7 @@
             <div id="viewEdit" class="hidden transition-opacity duration-300">
                 
                 <!-- 登入卡片 -->
-                <div id="loginForm" class="glass-card p-8 md:p-10 rounded-3xl max-w-md mx-auto">
+                <div id="loginForm" class="workspace-card login-shell">
                     <div class="mb-8">
                         <h2 class="text-2xl font-black text-zinc-900 mb-2 tracking-tight">安全驗證</h2>
                         <p class="text-sm text-zinc-500 font-medium">請登入以檢視個人預約與編輯排班。</p>
@@ -136,25 +307,27 @@
                 </div>
 
                 <!-- 師傅專屬中樞介面 -->
-                <div id="editForm" class="hidden glass-card p-6 md:p-10 rounded-3xl w-full mx-auto shadow-sm">
+                <div id="editForm" class="hidden workspace-card portal-shell w-full mx-auto">
                     
-                    <div class="flex justify-between items-center mb-6 pb-6 border-b border-zinc-100">
+                    <div class="portal-header">
                         <div>
-                            <p class="text-zinc-500 text-sm font-bold tracking-widest uppercase mb-1">按摩師個人中樞</p>
-                            <h2 class="text-2xl font-black text-zinc-900 tracking-tight" id="loggedInName">--</h2>
+                            <p class="portal-kicker">已登入師傅</p>
+                            <h2 id="loggedInName">--</h2>
                         </div>
-                        <button onclick="logout()" class="text-sm text-zinc-500 hover:text-zinc-900 font-bold transition-colors bg-zinc-100 px-4 py-2 rounded-lg">安全登出</button>
+                        <button onclick="logout()" class="text-sm text-zinc-500 hover:text-zinc-900 font-bold transition-colors bg-zinc-100 px-4 py-2 rounded-lg"><span class="logout-label">安全</span>登出</button>
                     </div>
 
                     <!-- 內部次導航 -->
-                    <div class="flex flex-wrap gap-6 mb-8 border-b border-zinc-200">
-                        <button onclick="switchPortalTab('profile')" id="portalTabProfile" class="pb-3 px-1 portal-tab-active text-base transition-all">我的人事資料</button>
-                        <button onclick="switchPortalTab('schedule')" id="portalTabSchedule" class="pb-3 px-1 portal-tab-inactive text-base transition-all">我的排班設定</button>
-                        <button onclick="switchPortalTab('appointments')" id="portalTabAppointments" class="pb-3 px-1 portal-tab-inactive text-base transition-all">當月預約與回報</button>
+                    <div class="portal-tabs">
+                        <button onclick="switchPortalTab('appointments')" id="portalTabAppointments" class="portal-tab-active transition-all">今日工作</button>
+                        <button onclick="switchPortalTab('schedule')" id="portalTabSchedule" class="portal-tab-inactive transition-all">我的排班</button>
+                        <button onclick="switchPortalTab('profile')" id="portalTabProfile" class="portal-tab-inactive transition-all">個人資料</button>
                     </div>
 
+                    <div class="portal-content">
+
                     <!-- 區塊 A：個人人事資料 -->
-                    <div id="portalSectionProfile" class="block">
+                    <div id="portalSectionProfile" class="hidden">
                         <div id="profileApprovalStatus" class="mb-5"></div>
                         <div id="profileFormContainer"></div>
                     </div>
@@ -177,8 +350,8 @@
                     </div>
 
                     <!-- 區塊 C：預約與回報 -->
-                    <div id="portalSectionAppointments" class="hidden">
-                        <div class="flex flex-col sm:flex-row items-start sm:items-end justify-between mb-6 gap-4">
+                    <div id="portalSectionAppointments" class="block">
+                        <div class="appointment-toolbar flex flex-col sm:flex-row items-start sm:items-end justify-between gap-4">
                             <div>
                                 <p class="text-sm text-zinc-500 font-medium">此處顯示您於 <span id="apptMonthLabel" class="font-bold text-zinc-800"></span> 的預約排程。<br>服務完成後，請點擊區塊填寫「實際回款金額」與「顧客偏好備註」。</p>
                             </div>
@@ -203,85 +376,8 @@
                         </div>
                     </div>
 
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- 師傅專屬：預約/排班 Modal (含抽成試算) -->
-    <div id="addAppointmentModal" class="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/60 hidden p-4 backdrop-blur-sm">
-        <div class="bg-white p-6 md:p-8 rounded-[2rem] shadow-2xl w-full max-w-md max-h-full flex flex-col overflow-y-auto">
-            <h2 class="text-xl font-black mb-5 pb-4 border-b border-zinc-200/50 flex justify-between items-center text-zinc-800">
-                <span id="apptModalTitle">新增顧客預約</span>
-                <span id="apptModalDateDisplay" class="text-sm font-bold text-teal-700 bg-teal-50 px-3 py-1 rounded-full shadow-sm border border-teal-100/50"></span>
-            </h2>
-            <div class="space-y-4 mb-5 flex-1">
-                <div>
-                    <label class="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">指定按摩師</label>
-                    <select id="apptTherapistId" class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none font-black text-zinc-700" disabled></select>
-                </div>
-                
-                <div class="grid grid-cols-2 gap-4">
-                    <div class="col-span-2 sm:col-span-1">
-                        <label class="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">服務課程</label>
-                        <select id="apptService" onchange="handleCourseChange()" class="w-full px-4 py-3 soft-input rounded-xl focus:ring-2 focus:ring-teal-400 outline-none font-bold text-zinc-700">
-                            <option value="">(自訂項目)</option>
-                            <option value="A60">A課程 60分 ($1,800)</option>
-                            <option value="C120">C課程 120分 ($2,800)</option>
-                            <option value="C90">C課程 90分 ($2,500)</option>
-                            <option value="D120">D課程 120分 ($2,400)</option>
-                            <option value="D90">D課程 90分 ($2,100)</option>
-                            <option value="OUT_DAY">外出 22:00前 ($3,200)</option>
-                            <option value="OUT_NIGHT">外出 22:00後 ($3,500)</option>
-                        </select>
-                    </div>
-                    <div class="col-span-2 sm:col-span-1">
-                        <label class="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">應收金額 ($)</label>
-                        <input type="number" id="apptPrice" placeholder="0" class="w-full px-4 py-3 soft-input rounded-xl focus:ring-2 focus:ring-teal-400 outline-none font-black text-rose-600">
-                    </div>
-                    
-                    <!-- ✨ 新增：抽成試算動態顯示區 -->
-                    <div id="commissionDisplay" class="col-span-2 hidden bg-teal-50/80 border border-teal-100/60 p-3 rounded-xl text-xs font-bold text-teal-700 flex justify-between items-center shadow-sm">
-                        <span>🏢 公司抽成：<span id="compCut">--</span></span>
-                        <span>💆‍♂️ 師傅實抽：<span id="therapistCut" class="text-teal-900 text-sm">--</span></span>
                     </div>
                 </div>
-
-                <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">預約時間 (起)</label>
-                        <input type="time" id="apptTime" onchange="calculateOptimalRoom()" class="w-full px-4 py-3 soft-input rounded-xl focus:ring-2 focus:ring-teal-400 outline-none font-bold text-zinc-700">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">時長 (分鐘)</label>
-                        <input type="number" id="apptDuration" value="60" min="10" step="10" onchange="calculateOptimalRoom()" class="w-full px-4 py-3 soft-input rounded-xl focus:ring-2 focus:ring-teal-400 outline-none font-bold text-zinc-700">
-                    </div>
-                </div>
-                
-                <div class="p-4 bg-zinc-50 border border-zinc-200 rounded-2xl relative shadow-sm">
-                    <label class="block text-xs font-black text-zinc-700 uppercase tracking-widest mb-2">工作室安排</label>
-                    <select id="apptRoom" class="w-full px-4 py-2.5 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-teal-400 outline-none font-black text-zinc-800 shadow-sm">
-                        <option value="R">Royal (R房) - 預設優先</option>
-                        <option value="T">Tiffany (T房)</option>
-                    </select>
-                    <p id="roomWarningMsg" class="text-xs text-zinc-500 mt-2 flex items-start gap-1 hidden"></p>
-                </div>
-
-                <div class="pt-2">
-                    <label class="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">聯絡方式 (電話/Line 帶入舊客)</label>
-                    <input type="text" id="apptPhone" placeholder="手機號碼或 Line ID" onkeyup="autoFillCustomerName(this.value)" class="w-full px-4 py-3 soft-input rounded-xl focus:ring-2 focus:ring-teal-400 outline-none font-bold text-zinc-700">
-                </div>
-                <div>
-                    <label class="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">顧客姓名</label>
-                    <input type="text" id="apptCustomer" placeholder="請輸入姓名" class="w-full px-4 py-3 soft-input rounded-xl focus:ring-2 focus:ring-teal-400 outline-none font-bold text-zinc-700">
-                </div>
-            </div>
-            
-            <p id="apptErrorMsg" class="text-rose-500 text-sm mb-4 hidden font-bold"></p>
-            
-            <div class="flex justify-end gap-3 pt-5 border-t border-zinc-200/50 mt-auto shrink-0">
-                <button onclick="document.getElementById('addAppointmentModal').classList.add('hidden')" class="px-6 py-3 bg-zinc-100 text-zinc-600 rounded-xl hover:bg-zinc-200 font-bold transition-colors shadow-sm">取消</button>
-                <button onclick="saveAppointment()" id="apptSaveBtn" class="px-6 py-3 bg-teal-600 text-white hover:bg-teal-700 rounded-xl font-bold flex items-center justify-center min-w-[120px]">儲存預約</button>
             </div>
         </div>
     </div>
@@ -337,21 +433,6 @@
         </div>
     </div>
 
-    <!-- 自訂衝突確認 Modal -->
-    <div id="conflictModal" class="fixed inset-0 z-[80] flex items-center justify-center bg-zinc-900/50 hidden p-4 backdrop-blur-sm">
-        <div class="bg-white p-6 md:p-8 rounded-[2rem] shadow-2xl w-full max-w-sm transform transition-all text-center border border-zinc-100">
-            <div class="w-16 h-16 rounded-2xl bg-amber-50 text-amber-500 mx-auto flex items-center justify-center mb-5 shadow-sm transform rotate-3">
-                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-            </div>
-            <h3 class="text-xl font-black text-zinc-800 mb-2 tracking-tight">時段衝突警告</h3>
-            <p id="conflictMsgText" class="text-sm text-zinc-600 mb-8 font-bold leading-relaxed whitespace-pre-wrap"></p>
-            <div class="flex justify-center gap-3">
-                <button onclick="document.getElementById('conflictModal').classList.add('hidden')" class="px-5 py-3 bg-zinc-100 rounded-xl text-zinc-600 hover:bg-zinc-200 transition-colors font-bold w-full">取消返回</button>
-                <button onclick="forceSaveAppointment()" class="px-5 py-3 bg-amber-500 text-white rounded-xl hover:bg-amber-600 transition-colors font-bold shadow-md w-full">強制儲存</button>
-            </div>
-        </div>
-    </div>
-
     <!-- 系統狀態提示 Snackbar -->
     <div id="snackbar" class="fixed bottom-8 left-1/2 transform -translate-x-1/2 bg-zinc-900 text-white px-6 py-3.5 rounded-2xl shadow-2xl transition-all duration-300 opacity-0 translate-y-4 pointer-events-none z-[100] flex items-center gap-3 w-[90%] md:w-auto text-center md:text-left border border-white/10">
         <span id="snackbarIcon" class="shrink-0"></span>
@@ -372,7 +453,6 @@
         let currentReportingApptId = null; 
         let currentReportingPhone = null;
         let currentEditAppointmentId = null;
-        let pendingAppointmentData = null; 
         let currentApptViewMode = 'list'; 
 
         const cleanPin = (value = "") => String(value ?? "").replace(/^'/, "").trim();
@@ -382,7 +462,9 @@
         };
         const cleanStaffCode = (value = "") => String(value ?? "").replace(/^'/, "").trim();
         const APPROVAL_PREFIX = "SYS_APPROVAL_";
+        const APPOINTMENT_META_PREFIX = "SYS_APPT_META_";
         const approvalKey = (id) => `${APPROVAL_PREFIX}${id}`;
+        const appointmentMetaKey = (id) => `${APPOINTMENT_META_PREFIX}${id}`;
         const approvalTypeLabel = (type) => ({ profile: "人事資料", schedule: "班表", password: "密碼" }[type] || type);
         const approvalStatusLabel = (status) => ({ pending: "待審核", approved: "已核可", rejected: "已退回" }[status] || status);
         const findTherapistId = (enteredId = "") => {
@@ -566,16 +648,26 @@
                 if (!res.ok) throw new Error(`HTTP 錯誤狀態碼：${res.status}`);
                 
                 const text = await res.text();
+                let nextDB;
                 try {
-                    globalDB = JSON.parse(text);
+                    nextDB = JSON.parse(text);
                 } catch (parseError) {
                     throw new Error("雲端回傳格式異常。");
                 }
+
+                if (!nextDB || typeof nextDB !== 'object' || nextDB.success === false) {
+                    throw new Error(nextDB?.error || "雲端拒絕存取。");
+                }
+                if (!['therapists', 'schedules', 'appointments', 'customers'].every(key => nextDB[key] && typeof nextDB[key] === 'object')) {
+                    throw new Error("雲端資料不完整，已保留目前畫面。");
+                }
+                globalDB = nextDB;
 
                 if (!globalDB.therapists) globalDB.therapists = {};
                 if (!globalDB.appointments) globalDB.appointments = {};
                 if (!globalDB.customers) globalDB.customers = {};
                 globalDB.approvals = {};
+                globalDB.appointmentMeta = {};
 
                 Object.keys(globalDB.customers).forEach(key => {
                     if (!key.startsWith('SYS_THERAPIST_PROFILE_')) return;
@@ -583,6 +675,14 @@
                     let profile = {};
                     try { profile = JSON.parse(globalDB.customers[key].notes || "{}"); } catch(e) {}
                     globalDB.therapists[id] = { ...(globalDB.therapists[id] || {}), ...profile };
+                });
+                Object.keys(globalDB.customers).forEach(key => {
+                    if (!key.startsWith(APPOINTMENT_META_PREFIX)) return;
+                    try {
+                        const meta = JSON.parse(globalDB.customers[key].notes || "{}");
+                        const id = meta.id || key.replace(APPOINTMENT_META_PREFIX, '');
+                        if (id) globalDB.appointmentMeta[id] = { ...meta, id };
+                    } catch(e) {}
                 });
                 Object.keys(globalDB.therapists).forEach(id => {
                     globalDB.therapists[id] = normalizeTherapistProfile(globalDB.therapists[id]);
@@ -597,6 +697,10 @@
                 
                 Object.keys(globalDB.appointments).forEach(key => {
                     let appt = globalDB.appointments[key];
+                    const meta = globalDB.appointmentMeta[key] || {};
+                    ['bookingStage', 'isCompleted', 'collectedPrice', 'remittanceDue', 'remittancePaid', 'remittanceMethod', 'selectionId'].forEach(field => {
+                        if (Object.prototype.hasOwnProperty.call(meta, field)) appt[field] = meta[field];
+                    });
                     appt.id = key; 
                     if (appt.date && (appt.date.includes(' ') || appt.date.includes('T'))) {
                         try {
@@ -627,10 +731,47 @@
             }
             const text = await res.text();
             try {
-                return text ? JSON.parse(text) : { ok: true };
+                const result = text ? JSON.parse(text) : { ok: true };
+                if (result?.success === false) throw new Error(result.error || "雲端拒絕寫入");
+                return result;
             } catch (e) {
+                if (/雲端拒絕|unauthorized|quota|exceeded/i.test(String(e?.message || e))) throw e;
                 return { ok: true, raw: text };
             }
+        }
+
+        const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+        let batchSupportPromise = null;
+
+        function supportsBatchWrites() {
+            if (!batchSupportPromise) {
+                batchSupportPromise = fetch(`${API_URL}?mode=capabilities&t=${Date.now()}`, { cache: 'no-store' })
+                    .then(res => res.ok ? res.json() : null)
+                    .then(payload => payload?.capabilities?.batch === true)
+                    .catch(() => false);
+            }
+            return batchSupportPromise;
+        }
+
+        async function postActionsAndVerify(actions, verifier, label = "資料") {
+            actions = actions.filter(Boolean);
+            if (actions.length > 1 && await supportsBatchWrites()) {
+                await postToDatabase({ action: 'batch', data: { actions } });
+            } else {
+                for (const payload of actions) await postToDatabase(payload);
+            }
+            for (const delay of [350, 700, 1200, 2000, 3000]) {
+                await wait(delay);
+                try {
+                    await fetchDatabase();
+                    if (verifier(globalDB)) return true;
+                } catch(e) {}
+            }
+            throw new Error(`${label}尚未獲得雲端確認`);
+        }
+
+        function postAndVerify(payload, verifier, label) {
+            return postActionsAndVerify([payload], verifier, label);
         }
 
         async function recordFrontdeskLogin(id) {
@@ -677,7 +818,15 @@
                 notes: JSON.stringify(request),
                 records: []
             };
-            await postToDatabase({ action: 'saveCustomer', data: { phone: approvalKey(id), ...globalDB.customers[approvalKey(id)] } });
+            const key = approvalKey(id);
+            await postAndVerify(
+                { action: 'saveCustomer', data: { phone: key, ...globalDB.customers[key] } },
+                cloud => {
+                    const saved = cloud.customers?.[key];
+                    return saved && String(saved.notes || '') === JSON.stringify(request);
+                },
+                "送審資料"
+            );
             renderApprovalStatusBlocks();
             return request;
         }
@@ -705,8 +854,8 @@
         window.switchTab = function(tabName) {
             ['query', 'edit'].forEach(n => {
                 const el = document.getElementById(`tab${n.charAt(0).toUpperCase() + n.slice(1)}`);
-                if(n === tabName) el.className = "px-8 py-2.5 rounded-xl tab-active transition-all text-sm tracking-wide flex items-center gap-2";
-                else el.className = "px-8 py-2.5 rounded-xl tab-inactive transition-all text-sm tracking-wide flex items-center gap-2";
+                if(n === tabName) el.className = "tab-active transition-all";
+                else el.className = "tab-inactive transition-all";
                 document.getElementById(`view${n.charAt(0).toUpperCase() + n.slice(1)}`).classList[n === tabName ? 'remove' : 'add']('hidden');
             });
         };
@@ -792,11 +941,16 @@
                 try {
                     const nextPin = cleanPin(data.newPin);
                     globalDB.therapists[currentUserId] = { ...profile, pin: nextPin };
-                    await postToDatabase({ action: 'addTherapist', data: therapistWritePayload(currentUserId, { ...globalDB.therapists[currentUserId], pin: nextPin }) });
+                    await postAndVerify(
+                        { action: 'addTherapist', data: therapistWritePayload(currentUserId, { ...globalDB.therapists[currentUserId], pin: nextPin }) },
+                        cloud => cleanPin(cloud.therapists?.[currentUserId]?.pin) === nextPin,
+                        "新密碼"
+                    );
                     profile.pin = nextPin;
                     event.currentTarget.reset();
                     showSnackbar("✅ 密碼已更新，下次請用新 PIN 登入。", "success");
                 } catch(e) {
+                    globalDB.therapists[currentUserId] = { ...profile, pin: cleanPin(profile.pin) };
                     showSnackbar("❌ 密碼更新失敗，請稍後再試。", "error");
                 } finally {
                     btn.disabled = false; btn.innerText = "更新密碼";
@@ -807,8 +961,8 @@
         window.switchPortalTab = function(tabName) {
             ['profile', 'schedule', 'appointments'].forEach(n => {
                 const el = document.getElementById(`portalTab${n.charAt(0).toUpperCase() + n.slice(1)}`);
-                if(n === tabName) el.className = "pb-3 px-1 portal-tab-active text-base transition-all";
-                else el.className = "pb-3 px-1 portal-tab-inactive text-base transition-all";
+                if(n === tabName) el.className = "portal-tab-active transition-all";
+                else el.className = "portal-tab-inactive transition-all";
                 
                 const section = document.getElementById(`portalSection${n.charAt(0).toUpperCase() + n.slice(1)}`);
                 if (n === tabName) section.classList.remove('hidden');
@@ -824,13 +978,13 @@
             const btnList = document.getElementById('btnApptViewList');
             const btnCal = document.getElementById('btnApptViewCal');
             if (mode === 'list') {
-                btnList.className = "flex-1 sm:flex-none px-5 py-2 text-xs font-bold rounded-lg bg-white shadow-sm text-zinc-800 transition-all tracking-wide";
-                btnCal.className = "flex-1 sm:flex-none px-5 py-2 text-xs font-bold rounded-lg text-zinc-500 hover:text-zinc-800 transition-all tracking-wide";
+                btnList.className = "flex-1 sm:flex-none px-5 py-2 text-xs font-bold rounded-lg bg-white shadow-sm text-zinc-800 transition-all";
+                btnCal.className = "flex-1 sm:flex-none px-5 py-2 text-xs font-bold rounded-lg text-zinc-500 hover:text-zinc-800 transition-all";
                 document.getElementById('myAppointmentsContainer').classList.remove('hidden');
                 document.getElementById('myAppointmentsCalendarContainer').classList.add('hidden');
             } else {
-                btnCal.className = "flex-1 sm:flex-none px-5 py-2 text-xs font-bold rounded-lg bg-white shadow-sm text-zinc-800 transition-all tracking-wide";
-                btnList.className = "flex-1 sm:flex-none px-5 py-2 text-xs font-bold rounded-lg text-zinc-500 hover:text-zinc-800 transition-all tracking-wide";
+                btnCal.className = "flex-1 sm:flex-none px-5 py-2 text-xs font-bold rounded-lg bg-white shadow-sm text-zinc-800 transition-all";
+                btnList.className = "flex-1 sm:flex-none px-5 py-2 text-xs font-bold rounded-lg text-zinc-500 hover:text-zinc-800 transition-all";
                 document.getElementById('myAppointmentsContainer').classList.add('hidden');
                 document.getElementById('myAppointmentsCalendarContainer').classList.remove('hidden');
             }
@@ -914,7 +1068,7 @@
                     document.getElementById('loggedInName').innerText = therapistName(id);
                     populateWeekSelector();
                     renderEditInputs();
-                    switchPortalTab('profile');
+                    switchPortalTab('appointments');
                     document.getElementById('loginForm').classList.add('hidden');
                     document.getElementById('editForm').classList.remove('hidden');
                     recordFrontdeskLogin(id);
@@ -979,127 +1133,6 @@
                 showSnackbar("❌ 送審失敗，請檢查網路連線。", "error");
             } finally {
                 btn.disabled = false; btnText.innerText = "送出班表變更審核"; loader.classList.add('hidden');
-            }
-        };
-
-        // ================= 顧客預約空間演算與預約 =================
-        window.handleCourseChange = function() {
-            const serviceCode = document.getElementById('apptService').value;
-            const durationInput = document.getElementById('apptDuration');
-            const priceInput = document.getElementById('apptPrice');
-            const roomSelect = document.getElementById('apptRoom');
-            const msgNode = document.getElementById('roomWarningMsg');
-            const commissionDisplay = document.getElementById('commissionDisplay');
-            const compCutSpan = document.getElementById('compCut');
-            const therapistCutSpan = document.getElementById('therapistCut');
-
-            if (!serviceCode) {
-                if(commissionDisplay) commissionDisplay.classList.add('hidden');
-                return;
-            }
-
-            const course = COURSE_CATALOG[serviceCode];
-            durationInput.value = course.duration;
-            priceInput.value = course.price;
-
-            if(commissionDisplay && course.therapistCut) {
-                const compCut = course.price - course.therapistCut;
-                compCutSpan.innerText = `$${compCut.toLocaleString()}`;
-                therapistCutSpan.innerText = `$${course.therapistCut.toLocaleString()}`;
-                commissionDisplay.classList.remove('hidden');
-            }
-
-            if (serviceCode.startsWith('OUT')) {
-                roomSelect.innerHTML = '<option value="OUT">外出服務 (無須房間)</option>';
-                roomSelect.value = 'OUT';
-                if(msgNode) msgNode.classList.add('hidden');
-            } else {
-                if (roomSelect.querySelector('option[value="OUT"]')) {
-                    roomSelect.innerHTML = '<option value="R">Royal (R房) - 預設優先</option><option value="T">Tiffany (T房)</option>';
-                }
-                calculateOptimalRoom();
-            }
-        };
-
-        window.calculateOptimalRoom = function() {
-            const serviceCode = document.getElementById('apptService').value;
-            if (serviceCode.startsWith('OUT')) return; 
-
-            const therapistId = document.getElementById('apptTherapistId').value;
-            const dateStr = document.getElementById('appointmentDate') ? document.getElementById('appointmentDate').value : new Date().toISOString().split('T')[0];
-            const timeStr = document.getElementById('apptTime').value;
-            const durationStr = document.getElementById('apptDuration').value;
-            const roomSelect = document.getElementById('apptRoom');
-            const msgNode = document.getElementById('roomWarningMsg');
-
-            if (!timeStr || !dateStr) return;
-
-            const duration = parseInt(durationStr) || 60;
-            const newStart = timeToMinutes(timeStr);
-            const newEnd = newStart + duration + 10; 
-
-            const allAppts = Object.values(globalDB.appointments || {}).filter(a => a.date === dateStr && a.id !== currentEditAppointmentId);
-
-            const isRoomAvailable = (targetRoom) => {
-                return !allAppts.some(a => {
-                    if (a.room !== targetRoom) return false;
-                    const aStart = timeToMinutes(a.time);
-                    const aEnd = aStart + a.duration + 10;
-                    return (newStart < aEnd && newEnd > aStart);
-                });
-            };
-
-            let optimalRoom = 'R'; 
-            let reason = "系統預設優先啟用 Royal 房。";
-            let warningLevel = 'info'; 
-
-            const therapistAppts = allAppts.filter(a => a.therapistId === therapistId && a.room !== 'OUT');
-            let prevAppt = null;
-            let minGap = Infinity;
-            let isTherapistBusy = false;
-            
-            therapistAppts.forEach(a => {
-                const aStart = timeToMinutes(a.time);
-                const aActualEnd = aStart + a.duration; 
-                
-                if (newStart < aActualEnd && (newStart + duration) > aStart) isTherapistBusy = true;
-
-                if (aActualEnd <= newStart && (newStart - aActualEnd) < minGap) {
-                    minGap = newStart - aActualEnd;
-                    prevAppt = a;
-                }
-            });
-
-            if (prevAppt && minGap <= 60) {
-                optimalRoom = prevAppt.room;
-                reason = `連續預約，自動安插於 ${optimalRoom} 房。`;
-            }
-
-            if (isRoomAvailable(optimalRoom)) {
-                roomSelect.value = optimalRoom;
-            } else {
-                const fallbackRoom = optimalRoom === 'R' ? 'T' : 'R';
-                if (isRoomAvailable(fallbackRoom)) {
-                    roomSelect.value = fallbackRoom;
-                    reason = `${optimalRoom} 房已被佔用，轉移至 ${fallbackRoom} 房。`;
-                    warningLevel = 'warn';
-                } else {
-                    reason = `強烈警告：該時段 R 房與 T 房皆已客滿！`;
-                    warningLevel = 'error';
-                }
-            }
-
-            if (isTherapistBusy) {
-                reason = `【嚴重衝突】該名師傅在此時段已有其他安排！\n${reason}`;
-                warningLevel = 'error';
-            }
-
-            if(msgNode) {
-                msgNode.innerText = reason;
-                msgNode.classList.remove('hidden');
-                if(warningLevel === 'info') msgNode.className = "text-xs text-teal-600 mt-2 flex items-start gap-1 font-bold whitespace-pre-wrap";
-                if(warningLevel === 'warn') msgNode.className = "text-xs text-amber-600 mt-2 flex items-start gap-1 font-bold whitespace-pre-wrap";
-                if(warningLevel === 'error') msgNode.className = "text-xs text-rose-600 mt-2 flex items-start gap-1 font-bold bg-rose-50 p-2 rounded whitespace-pre-wrap";
             }
         };
 
@@ -1178,17 +1211,17 @@
             };
         };
         const periodCardHtml = (label, stats) => `
-            <div class="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <div class="period-card">
                 <p class="text-xs font-black text-zinc-500">${label}</p>
-                <div class="mt-3 grid grid-cols-2 gap-3">
-                    <div><p class="text-[11px] font-bold text-zinc-400">服務客數</p><p class="text-2xl font-black text-zinc-900">${stats.guests}</p></div>
-                    <div><p class="text-[11px] font-bold text-zinc-400">抽成</p><p class="text-2xl font-black text-teal-700">${formatMoney(stats.therapistCut)}</p></div>
-                    <div><p class="text-[11px] font-bold text-zinc-400">已回款</p><p class="text-lg font-black text-indigo-700">${stats.paid.length} 筆</p></div>
-                    <div><p class="text-[11px] font-bold text-zinc-400">未回款</p><p class="text-lg font-black ${stats.unpaid.length ? 'text-rose-700' : 'text-zinc-400'}">${stats.unpaid.length} 筆</p></div>
+                <div class="period-card-grid">
+                    <div><p class="text-[11px] font-bold text-zinc-400">服務</p><p class="metric-value">${stats.guests}</p></div>
+                    <div><p class="text-[11px] font-bold text-zinc-400">抽成</p><p class="metric-value accent">${formatMoney(stats.therapistCut)}</p></div>
+                    <div><p class="text-[11px] font-bold text-zinc-400">已回</p><p class="metric-value small text-indigo-700">${stats.paid.length} 筆</p></div>
+                    <div><p class="text-[11px] font-bold text-zinc-400">未回</p><p class="metric-value small ${stats.unpaid.length ? 'text-rose-700' : 'text-zinc-400'}">${stats.unpaid.length} 筆</p></div>
                 </div>
             </div>`;
         const upcomingItemHtml = (appt) => `
-            <button onclick="openTherapistRecordModal('${appt.id}')" class="w-full rounded-2xl border border-zinc-200 bg-white p-4 text-left transition-colors hover:border-teal-300">
+            <button onclick="openTherapistRecordModal('${appt.id}')" class="upcoming-item transition-colors">
                 <div class="flex items-start justify-between gap-3">
                     <div><p class="font-black text-zinc-900">${appt.date} ${appt.time}</p><p class="mt-1 text-sm font-bold text-zinc-500">${esc(appt.customerName || '顧客')} · ${esc(COURSE_CATALOG[appt.service]?.name || appt.service || '服務')}</p></div>
                     <span class="rounded-full bg-teal-50 px-3 py-1 text-xs font-black text-teal-700">${appt.room === 'OUT' ? '外出' : `${appt.room || '-'}房`}</span>
@@ -1215,22 +1248,22 @@
             const weekStats = servicePeriodStats(appointments, weekStart, weekEnd);
             const monthStats = servicePeriodStats(appointments, monthStart, monthEnd);
             return `
-                <div class="grid gap-5 xl:grid-cols-[1.2fr_.8fr]">
-                    <div class="rounded-3xl border border-zinc-200 bg-zinc-50 p-5">
+                <div class="ops-grid">
+                    <div class="ops-panel soft">
                         <div class="mb-4 flex items-center justify-between gap-3">
-                            <div><h3 class="text-xl font-black text-zinc-900">我的服務總覽</h3><p class="text-sm font-bold text-zinc-500">以已完成服務計算客數與抽成，未回款列在下方。</p></div>
+                            <div><h3 class="text-xl font-black text-zinc-900">服務與收入</h3><p class="text-sm font-bold text-zinc-500">完成服務後，數字會自動更新。</p></div>
                             <span class="rounded-full bg-white px-3 py-1 text-xs font-black text-zinc-500">本月 ${monthStats.items.length} 筆排程</span>
                         </div>
-                        <div class="grid gap-3 lg:grid-cols-3">${periodCardHtml('今日', todayStats)}${periodCardHtml('本週', weekStats)}${periodCardHtml('本月', monthStats)}</div>
+                        <div class="period-grid">${periodCardHtml('今日', todayStats)}${periodCardHtml('本週', weekStats)}${periodCardHtml('本月', monthStats)}</div>
                     </div>
-                    <div class="rounded-3xl border border-zinc-200 bg-white p-5">
-                        <h3 class="text-lg font-black text-zinc-900">即將到來</h3>
+                    <div class="ops-panel">
+                        <h3 class="text-lg font-black text-zinc-900">下一個行程</h3>
                         <div class="mt-4 space-y-3">${upcoming.length ? upcoming.map(upcomingItemHtml).join("") : `<div class="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-center text-sm font-bold text-zinc-400">目前沒有即將到來的行程</div>`}</div>
                     </div>
                 </div>
-                <div class="rounded-3xl border border-zinc-200 bg-white p-5">
+                <div class="ops-panel">
                     <div class="mb-4 flex items-center justify-between gap-3">
-                        <div><h3 class="font-black text-zinc-900">未回款明細</h3><p class="text-xs font-bold text-zinc-500">僅列本月已完成但尚未回款的服務。</p></div>
+                        <div><h3 class="font-black text-zinc-900">待回款</h3><p class="text-xs font-bold text-zinc-500">本月已完成、尚未回款的服務。</p></div>
                         <span class="rounded-full ${monthStats.unpaid.length ? 'bg-rose-50 text-rose-700' : 'bg-zinc-100 text-zinc-500'} px-3 py-1 text-xs font-black">${monthStats.unpaid.length} 筆</span>
                     </div>
                     <div class="space-y-2">${remittanceRowsHtml(monthStats.unpaid)}</div>
@@ -1309,7 +1342,7 @@
                 if (todayAppts.length > 0) {
                     listHtml += `
                         <div>
-                            <h4 class="text-sm font-bold text-zinc-600 mb-4 flex items-center gap-2 border-b border-zinc-200/60 pb-2">📅 今日行程</h4>
+                            <h4 class="text-sm font-bold text-zinc-600 mb-4 flex items-center gap-2 border-b border-zinc-200/60 pb-2">今日行程</h4>
                             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">${todayAppts.map(a => createApptCardHtml(a, allApptsData)).join('')}</div>
                         </div>`;
                 }
@@ -1317,7 +1350,7 @@
                 if (weekAppts.length > 0) {
                     listHtml += `
                         <div>
-                            <h4 class="text-sm font-bold text-zinc-600 mb-4 flex items-center gap-2 border-b border-zinc-200/60 pb-2">🗓️ 本週行程</h4>
+                            <h4 class="text-sm font-bold text-zinc-600 mb-4 flex items-center gap-2 border-b border-zinc-200/60 pb-2">本週行程</h4>
                             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">${weekAppts.map(a => createApptCardHtml(a, allApptsData)).join('')}</div>
                         </div>`;
                 }
@@ -1325,7 +1358,7 @@
                 if (monthAppts.length > 0) {
                     listHtml += `
                         <div>
-                            <h4 class="text-sm font-bold text-zinc-600 mb-4 flex items-center gap-2 border-b border-zinc-200/60 pb-2">📅 本月其餘行程</h4>
+                            <h4 class="text-sm font-bold text-zinc-600 mb-4 flex items-center gap-2 border-b border-zinc-200/60 pb-2">本月其餘行程</h4>
                             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">${monthAppts.map(a => createApptCardHtml(a, allApptsData)).join('')}</div>
                         </div>`;
                 }
@@ -1439,22 +1472,48 @@
             }
 
             try {
-                await postToDatabase({ action: 'saveCustomer', data: { phone: currentReportingPhone, name: cust.name, notes: cust.notes, records: cust.records } });
-                
                 appt.collectedPrice = collectedPrice;
                 appt.isCompleted = isCompleted;
-                await postToDatabase({ 
-                    action: 'addAppointment', 
-                    data: { 
-                        appId: appt.id, date: appt.date, time: appt.time, duration: appt.duration, 
-                        room: appt.room, therapistId: appt.therapistId, customerName: appt.customerName, 
-                        phone: appt.phone, service: appt.service, price: appt.price,
-                        collectedPrice: collectedPrice, isCompleted: isCompleted
-                    } 
-                });
+                appt.bookingStage = isCompleted ? 'completed' : (appt.bookingStage || 'confirmed');
+                const appointmentData = {
+                    ...appt,
+                    appId: appt.id,
+                    collectedPrice,
+                    isCompleted,
+                    bookingStage: appt.bookingStage,
+                    remittanceDue: appt.remittanceDue || '',
+                    remittancePaid: appt.remittancePaid === true || String(appt.remittancePaid) === 'true',
+                    remittanceMethod: appt.remittanceMethod || '',
+                    notes: appt.notes || ''
+                };
+                const meta = {
+                    id: appt.id,
+                    bookingStage: appointmentData.bookingStage,
+                    isCompleted: appointmentData.isCompleted,
+                    collectedPrice: appointmentData.collectedPrice,
+                    remittanceDue: appointmentData.remittanceDue,
+                    remittancePaid: appointmentData.remittancePaid,
+                    remittanceMethod: appointmentData.remittanceMethod,
+                    selectionId: appointmentData.selectionId || ''
+                };
+                const metaKey = appointmentMetaKey(appt.id);
+                const metaStore = { name: `預約狀態-${appt.id}`, notes: JSON.stringify(meta), records: [] };
+                await postActionsAndVerify([
+                    { action: 'saveCustomer', data: { phone: currentReportingPhone, name: cust.name, notes: cust.notes, records: cust.records } },
+                    { action: 'addAppointment', data: appointmentData },
+                    { action: 'saveCustomer', data: { phone: metaKey, ...metaStore } }
+                ], cloud => {
+                    const saved = cloud.appointments?.[appt.id];
+                    const savedMeta = cloud.customers?.[metaKey];
+                    return saved
+                        && String(saved.collectedPrice || '') === String(collectedPrice || '')
+                        && (saved.bookingStage === appointmentData.bookingStage || JSON.parse(savedMeta?.notes || '{}').bookingStage === appointmentData.bookingStage)
+                        && Boolean(savedMeta);
+                }, "服務紀錄");
 
                 globalDB.customers[currentReportingPhone] = cust;
                 globalDB.appointments[currentReportingApptId] = appt;
+                globalDB.customers[metaKey] = metaStore;
 
                 renderMyAppointments(); 
                 closeTherapistRecordModal();

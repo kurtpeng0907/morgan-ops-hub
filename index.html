@@ -8,7 +8,7 @@
   <meta http-equiv="Expires" content="0">
   <title>內部營運管理中樞</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="./styles.css?v=20260616-db-guard-1">
+  <link rel="stylesheet" href="./styles.css?v=MSOT1.0">
 </head>
 <body class="h-screen overflow-hidden bg-slate-100 text-slate-800">
   <section id="loginView" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
@@ -19,7 +19,7 @@
         </div>
         <h1 class="text-2xl font-black">營運管理中樞</h1>
         <p id="sysStatus" class="mt-2 text-sm font-bold text-slate-500">請輸入帳號密碼完成授權</p>
-        <a href="./frontdesk.html?v=20260616-db-guard-1" class="login-frontdesk-link mt-3 inline-flex rounded-full bg-teal-50 px-4 py-2 text-sm font-black text-teal-700 hover:bg-teal-100">
+        <a href="./frontdesk.html?v=MSOT1.0" class="login-frontdesk-link mt-3 inline-flex rounded-full bg-teal-50 px-4 py-2 text-sm font-black text-teal-700 hover:bg-teal-100">
           前台師傅排班系統
         </a>
       </div>
@@ -37,34 +37,34 @@
 
   <section id="adminDashboard" class="hidden h-full w-full flex">
     <div id="sidebarOverlay" class="fixed inset-0 z-40 hidden bg-slate-950/50 lg:hidden"></div>
-    <aside id="adminSidebar" class="fixed inset-y-0 left-0 z-50 flex w-64 -translate-x-full flex-col bg-slate-950 text-slate-300 shadow-2xl transition-transform lg:relative lg:translate-x-0">
-      <div class="flex items-center justify-between border-b border-slate-800 p-5">
-        <div class="flex items-center gap-3">
-          <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-500 font-black text-white">M</div>
-          <div>
-            <h2 class="font-black text-white">管理營運系統</h2>
-            <p id="roleLabel" class="text-xs font-bold text-slate-500">營運後台</p>
+    <aside id="adminSidebar" class="fixed inset-y-0 left-0 z-50 flex w-60 -translate-x-full flex-col bg-slate-950 text-slate-300 shadow-2xl transition-transform lg:relative lg:translate-x-0">
+      <div class="sidebar-brand relative flex items-center justify-between border-b p-5">
+        <div class="sidebar-brand-stack flex min-w-0 flex-1 items-center gap-3">
+          <div class="app-brand-mark flex items-center justify-center" aria-hidden="true">M</div>
+          <div class="sidebar-brand-copy min-w-0 text-left">
+            <h2 class="truncate font-black">Morgan SPA</h2>
+            <p id="roleLabel" class="text-xs font-bold">營運管理系統</p>
           </div>
         </div>
-        <button id="closeSidebarBtn" class="rounded-lg p-2 text-slate-400 hover:bg-slate-800 lg:hidden">✕</button>
+        <button id="closeSidebarBtn" class="icon-button rounded-lg p-2 text-slate-400 hover:bg-slate-800 lg:hidden" aria-label="關閉選單"><i data-lucide="x"></i></button>
       </div>
       <nav id="adminNav" class="flex-1 space-y-2 overflow-y-auto p-3" aria-label="管理員導覽"></nav>
       <nav id="therapistNav" class="hidden flex-1 space-y-2 overflow-y-auto p-3" aria-label="師傅導覽"></nav>
       <div class="border-t border-slate-800 p-4">
-        <button id="logoutBtn" class="w-full rounded-xl px-4 py-2 text-sm font-bold text-slate-400 hover:bg-slate-800 hover:text-white">登出系統</button>
+        <button id="logoutBtn" class="flex w-full items-center gap-3 rounded-xl px-4 py-2 text-sm font-bold text-slate-400 hover:bg-slate-800 hover:text-white"><i data-lucide="log-out"></i><span>登出系統</span></button>
       </div>
     </aside>
 
     <main class="flex h-full min-w-0 flex-1 flex-col">
       <header class="glass-panel z-10 flex h-16 items-center justify-between border-b border-slate-200 px-4 md:px-8">
         <div class="flex min-w-0 items-center gap-3">
-          <button id="openSidebarBtn" class="rounded-lg p-2 text-slate-600 hover:bg-slate-200 lg:hidden">☰</button>
+          <button id="openSidebarBtn" class="icon-button rounded-lg p-2 text-slate-600 hover:bg-slate-200 lg:hidden" aria-label="開啟選單"><i data-lucide="menu"></i></button>
           <h2 id="pageTitle" class="truncate text-lg font-black md:text-xl">總覽儀表板</h2>
         </div>
         <div class="flex items-center rounded-xl bg-slate-100 p-1">
-          <button id="prevMonthBtn" class="month-btn">◀</button>
+          <button id="prevMonthBtn" class="month-btn" aria-label="上一個月"><i data-lucide="chevron-left"></i></button>
           <span id="currentDateRange" class="min-w-28 px-3 text-center text-sm font-black md:text-base">--</span>
-          <button id="nextMonthBtn" class="month-btn">▶</button>
+          <button id="nextMonthBtn" class="month-btn" aria-label="下一個月"><i data-lucide="chevron-right"></i></button>
         </div>
       </header>
 
@@ -93,8 +93,9 @@
       el.classList.remove("hidden");
     });
   </script>
-  <script src="./app.js?v=20260621-sync-meta-2"></script>
-  <script src="./report-accounting-patch.js?v=20260621-sync-meta-2"></script>
-  <script src="./remittance-fields-patch.js?v=20260621-sync-meta-2"></script>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <script src="./app.js?v=MSOT1.0"></script>
+  <script src="./report-accounting-patch.js?v=MSOT1.0"></script>
+  <script src="./remittance-fields-patch.js?v=MSOT1.0"></script>
 </body>
 </html>

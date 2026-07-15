@@ -299,22 +299,37 @@
         updatedAt: new Date().toISOString()
       };
       try {
-        const storageKey = `${CLIENT_SELECTION_PREFIX}${id}`;
         const res = await fetch(API_URL, {
           method: "POST",
           mode: "no-cors",
           body: JSON.stringify({
-            action: "saveCustomer",
-            data: {
-              phone: storageKey,
-              name: `客選-${selection.customerName || selection.customerContact}-${selection.selectedTherapistName}`,
-              notes: JSON.stringify(selection),
-              records: []
-            }
+            action: "submitClientSelection",
+            data: selection
           })
         });
         const accepted = res.ok || res.type === "opaque" || res.status === 302 || res.type === "opaqueredirect" || (res.status >= 200 && res.status < 400);
         if (!accepted) throw new Error(`HTTP ${res.status}`);
+        let confirmed = false;
+        for (const delay of [400, 800, 1400, 2200, 3200]) {
+          await new Promise(resolve => setTimeout(resolve, delay));
+          try {
+            const statusUrl = new URL(API_URL);
+            statusUrl.searchParams.set("mode", "clientSelection");
+            statusUrl.searchParams.set("selection", id);
+            statusUrl.searchParams.set("t", Date.now());
+            const check = await fetch(statusUrl.toString(), { cache: "no-store" });
+            const cloud = await check.json();
+            const stored = cloud.customers?.[`${CLIENT_SELECTION_PREFIX}${id}`];
+            const savedSelection = stored?.notes ? JSON.parse(stored.notes) : null;
+            if (savedSelection?.id === id
+              && savedSelection?.selectedTherapistId === selectedTherapistId
+              && savedSelection?.customerContact === contact) {
+              confirmed = true;
+              break;
+            }
+          } catch (e) {}
+        }
+        if (!confirmed) throw new Error("雲端尚未確認客選資料");
         $("selectionForm").innerHTML = `<div class="rounded-2xl bg-teal-50 p-5 text-teal-800"><h2 class="text-lg font-black">已送出選擇</h2><p class="mt-2 text-sm font-bold">店家確認時段、房間與預約後，會再與您聯繫。</p></div>`;
         document.querySelectorAll("[data-select]").forEach((button) => button.disabled = true);
       } catch (error) {

@@ -3,12 +3,8 @@
 (function patchRemittanceFields() {
   const originalRenderAppointmentDetail = renderAppointmentDetail;
 
-  const defaultRemittanceDueAmount = (appt) => Math.max(0, Number(appt.price || 0) - Number(COURSE_CATALOG[appt.service]?.therapistCut || 0));
-  const remittanceDueAmount = (appt) => {
-    const manual = String(appt.remittanceDue ?? "").trim();
-    return manual ? Math.max(0, Number(manual) || 0) : defaultRemittanceDueAmount(appt);
-  };
-  const isRemitted = (appt) => String(appt.remittancePaid) === "true" || Number(appt.collectedPrice || 0) > 0;
+  const remittanceDueAmount = (appt) => remittanceDueFor(appt);
+  const isRemitted = (appt) => isRemittancePaid(appt);
   const remittanceMethodOptions = (selected = "") => ["", "現金回帳", "轉帳"]
     .map((method) => `<option value="${esc(method)}" ${selected === method ? "selected" : ""}>${method || "選擇回帳管道"}</option>`)
     .join("");
@@ -65,7 +61,7 @@
     };
     if (draft.isCompleted) draft.bookingStage = "completed";
     const dueInput = String(data.remittanceDue ?? "").trim();
-    const due = Math.max(0, Number(dueInput === "" ? defaultRemittanceDueAmount(draft) : dueInput) || 0);
+    const due = Math.max(0, Number(dueInput === "" ? remittanceDueFor(draft) : dueInput) || 0);
     const paid = data.remittancePaid === "on";
     draft.remittanceDue = String(due);
     draft.remittancePaid = paid;
@@ -86,6 +82,7 @@
     err.classList.add("hidden");
 
     const commit = async () => {
+      const snapshot = snapshotDatabase();
       setFormBusy(form, true);
       if (old.phone && old.phone !== draft.phone && db.customers[old.phone]?.records) {
         db.customers[old.phone].records = db.customers[old.phone].records.filter((record) => record.id !== draft.id);
@@ -120,8 +117,12 @@
         syncAppointmentMeta(draft)
       ].filter(Boolean);
       if (old.phone && old.phone !== draft.phone && db.customers[old.phone]) actions.push({ action: "saveCustomer", data: { phone: old.phone, ...db.customers[old.phone] } });
-      await saveCloudActions(actions, "預約與回帳狀態已寫入雲端");
+      const saved = await saveCloudActions(actions, "預約與回帳狀態已寫入雲端");
       setFormBusy(form, false);
+      if (!saved) {
+        restoreDatabase(snapshot, "預約與回帳未獲雲端確認，已還原");
+        return;
+      }
       renderAll();
       activeAppointmentId = draft.id;
       switchTab("dispatch");
@@ -157,9 +158,10 @@
         return;
       }
       err.classList.add("hidden");
+      const snapshot = snapshotDatabase();
       setFormBusy(event.currentTarget, true);
       const reportDueInput = String(data.remittanceDue ?? "").trim();
-      const reportDue = Math.max(0, Number(reportDueInput === "" ? defaultRemittanceDueAmount(appt) : reportDueInput) || 0);
+      const reportDue = Math.max(0, Number(reportDueInput === "" ? companyCutFor(appt) : reportDueInput) || 0);
       appt.remittanceDue = String(reportDue);
       appt.remittancePaid = reportPaid;
       appt.remittanceMethod = method;
@@ -189,12 +191,16 @@
       if (idx >= 0) customer.records[idx] = { ...customer.records[idx], ...nextRecord };
       else customer.records.push(nextRecord);
       db.customers[appt.phone] = customer;
-      await saveCloudActions([
+      const saved = await saveCloudActions([
         { action: "addAppointment", data: appt },
         { action: "saveCustomer", data: { phone: appt.phone, ...customer } },
         syncAppointmentMeta(appt)
       ].filter(Boolean), "服務紀錄與回帳狀態已寫入雲端");
       setFormBusy(event.currentTarget, false);
+      if (!saved) {
+        restoreDatabase(snapshot, "服務紀錄與回帳未獲雲端確認，已還原");
+        return;
+      }
       closeModal();
       renderAll();
     };
