@@ -912,15 +912,45 @@ function adminLoginLogStore() {
   return db.customers[ADMIN_LOGIN_LOG_KEY];
 }
 
+function normalizeAuditRecord(record) {
+  let base = record;
+  if (typeof base === "string") {
+    try {
+      base = JSON.parse(base);
+    } catch {
+      base = { value: base };
+    }
+  }
+  if (!base || typeof base !== "object" || Array.isArray(base)) return {};
+  const nested = [base.data, base.payload, base.record, base.meta]
+    .filter((value) => value && typeof value === "object" && !Array.isArray(value));
+  return Object.assign({}, ...nested, base);
+}
+
+function auditField(record, keys, fallback = "舊紀錄未記錄") {
+  const item = normalizeAuditRecord(record);
+  for (const key of keys) {
+    const value = item[key];
+    if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+  }
+  return fallback;
+}
+
+function auditTimestamp(record) {
+  return auditField(record, ["at", "timestamp", "time", "createdAt", "updatedAt", "date"], "");
+}
+
 function adminLoginRecords(limit = 80) {
   return [...(db.customers[ADMIN_LOGIN_LOG_KEY]?.records || [])]
-    .sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")))
+    .map(normalizeAuditRecord)
+    .sort((a, b) => auditTimestamp(b).localeCompare(auditTimestamp(a)))
     .slice(0, limit);
 }
 
 function frontdeskLoginRecords(limit = 80) {
   return [...(db.customers[FRONTDESK_LOGIN_LOG_KEY]?.records || [])]
-    .sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")))
+    .map(normalizeAuditRecord)
+    .sort((a, b) => auditTimestamp(b).localeCompare(auditTimestamp(a)))
     .slice(0, limit);
 }
 
@@ -1343,8 +1373,7 @@ function currentTimelinePercent() {
 
 function scheduleBarHtml(shift = "") {
   const segments = parseShiftSegments(shift);
-  const nowPercent = currentTimelinePercent();
-  if (!segments.length) return `<div class="ops-schedule-track">${nowPercent === null ? "" : `<span class="schedule-now-line" style="left:${nowPercent}%"></span>`}</div>`;
+  if (!segments.length) return `<div class="ops-schedule-track"></div>`;
   const total = SCHEDULE_WINDOW_END - SCHEDULE_WINDOW_START;
   const blocks = segments.map((seg) => {
     const start = normalizedTimelineMinute(seg.start);
@@ -1355,7 +1384,7 @@ function scheduleBarHtml(shift = "") {
     const width = Math.max(3, right - left);
     return `<span class="ops-schedule-block" title="${esc(seg.label)}" style="left:${(left / total) * 100}%;width:${(width / total) * 100}%"><span>${esc(seg.label)}</span></span>`;
   }).join("");
-  return `<div class="ops-schedule-track">${blocks}${nowPercent === null ? "" : `<span class="schedule-now-line" title="目前時間" style="left:${nowPercent}%"></span>`}</div>`;
+  return `<div class="ops-schedule-track">${blocks}</div>`;
 }
 
 function dailyScheduleBoardHtml(dateKey) {
@@ -1376,6 +1405,7 @@ function dailyScheduleBoardHtml(dateKey) {
       </div>
     </div>
     ${working.map((row) => `<div class="ops-schedule-row"><div class="ops-schedule-person"><span class="ops-avatar">${esc(row.name.slice(0, 1))}</span><span class="min-w-0"><strong>${esc(row.name)}</strong><small>${esc(row.shift)}</small></span></div>${scheduleBarHtml(row.shift)}</div>`).join("")}
+    ${nowPercent === null ? "" : `<div class="ops-schedule-now-overlay" aria-hidden="true"><span class="ops-schedule-now-line" style="left:${nowPercent}%"></span></div>`}
     </div>
   </div>`;
 }
@@ -1655,7 +1685,7 @@ function appointmentQueryBoardHtml(dateKey, queryTime = "") {
 
 function doorPasswordRecordHtml() {
   const records = db.customers.SYS_DOOR_PWD?.records || [];
-  return records.length ? records.slice().reverse().map((r) => `<tr><td class="font-mono font-black">${esc(r.at || "")}</td><td class="font-black">${esc(r.value || "")}</td><td>${esc(r.reason || "手動更新")}</td></tr>`).join("") : `<tr><td colspan="3" class="py-8 text-center font-bold text-slate-400">尚無修改紀錄</td></tr>`;
+  return records.length ? records.slice().map(normalizeAuditRecord).reverse().map((r) => `<tr><td class="font-mono font-black">${esc(backupLabelTime(auditTimestamp(r)) || "舊紀錄未記錄")}</td><td class="font-black">${esc(auditField(r, ["value", "password", "code", "doorPassword"]))}</td><td>${esc(auditField(r, ["reason", "source", "type"]))}</td></tr>`).join("") : `<tr><td colspan="3" class="py-8 text-center font-bold text-slate-400">尚無修改紀錄</td></tr>`;
 }
 
 function hydrateResponsiveTables(root = document) {
@@ -3988,7 +4018,7 @@ function renderSystem() {
   const backups = listLocalBackups().slice(0, 8);
   const loginRows = adminLoginRecords(80);
   const frontdeskRows = frontdeskLoginRecords(80);
-  const doorRows = [...(db.customers.SYS_DOOR_PWD?.records || [])].reverse().slice(0, 20);
+  const doorRows = [...(db.customers.SYS_DOOR_PWD?.records || [])].map(normalizeAuditRecord).reverse().slice(0, 20);
   const backupRows = backups.length ? backups.map((item) => `<tr>
     <td class="font-mono font-black">${esc(backupLabelTime(item.at))}</td>
     <td><div class="font-black">${esc(item.reason || "資料修改前")}</div><div class="mt-1 text-xs font-bold text-slate-400">${esc(item.key.replace(`${LOCAL_BACKUP_PREFIX}-`, ""))}</div></td>
@@ -3997,21 +4027,21 @@ function renderSystem() {
     <td class="text-right"><button class="btn-light px-3 py-1 text-xs" data-download-backup="${esc(item.key)}">下載</button></td>
   </tr>`).join("") : `<tr><td colspan="5" class="py-10 text-center font-bold text-slate-400">尚無修改快照</td></tr>`;
   const loginTableRows = loginRows.length ? loginRows.map((item) => `<tr>
-    <td class="font-mono font-black">${esc(backupLabelTime(item.at))}</td>
-    <td><div class="font-black">${esc(item.adminName || item.adminId || "未知管理員")}</div><div class="mt-1 font-mono text-xs font-bold text-slate-400">${esc(item.adminId || "")}</div></td>
-    <td class="font-bold text-slate-600">${esc(item.source || "local")}</td>
-    <td class="max-w-[360px] truncate text-xs font-bold text-slate-500">${esc(item.device || "未記錄")}</td>
+    <td class="font-mono font-black">${esc(backupLabelTime(auditTimestamp(item)) || "舊紀錄未記錄")}</td>
+    <td><div class="font-black">${esc(auditField(item, ["adminName", "name", "adminId"], "未知管理員"))}</div><div class="mt-1 font-mono text-xs font-bold text-slate-400">${esc(auditField(item, ["adminId", "account", "userId"], ""))}</div></td>
+    <td class="font-bold text-slate-600">${esc(auditField(item, ["source", "origin", "host", "path"]))}</td>
+    <td class="max-w-[360px] truncate text-xs font-bold text-slate-500">${esc(auditField(item, ["device", "userAgent", "browser"]))}</td>
   </tr>`).join("") : `<tr><td colspan="4" class="py-10 text-center font-bold text-slate-400">尚無後台管理登入紀錄</td></tr>`;
   const frontdeskTableRows = frontdeskRows.length ? frontdeskRows.map((item) => `<tr>
-    <td class="font-mono font-black">${esc(backupLabelTime(item.at))}</td>
-    <td><div class="font-black">${esc(item.therapistName || item.therapistId || "未知師傅")}</div><div class="mt-1 font-mono text-xs font-bold text-slate-400">${esc(item.therapistId || "")}</div></td>
-    <td class="font-bold text-slate-600">${esc(item.source || "local")}</td>
-    <td class="max-w-[360px] truncate text-xs font-bold text-slate-500">${esc(item.device || "未記錄")}</td>
+    <td class="font-mono font-black">${esc(backupLabelTime(auditTimestamp(item)) || "舊紀錄未記錄")}</td>
+    <td><div class="font-black">${esc(auditField(item, ["therapistName", "name", "therapistId"], "未知師傅"))}</div><div class="mt-1 font-mono text-xs font-bold text-slate-400">${esc(auditField(item, ["therapistId", "staffId", "userId"], ""))}</div></td>
+    <td class="font-bold text-slate-600">${esc(auditField(item, ["source", "origin", "host", "path"]))}</td>
+    <td class="max-w-[360px] truncate text-xs font-bold text-slate-500">${esc(auditField(item, ["device", "userAgent", "browser"]))}</td>
   </tr>`).join("") : `<tr><td colspan="4" class="py-10 text-center font-bold text-slate-400">尚無前台師傅登入紀錄</td></tr>`;
   const doorTableRows = doorRows.length ? doorRows.map((item) => `<tr>
-    <td class="font-mono font-black">${esc(item.at || "")}</td>
-    <td class="font-mono text-lg font-black">${esc(item.value || "")}</td>
-    <td class="font-bold text-slate-600">${esc(item.reason || "未記錄")}</td>
+    <td class="font-mono font-black">${esc(backupLabelTime(auditTimestamp(item)) || "舊紀錄未記錄")}</td>
+    <td class="font-mono text-lg font-black">${esc(auditField(item, ["value", "password", "code", "doorPassword"]))}</td>
+    <td class="font-bold text-slate-600">${esc(auditField(item, ["reason", "source", "type"]))}</td>
   </tr>`).join("") : `<tr><td colspan="3" class="py-10 text-center font-bold text-slate-400">尚無大門密碼修改紀錄</td></tr>`;
   const noteStore = systemNoteStore();
   const noteRows = [...(noteStore.records || [])].reverse().slice(0, 6);
