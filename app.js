@@ -3276,6 +3276,7 @@ function drawCustomerRows() {
 
 function openCustomerModal(phone = "", recordsOpen = false) {
   const c = phone ? db.customers[phone] : null;
+  const historyCount = phone ? customerConsumptionHistory(phone).length : 0;
   const therapistOptions = Object.keys(db.therapists).map((id) => `<option value="${id}">${esc(therapistName(id))}</option>`).join("");
   showModal(`
     <div class="modal max-w-2xl">
@@ -3298,7 +3299,7 @@ function openCustomerModal(phone = "", recordsOpen = false) {
           </div>
           <button id="addRecordBtn" type="button" class="btn-teal mt-3">儲存此筆入檔</button>
         </div>
-        <div><h4 class="mb-3 font-black">歷史紀錄 <span class="badge bg-indigo-50 text-indigo-700">${c?.records?.length || 0}</span></h4><div id="recordList" class="space-y-3">${renderRecordList(phone)}</div></div>` : ""}
+        <div><h4 class="mb-3 font-black">消費與服務紀錄 <span id="recordCountBadge" class="badge bg-indigo-50 text-indigo-700">${historyCount}</span></h4><div id="recordList" class="space-y-3">${renderRecordList(phone)}</div></div>` : ""}
         <p id="customerError" class="hidden text-sm font-black text-rose-600"></p>
         <div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>關閉</button><button class="btn-teal">儲存基本資料</button></div>
       </form>
@@ -3331,9 +3332,54 @@ function openCustomerModal(phone = "", recordsOpen = false) {
   });
 }
 
+function customerConsumptionHistory(phone) {
+  const manualRecords = [...(db.customers[phone]?.records || [])];
+  const recordsById = new Map(manualRecords.filter((record) => record.id).map((record) => [String(record.id), record]));
+  const completedAppointments = Object.values(db.appointments).filter((appointment) => appointment.phone === phone && (normalizeBookingStage(appointment.bookingStage, appointment) === "completed" || String(appointment.isCompleted) === "true"));
+  const appointmentIds = new Set(completedAppointments.map((appointment) => String(appointment.id || appointment.appId || "")).filter(Boolean));
+  const appointmentHistory = completedAppointments.map((appointment) => {
+    const id = String(appointment.id || appointment.appId || "");
+    const record = recordsById.get(id) || {};
+    return {
+      ...record,
+      ...appointment,
+      id,
+      date: appointment.date || record.date || "",
+      time: appointment.time || record.time || "",
+      therapistId: appointment.therapistId || record.therapistId || "",
+      therapistName: record.therapistName || therapistName(appointment.therapistId),
+      service: appointment.service || record.service || "",
+      price: Number(appointment.price) || 0,
+      collectedPrice: appointment.collectedPrice || record.collectedPrice || "",
+      notes: record.notes || "",
+      appointmentLinked: true
+    };
+  });
+  const standaloneRecords = manualRecords.filter((record) => !record.id || !appointmentIds.has(String(record.id))).map((record) => ({
+    ...record,
+    price: Number(record.price || record.collectedPrice) || 0,
+    appointmentLinked: Boolean(record.id && db.appointments[record.id])
+  }));
+  return [...appointmentHistory, ...standaloneRecords].sort((a, b) => `${b.date || ""} ${b.time || ""}`.localeCompare(`${a.date || ""} ${a.time || ""}`));
+}
+
 function renderRecordList(phone) {
-  const records = [...(db.customers[phone]?.records || [])].sort((a, b) => String(b.date).localeCompare(String(a.date)));
-  return records.length ? records.map((r) => `<div class="rounded-xl border bg-white p-3"><div class="mb-1 flex justify-between gap-2"><b>${esc(r.date)}</b><span class="badge bg-slate-100 text-slate-600">${esc(courseName(r.service))}</span></div><p class="text-xs font-black text-teal-700">${esc(r.therapistName || therapistName(r.therapistId))}</p><p class="mt-1 whitespace-pre-wrap text-sm text-slate-600">${esc(r.notes || "尚未填寫細節")}</p>${db.appointments[r.id] ? `<button type="button" class="btn-light mt-3 px-3 py-1 text-xs" data-open-appt="${esc(r.id)}">開啟預約資料</button>` : ""}</div>`).join("") : `<div class="rounded-xl border border-dashed py-6 text-center text-sm font-bold text-slate-400">無紀錄</div>`;
+  const records = customerConsumptionHistory(phone);
+  return records.length ? records.map((record) => {
+    const displayPrice = Number(record.price || record.collectedPrice) || 0;
+    const remittance = Number(record.collectedPrice) || 0;
+    return `<article class="rounded-lg border bg-white p-4">
+      <div class="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+        <div>
+          <div class="flex flex-wrap items-center gap-2"><b>${esc(record.date || "未填日期")}${record.time ? ` ${esc(record.time)}` : ""}</b><span class="badge bg-slate-100 text-slate-600">${esc(courseName(record.service))}</span></div>
+          <p class="mt-1 text-xs font-black text-teal-700">${esc(record.therapistName || therapistName(record.therapistId))}</p>
+        </div>
+        <div class="text-left sm:text-right"><p class="text-xs font-bold text-slate-400">消費金額</p><strong class="text-lg text-slate-900">${money(displayPrice)}</strong>${remittance ? `<p class="text-xs font-bold text-teal-700">實際回款 ${money(remittance)}</p>` : ""}</div>
+      </div>
+      <p class="mt-3 whitespace-pre-wrap border-t pt-3 text-sm text-slate-600">${esc(record.notes || "尚未填寫服務備註")}</p>
+      ${record.appointmentLinked && record.id ? `<button type="button" class="btn-light mt-3 px-3 py-1 text-xs" data-open-appt="${esc(record.id)}">開啟預約資料</button>` : ""}
+    </article>`;
+  }).join("") : `<div class="rounded-lg border border-dashed py-6 text-center text-sm font-bold text-slate-400">尚無已完成的消費紀錄</div>`;
 }
 
 async function addCustomerRecord(phone) {
@@ -3349,6 +3395,11 @@ async function addCustomerRecord(phone) {
     return;
   }
   $("recordList").innerHTML = renderRecordList(phone);
+  if ($("recordCountBadge")) $("recordCountBadge").textContent = customerConsumptionHistory(phone).length;
+  $("recordList").querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => {
+    closeModal();
+    openAppointmentDetailPage(btn.dataset.openAppt);
+  });
 }
 
 function buildDateRange(start, end) {
