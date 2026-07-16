@@ -44,6 +44,7 @@ let appointmentRecordScope = "today";
 let activePersonnelPanel = "schedule";
 let activeReportPanel = "revenue";
 let activeSystemPanel = "status";
+let customerSortState = { key: "code", direction: "asc" };
 let scheduleFilterStart = "";
 let scheduleFilterEnd = "";
 let reportFilterStart = "";
@@ -3188,11 +3189,35 @@ function renderCustomers() {
         <div><h3 class="text-lg font-black">顧客資料庫 (CRM)</h3><p class="text-sm font-bold text-slate-500">熟客輪廓、偏好與消費歷程</p></div>
         <button id="addCustomerBtn" class="btn-teal">新增顧客檔案</button>
       </div>
-      <input id="customerSearchInput" class="input mb-5" placeholder="搜尋顧客編碼、姓名或聯絡方式">
-      <div class="table-wrap"><table><thead><tr><th>顧客編碼</th><th>聯絡方式</th><th>顧客姓名</th><th>累積預約</th><th>偏好備註</th><th class="text-right">操作</th></tr></thead><tbody id="customerRows"></tbody></table></div>
+      <div class="mb-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+        <div class="relative">
+          ${iconHtml("search", "pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400")}
+          <input id="customerSearchInput" class="input pl-10" placeholder="搜尋顧客編碼、姓名或聯絡方式">
+        </div>
+        <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-2 sm:flex sm:items-center">
+          <label class="sr-only" for="customerSortKey">排序依據</label>
+          <select id="customerSortKey" class="input min-w-0 sm:w-44">
+            <option value="code">顧客編號</option>
+            <option value="visits">來店次數</option>
+            <option value="spend">累積消費額</option>
+          </select>
+          <button id="customerSortDirection" type="button" class="btn-light inline-flex min-w-24 items-center justify-center gap-2" title="切換排序方向"></button>
+        </div>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>顧客編碼</th><th>聯絡方式</th><th>顧客姓名</th><th>來店次數</th><th>累積消費額</th><th>偏好備註</th><th class="text-right">操作</th></tr></thead><tbody id="customerRows"></tbody></table></div>
     </div>`;
   $("addCustomerBtn").onclick = () => openCustomerModal();
   $("customerSearchInput").oninput = drawCustomerRows;
+  $("customerSortKey").value = customerSortState.key;
+  $("customerSortKey").onchange = (event) => {
+    customerSortState.key = event.currentTarget.value;
+    customerSortState.direction = event.currentTarget.value === "code" ? "asc" : "desc";
+    drawCustomerRows();
+  };
+  $("customerSortDirection").onclick = () => {
+    customerSortState.direction = customerSortState.direction === "asc" ? "desc" : "asc";
+    drawCustomerRows();
+  };
   drawCustomerRows();
 }
 
@@ -3200,11 +3225,42 @@ function drawCustomerRows() {
   const rows = $("customerRows");
   if (!rows) return;
   const q = ($("customerSearchInput")?.value || "").trim().toLowerCase();
-  const html = Object.entries(db.customers).filter(([phone, c]) => !isSystemCustomerKey(phone) && (!q || phone.toLowerCase().includes(q) || String(c.code || "").toLowerCase().includes(q) || String(c.name || "").toLowerCase().includes(q))).map(([phone, c]) => {
-    const count = Object.values(db.appointments).filter((a) => a.phone === phone).length;
-    return `<tr><td class="font-mono font-black text-teal-700">${esc(c.code || "")}</td><td class="font-mono font-black text-indigo-700">${esc(phone)}</td><td class="font-black">${esc(c.name || "未填寫")}</td><td>${count <= 1 ? `<span class="badge border-emerald-200 bg-emerald-50 text-emerald-700">新客 (${count})</span>` : `<span class="badge border-amber-200 bg-amber-50 text-amber-800">熟客 (${count})</span>`}</td><td class="max-w-[280px] truncate">${esc(c.notes || "無")}</td><td class="text-right"><button class="btn-light px-3 py-1 text-xs" data-record="${esc(phone)}">檔案</button> <button class="rounded-lg bg-rose-50 px-3 py-1 text-xs font-black text-rose-700" data-delete-customer="${esc(phone)}">刪除</button></td></tr>`;
-  }).join("");
-  rows.innerHTML = html || `<tr><td colspan="6" class="py-8 text-center font-bold text-slate-400">無符合顧客</td></tr>`;
+  const appointmentsByPhone = Object.values(db.appointments).reduce((index, appointment) => {
+    const phone = String(appointment.phone || "");
+    if (phone) (index[phone] ||= []).push(appointment);
+    return index;
+  }, {});
+  const customerCodeValue = (code = "") => {
+    const numeric = String(code).match(/\d+/)?.[0];
+    return numeric ? Number(numeric) : Number.MAX_SAFE_INTEGER;
+  };
+  const customers = Object.entries(db.customers)
+    .filter(([phone, c]) => !isSystemCustomerKey(phone) && (!q || phone.toLowerCase().includes(q) || String(c.code || "").toLowerCase().includes(q) || String(c.name || "").toLowerCase().includes(q)))
+    .map(([phone, customer]) => {
+      const completed = (appointmentsByPhone[phone] || []).filter((appointment) => normalizeBookingStage(appointment.bookingStage, appointment) === "completed" || String(appointment.isCompleted) === "true");
+      return {
+        phone,
+        customer,
+        visits: completed.length,
+        spend: completed.reduce((sum, appointment) => sum + (Number(appointment.price) || 0), 0)
+      };
+    });
+  const direction = customerSortState.direction === "asc" ? 1 : -1;
+  customers.sort((a, b) => {
+    let comparison = 0;
+    if (customerSortState.key === "visits") comparison = a.visits - b.visits;
+    else if (customerSortState.key === "spend") comparison = a.spend - b.spend;
+    else comparison = customerCodeValue(a.customer.code) - customerCodeValue(b.customer.code) || String(a.customer.code || "").localeCompare(String(b.customer.code || ""), "zh-Hant", { numeric: true });
+    return comparison * direction || String(a.customer.code || a.phone).localeCompare(String(b.customer.code || b.phone), "zh-Hant", { numeric: true });
+  });
+  const html = customers.map(({ phone, customer: c, visits, spend }) => `<tr><td class="font-mono font-black text-teal-700">${esc(c.code || "")}</td><td class="font-mono font-black text-indigo-700">${esc(phone)}</td><td class="font-black">${esc(c.name || c.code || "未填寫")}</td><td><span class="badge ${visits <= 1 ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-800"}">${visits.toLocaleString()} 次</span></td><td class="font-black text-slate-800">${money(spend)}</td><td class="max-w-[280px] truncate">${esc(c.notes || "無")}</td><td class="text-right"><button class="btn-light px-3 py-1 text-xs" data-record="${esc(phone)}">檔案</button> <button class="rounded-lg bg-rose-50 px-3 py-1 text-xs font-black text-rose-700" data-delete-customer="${esc(phone)}">刪除</button></td></tr>`).join("");
+  rows.innerHTML = html || `<tr><td colspan="7" class="py-8 text-center font-bold text-slate-400">無符合顧客</td></tr>`;
+  const directionButton = $("customerSortDirection");
+  if (directionButton) {
+    const ascending = customerSortState.direction === "asc";
+    directionButton.innerHTML = `${iconHtml(ascending ? "arrow-up" : "arrow-down", "h-4 w-4")}<span>${ascending ? "升冪" : "降冪"}</span>`;
+  }
+  refreshIcons();
   rows.querySelectorAll("[data-record]").forEach((btn) => btn.onclick = () => openCustomerModal(btn.dataset.record, true));
   rows.querySelectorAll("[data-delete-customer]").forEach((btn) => btn.onclick = () => confirmAction("刪除 CRM 檔案", "顧客基本資料與服務紀錄將移除。", async () => {
     const snapshot = snapshotDatabase();
