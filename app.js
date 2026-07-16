@@ -1780,7 +1780,7 @@ function responsiveTableHtml(headers, rowsHtml, emptyColspan, extraClass = "") {
     const index = responsiveTableHtml._cellIndex || 0;
     const label = headers[index % headers.length] || "";
     responsiveTableHtml._cellIndex = index + 1;
-    return `<td${attrs} data-label="${esc(label)}"`;
+    return `<td${attrs} data-label="${esc(label)}">`;
   });
   responsiveTableHtml._cellIndex = 0;
   return `<div class="table-wrap mobile-card-table ${extraClass}"><table><thead><tr>${headerHtml}</tr></thead><tbody>${labeledRows || `<tr><td colspan="${emptyColspan || headers.length}" class="py-10 text-center font-bold text-slate-400">無資料</td></tr>`}</tbody></table></div>`;
