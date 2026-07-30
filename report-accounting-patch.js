@@ -1,6 +1,7 @@
 "use strict";
 
 (function patchFinanceAccounting() {
+  let activeInactiveBand = "all";
   const grossAmount = (appt) => Number(appt.price || 0);
   const remittanceDueAmount = (appt) => remittanceDueFor(appt);
   const isRemitted = (appt) => isRemittancePaid(appt);
@@ -20,11 +21,12 @@
     revenue: { label: "營收明細", icon: "receipt-text" },
     guests: { label: "每日來客", icon: "users" },
     retention: { label: "回客分析", icon: "repeat-2" },
-    commission: { label: "回帳總表", icon: "wallet-cards" }
+    commission: { label: "回帳總表", icon: "wallet-cards" },
+    overdue: { label: "未回客追蹤", icon: "calendar-clock" }
   };
   const reportTab = (panel) => `<button class="workspace-tab ${activeReportPanel === panel ? "active" : ""}" data-report-panel="${panel}">${iconHtml(reportTabs[panel].icon)}<span>${reportTabs[panel].label}</span></button>`;
 
-  const revenueTableHtml = (rows) => `<div class="table-wrap"><table><thead><tr><th>預約日期時間</th><th>顧客</th><th>師傅</th><th>服務</th><th class="text-right">應收總額</th><th class="text-right">應回帳金額</th><th>已回帳</th><th>回帳管道</th></tr></thead><tbody>${rows.length ? rows.map((appt) => `<tr><td><button data-open-appt="${esc(appt.id)}" class="font-mono font-black text-teal-700 hover:text-teal-900">${esc(appt.date)} ${esc(appt.time)}</button></td><td><button data-open-appt="${esc(appt.id)}" class="font-black hover:text-teal-700">${esc(customerDisplay(appt.phone, appt.customerName))}</button></td><td>${esc(therapistName(appt.therapistId))}</td><td>${esc(courseName(appt.service))}</td><td class="text-right font-black text-rose-600">${money(grossAmount(appt))}</td><td class="text-right font-black text-teal-700">${money(remittanceDueAmount(appt))}</td><td>${paidBadge(appt)}</td><td class="font-bold text-slate-600">${esc(remittanceMethod(appt))}</td></tr>`).join("") : `<tr><td colspan="8" class="py-10 text-center font-bold text-slate-400">該區間無預約</td></tr>`}</tbody></table></div>`;
+  const revenueTableHtml = (rows) => `<div class="table-wrap"><table><thead><tr><th>預約日期時間</th><th>顧客</th><th>師傅</th><th>服務</th><th class="text-right">應收總額</th><th class="text-right">應回帳金額</th><th>已回帳</th><th>回帳管道</th></tr></thead><tbody>${rows.length ? rows.map((appt) => `<tr><td><button data-open-appt="${esc(appt.id)}" class="font-mono font-black text-teal-700 hover:text-teal-900">${esc(appt.date)} ${esc(appt.time)}</button></td><td><button data-open-appt="${esc(appt.id)}" class="font-black hover:text-teal-700">${esc(customerDisplay(appt.phone, appt.customerName))}</button></td><td>${therapistReportNameHtml(appt.therapistId)}</td><td>${esc(courseName(appt.service))}</td><td class="text-right font-black text-rose-600">${money(grossAmount(appt))}</td><td class="text-right font-black text-teal-700">${money(remittanceDueAmount(appt))}</td><td>${paidBadge(appt)}</td><td class="font-bold text-slate-600">${esc(remittanceMethod(appt))}</td></tr>`).join("") : `<tr><td colspan="8" class="py-10 text-center font-bold text-slate-400">該區間無預約</td></tr>`}</tbody></table></div>`;
 
   const guestTableHtml = (rows) => {
     const allApptsByPhone = {};
@@ -50,7 +52,7 @@
   };
 
   const retentionTableHtml = (rows) => {
-    const stats = Object.keys(db.therapists).map((id) => {
+    const stats = reportTherapistIds(rows).map((id) => {
       const mine = rows.filter((appt) => appt.therapistId === id);
       const phoneCounts = {};
       mine.forEach((appt) => { if (appt.phone) phoneCounts[appt.phone] = (phoneCounts[appt.phone] || 0) + 1; });
@@ -58,11 +60,11 @@
       const returnGuests = Object.values(phoneCounts).filter((count) => count > 1).length;
       return { id, count: mine.length, unique, returnGuests, rate: unique ? Math.round((returnGuests / unique) * 100) : 0, total: mine.reduce((sum, appt) => sum + grossAmount(appt), 0) };
     }).filter((row) => row.count > 0).sort((a, b) => b.rate - a.rate || b.count - a.count);
-    return `<div class="table-wrap"><table><thead><tr><th>師傅</th><th class="text-right">服務筆數</th><th class="text-right">不重複顧客</th><th class="text-right">回客人數</th><th class="text-right">回客率</th><th class="text-right">應收總額</th></tr></thead><tbody>${stats.length ? stats.map((stat) => `<tr><td class="font-black text-teal-700">${esc(therapistName(stat.id))}</td><td class="text-right font-black">${stat.count}</td><td class="text-right font-black">${stat.unique}</td><td class="text-right font-black text-amber-700">${stat.returnGuests}</td><td class="text-right font-black text-indigo-700">${stat.rate}%</td><td class="text-right font-black text-rose-700">${money(stat.total)}</td></tr>`).join("") : `<tr><td colspan="6" class="py-10 text-center font-bold text-slate-400">該區間無師傅統計</td></tr>`}</tbody></table></div>`;
+    return `<div class="table-wrap"><table><thead><tr><th>師傅</th><th class="text-right">服務筆數</th><th class="text-right">不重複顧客</th><th class="text-right">回客人數</th><th class="text-right">回客率</th><th class="text-right">應收總額</th></tr></thead><tbody>${stats.length ? stats.map((stat) => `<tr><td class="font-black text-teal-700">${therapistReportNameHtml(stat.id)}</td><td class="text-right font-black">${stat.count}</td><td class="text-right font-black">${stat.unique}</td><td class="text-right font-black text-amber-700">${stat.returnGuests}</td><td class="text-right font-black text-indigo-700">${stat.rate}%</td><td class="text-right font-black text-rose-700">${money(stat.total)}</td></tr>`).join("") : `<tr><td colspan="6" class="py-10 text-center font-bold text-slate-400">該區間無師傅統計</td></tr>`}</tbody></table></div>`;
   };
 
   const remittanceTableHtml = (rows) => {
-    const stats = Object.keys(db.therapists).map((id) => {
+    const stats = reportTherapistIds(rows).map((id) => {
       const mine = rows.filter((appt) => appt.therapistId === id);
       const gross = mine.reduce((sum, appt) => sum + grossAmount(appt), 0);
       const due = mine.reduce((sum, appt) => sum + remittanceDueAmount(appt), 0);
@@ -70,7 +72,74 @@
       const unremitted = mine.reduce((sum, appt) => sum + unremittedAmount(appt), 0);
       return { id, count: mine.length, gross, due, remitted, unremitted };
     }).filter((row) => row.count > 0).sort((a, b) => b.gross - a.gross);
-    return `<div class="table-wrap"><table><thead><tr><th>師傅</th><th class="text-right">服務筆數</th><th class="text-right">應收總額</th><th class="text-right">應回帳金額</th><th class="text-right">已回帳金額</th><th class="text-right">未回帳金額</th></tr></thead><tbody>${stats.length ? stats.map((stat) => `<tr><td class="font-black text-teal-700">${esc(therapistName(stat.id))}</td><td class="text-right font-black">${stat.count}</td><td class="text-right font-black text-rose-700">${money(stat.gross)}</td><td class="text-right font-black text-teal-700">${money(stat.due)}</td><td class="text-right font-black text-emerald-700">${money(stat.remitted)}</td><td class="text-right font-black text-amber-700">${money(stat.unremitted)}</td></tr>`).join("") : `<tr><td colspan="6" class="py-10 text-center font-bold text-slate-400">該區間無回帳資料</td></tr>`}</tbody></table></div>`;
+    return `<div class="table-wrap"><table><thead><tr><th>師傅</th><th class="text-right">服務筆數</th><th class="text-right">應收總額</th><th class="text-right">應回帳金額</th><th class="text-right">已回帳金額</th><th class="text-right">未回帳金額</th></tr></thead><tbody>${stats.length ? stats.map((stat) => `<tr><td class="font-black text-teal-700">${therapistReportNameHtml(stat.id)}</td><td class="text-right font-black">${stat.count}</td><td class="text-right font-black text-rose-700">${money(stat.gross)}</td><td class="text-right font-black text-teal-700">${money(stat.due)}</td><td class="text-right font-black text-emerald-700">${money(stat.remitted)}</td><td class="text-right font-black text-amber-700">${money(stat.unremitted)}</td></tr>`).join("") : `<tr><td colspan="6" class="py-10 text-center font-bold text-slate-400">該區間無回帳資料</td></tr>`}</tbody></table></div>`;
+  };
+
+  const overdueBand = (days) => {
+    if (days >= 365) return { key: "365", label: "一年以上" };
+    if (days >= 180) return { key: "180", label: "180 天以上" };
+    if (days >= 90) return { key: "90", label: "90 天以上" };
+    if (days >= 60) return { key: "60", label: "60 天以上" };
+    if (days >= 45) return { key: "45", label: "45 天以上" };
+    if (days >= 30) return { key: "30", label: "30 天以上" };
+    return { key: "15", label: "15 天以上" };
+  };
+
+  const daysSinceService = (date) => {
+    const [year, month, day] = String(date || "").split("-").map(Number);
+    const [todayYear, todayMonth, todayDay] = todayKey().split("-").map(Number);
+    if (![year, month, day, todayYear, todayMonth, todayDay].every(Number.isFinite)) return -1;
+    return Math.floor((Date.UTC(todayYear, todayMonth - 1, todayDay) - Date.UTC(year, month - 1, day)) / 86400000);
+  };
+
+  const inactiveCustomerRows = () => {
+    const customers = {};
+    Object.values(db.appointments).forEach((appt) => {
+      const days = daysSinceService(appt.date);
+      if (days < 0 || !isBookingConfirmed(appt)) return;
+      const key = appt.phone || appt.customerName || appt.id;
+      customers[key] ||= {
+        key,
+        phone: appt.phone || "",
+        name: appt.customerName || db.customers[appt.phone]?.name || "未命名顧客",
+        latestDate: appt.date,
+        latestAppointment: appt,
+        latestDays: days,
+        count: 0
+      };
+      const row = customers[key];
+      row.count += 1;
+      if (appt.date > row.latestDate) {
+        row.latestDate = appt.date;
+        row.latestAppointment = appt;
+        row.latestDays = days;
+      }
+    });
+    return Object.values(customers)
+      .filter((row) => row.latestDays >= 15)
+      .map((row) => ({ ...row, band: overdueBand(row.latestDays) }))
+      .sort((a, b) => b.latestDays - a.latestDays || b.count - a.count);
+  };
+
+  const inactiveCustomerTableHtml = (customers) => {
+    const bandKeys = ["15", "30", "45", "60", "90", "180", "365"];
+    const allCard = `<button type="button" data-inactive-band="all" class="report-summary-card tone-teal text-left ${activeInactiveBand === "all" ? "ring-2 ring-teal-500 ring-offset-2" : ""}"><span>${iconHtml("users")}</span><div><p>全部未回客</p><strong>${customers.length}</strong><small>超過 15 天</small></div></button>`;
+    const summary = allCard + bandKeys.map((key) => {
+      const rows = customers.filter((row) => row.band.key === key);
+      const label = overdueBand(Number(key)).label;
+      return `<button type="button" data-inactive-band="${key}" class="report-summary-card tone-amber text-left ${activeInactiveBand === key ? "ring-2 ring-teal-500 ring-offset-2" : ""}"><span>${iconHtml("calendar-clock")}</span><div><p>${label}</p><strong>${rows.length}</strong><small>尚未回訪</small></div></button>`;
+    }).join("");
+    const visibleCustomers = activeInactiveBand === "all" ? customers : customers.filter((row) => row.band.key === activeInactiveBand);
+    const body = visibleCustomers.length ? visibleCustomers.map((row) => `<tr>
+      <td><button data-open-appt="${esc(row.latestAppointment.id)}" class="text-left font-black text-teal-700 hover:text-teal-900">${esc(customerDisplay(row.phone, row.name))}</button></td>
+      <td><span class="badge bg-amber-50 text-amber-700">${esc(row.band.label)}</span></td>
+      <td class="font-mono font-black">${esc(row.latestDate)}</td>
+      <td class="text-right font-black text-amber-700">${row.latestDays} 天</td>
+      <td class="text-right font-black">${row.count}</td>
+      <td>${therapistReportNameHtml(row.latestAppointment.therapistId)}</td>
+    </tr>`).join("") : `<tr><td colspan="6" class="py-10 text-center font-bold text-emerald-700">這個級距目前沒有未回訪顧客</td></tr>`;
+    const label = activeInactiveBand === "all" ? "全部未回訪顧客" : overdueBand(Number(activeInactiveBand)).label;
+    return `<div class="space-y-5"><div class="report-summary-grid overdue-summary-grid">${summary}</div><div class="flex items-center justify-between gap-3"><p class="text-sm font-bold text-slate-600">${esc(label)}：${visibleCustomers.length} 位顧客</p><button type="button" data-inactive-band="all" class="text-sm font-bold text-teal-700 hover:text-teal-900">顯示全部</button></div><div class="table-wrap"><table><thead><tr><th>顧客</th><th>未回訪級距</th><th>最後服務日期</th><th class="text-right">未回訪天數</th><th class="text-right">累積服務</th><th>最後服務師傅</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
   };
 
   renderReport = function renderReport() {
@@ -81,17 +150,20 @@
     const due = rows.reduce((sum, appt) => sum + remittanceDueAmount(appt), 0);
     const remitted = rows.reduce((sum, appt) => sum + remittedAmount(appt), 0);
     const unremitted = rows.reduce((sum, appt) => sum + unremittedAmount(appt), 0);
+    const inactiveCustomers = inactiveCustomerRows();
     const panelContent = {
       revenue: revenueTableHtml(rows),
       guests: guestTableHtml(rows),
       retention: retentionTableHtml(rows),
-      commission: remittanceTableHtml(rows)
+      commission: remittanceTableHtml(rows),
+      overdue: inactiveCustomerTableHtml(inactiveCustomers)
     }[activeReportPanel] || revenueTableHtml(rows);
     const panelDescriptions = {
       revenue: "逐筆核對應收、應回帳金額、回帳狀態與管道。",
       guests: "按日期比較來客、新客、回客與每日應收總額。",
       retention: "檢視各師傅服務量、顧客結構與回客表現。",
-      commission: "集中追蹤應回帳、已回帳與尚未回帳的金額。"
+      commission: "集中追蹤應回帳、已回帳與尚未回帳的金額。",
+      overdue: "依最後一次已確認、且日期已過的服務紀錄計算；同一顧客只顯示一列。"
     };
 
     $("view-report").innerHTML = `
@@ -105,7 +177,7 @@
           <label class="compact-date-field"><span>開始</span><input id="reportStartDate" type="date" value="${start}"></label>
           <label class="compact-date-field"><span>結束</span><input id="reportEndDate" type="date" value="${end}"></label>
           <button id="queryReportBtn" class="btn-light">${iconHtml("search")}查詢</button>
-          <button id="exportReportBtn" class="btn-teal">${iconHtml("download")}輸出</button>
+          <button id="exportReportBtn" class="btn-teal">${iconHtml("download")}${activeReportPanel === "overdue" ? "輸出目前級距" : "輸出"}</button>
         </div>
       </div>
       <div class="report-summary-grid">
@@ -117,7 +189,7 @@
       </div>
       <div class="report-data-card card overflow-hidden">
         <div class="report-data-head">
-          <div class="workspace-tabs report-tabs" role="tablist">${reportTab("revenue")}${reportTab("guests")}${reportTab("retention")}${reportTab("commission")}</div>
+          <div class="workspace-tabs report-tabs" role="tablist">${reportTab("revenue")}${reportTab("guests")}${reportTab("retention")}${reportTab("commission")}${reportTab("overdue")}</div>
           <p>${esc(panelDescriptions[activeReportPanel] || panelDescriptions.revenue)}</p>
         </div>
         <div class="report-data-body">${panelContent}</div>
@@ -129,6 +201,10 @@
       renderReport();
     });
     $("view-report").querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => openAppointmentDetailPage(btn.dataset.openAppt));
+    $("view-report").querySelectorAll("[data-inactive-band]").forEach((btn) => btn.onclick = () => {
+      activeInactiveBand = btn.dataset.inactiveBand;
+      renderReport();
+    });
     if (typeof hydrateResponsiveTables === "function") hydrateResponsiveTables($("view-report"));
   };
 
@@ -137,27 +213,36 @@
     const end = $("reportEndDate").value;
     const rows = reportRows(start, end);
     let csv = "\uFEFF";
-    if (activeReportPanel === "commission") {
+    if (activeReportPanel === "overdue") {
+      csv += "顧客,聯絡方式,未回訪級距,最後服務日期,未回訪天數,累積服務筆數,最後服務師傅\n";
+      const inactiveRows = inactiveCustomerRows();
+      const visibleInactiveRows = activeInactiveBand === "all"
+        ? inactiveRows
+        : inactiveRows.filter((row) => row.band.key === activeInactiveBand);
+      visibleInactiveRows.forEach((row) => {
+        csv += [customerDisplay(row.phone, row.name), row.phone, row.band.label, row.latestDate, row.latestDays, row.count, therapistExportName(row.latestAppointment.therapistId)].map(csvCell).join(",") + "\n";
+      });
+    } else if (activeReportPanel === "commission") {
       csv += "師傅,服務筆數,應收總額,應回帳金額,已回帳金額,未回帳金額\n";
-      Object.keys(db.therapists).forEach((id) => {
+      reportTherapistIds(rows).forEach((id) => {
         const mine = rows.filter((appt) => appt.therapistId === id);
         if (!mine.length) return;
         const gross = mine.reduce((sum, appt) => sum + grossAmount(appt), 0);
         const due = mine.reduce((sum, appt) => sum + remittanceDueAmount(appt), 0);
         const remitted = mine.reduce((sum, appt) => sum + remittedAmount(appt), 0);
         const unremitted = mine.reduce((sum, appt) => sum + unremittedAmount(appt), 0);
-        csv += [therapistName(id), mine.length, gross, due, remitted, unremitted].map(csvCell).join(",") + "\n";
+        csv += [therapistExportName(id), mine.length, gross, due, remitted, unremitted].map(csvCell).join(",") + "\n";
       });
     } else if (activeReportPanel === "retention") {
       csv += "師傅,服務筆數,不重複顧客,回客人數,回客率,應收總額\n";
-      Object.keys(db.therapists).forEach((id) => {
+      reportTherapistIds(rows).forEach((id) => {
         const mine = rows.filter((appt) => appt.therapistId === id);
         if (!mine.length) return;
         const phoneCounts = {};
         mine.forEach((appt) => { if (appt.phone) phoneCounts[appt.phone] = (phoneCounts[appt.phone] || 0) + 1; });
         const unique = Object.keys(phoneCounts).length;
         const returnGuests = Object.values(phoneCounts).filter((count) => count > 1).length;
-        csv += [therapistName(id), mine.length, unique, returnGuests, `${unique ? Math.round((returnGuests / unique) * 100) : 0}%`, mine.reduce((sum, appt) => sum + grossAmount(appt), 0)].map(csvCell).join(",") + "\n";
+        csv += [therapistExportName(id), mine.length, unique, returnGuests, `${unique ? Math.round((returnGuests / unique) * 100) : 0}%`, mine.reduce((sum, appt) => sum + grossAmount(appt), 0)].map(csvCell).join(",") + "\n";
       });
     } else if (activeReportPanel === "guests") {
       csv += "日期,來客數,不重複顧客,應收總額\n";
@@ -172,10 +257,13 @@
     } else {
       csv += "日期,時間,顧客編碼,顧客姓名,聯絡方式,負責師傅,服務項目,應收總額,應回帳金額,已回帳,回帳管道\n";
       rows.forEach((appt) => {
-        csv += [appt.date, appt.time, customerCode(appt.phone), appt.customerName || db.customers[appt.phone]?.name || "", appt.phone, therapistName(appt.therapistId), courseName(appt.service), grossAmount(appt), remittanceDueAmount(appt), isRemitted(appt) ? "是" : "否", remittanceMethod(appt)].map(csvCell).join(",") + "\n";
+        csv += [appt.date, appt.time, customerCode(appt.phone), appt.customerName || db.customers[appt.phone]?.name || "", appt.phone, therapistExportName(appt.therapistId), courseName(appt.service), grossAmount(appt), remittanceDueAmount(appt), isRemitted(appt) ? "是" : "否", remittanceMethod(appt)].map(csvCell).join(",") + "\n";
       });
     }
-    downloadCSV(csv, `報表_${activeReportPanel}_${start}_至_${end}.csv`);
+    const exportScope = activeReportPanel === "overdue"
+      ? (activeInactiveBand === "all" ? "全部未回訪" : overdueBand(Number(activeInactiveBand)).label.replace(/\s+/g, ""))
+      : `${start}_至_${end}`;
+    downloadCSV(csv, `報表_${activeReportPanel}_${exportScope}.csv`);
   };
 
   if ($("view-report") && !$("view-report").classList.contains("hidden")) renderReport();

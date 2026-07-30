@@ -643,7 +643,7 @@ tr:hover td { background:#f8fafc; }
 .ops-panel-header h3 { margin-top: 2px; font-size: 17px; font-weight: 950; }
 .ops-panel-header p { margin-top: 2px; color: var(--muted); font-size: 11px; font-weight: 750; }
 .ops-panel-body { padding: 8px 18px 16px; }
-.ops-side-stack { display: grid; gap: 16px; }
+.ops-side-stack { display: grid; align-items: start; gap: 16px; }
 
 .ops-schedule-scroll { max-width: 100%; max-height: 560px; overflow: auto; padding-bottom: 4px; }
 .ops-schedule-board { position: relative; min-width: 560px; }
@@ -682,9 +682,23 @@ tr:hover td { background:#f8fafc; }
 .ops-queue-icon.tone-violet, .ops-queue-count.tone-violet { background: #f4f3ff; color: #6938ef; }
 .ops-queue-icon.tone-coral, .ops-queue-count.tone-coral { background: #fff1f0; color: #d92d20; }
 
-.ops-door-panel .ops-panel-header { min-height: 64px; }
+.ops-store-tools .ops-panel-header { min-height: 64px; }
 .ops-live-clock { border-radius: 999px; background: #f2f4f7; padding: 5px 8px; color: #667085; font-size: 9px; font-weight: 900; }
-.ops-door-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 7px; padding: 12px 14px 14px; }
+.ops-tool-list { display: grid; gap: 10px; padding: 12px 14px 14px; }
+.ops-tool-card { border: 1px solid #edf0f5; border-radius: 8px; background: #fbfcfd; padding: 11px; }
+.ops-tool-heading { display: flex; min-width: 0; align-items: center; gap: 10px; }
+.ops-tool-heading > div { min-width: 0; }
+.ops-tool-heading strong { display: block; font-size: 12px; font-weight: 950; }
+.ops-tool-heading small { display: block; margin-top: 2px; overflow: hidden; color: var(--muted); font-size: 9px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.ops-tool-heading .ops-tool-balance { color: #087f5b; font-size: 16px; font-weight: 950; }
+.ops-tool-icon { display: inline-flex; width: 34px; height: 34px; flex: 0 0 34px; align-items: center; justify-content: center; border-radius: 50%; }
+.ops-tool-icon .lucide { width: 17px; height: 17px; }
+.ops-tool-icon.tone-blue { background: #eef4ff; color: #3538cd; }
+.ops-tool-icon.tone-violet { background: #f4f3ff; color: #6938ef; }
+.ops-tool-icon.tone-emerald { background: #e8f7f1; color: #087f5b; }
+.ops-tool-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-top: 10px; }
+.ops-tool-actions button { min-width: 0; padding: 8px 9px; font-size: 10px; }
+.ops-door-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 7px; margin-top: 10px; }
 .ops-door-controls .input { height: 42px; padding-block: 6px; font-size: 22px; font-weight: 950; letter-spacing: .08em; }
 .ops-door-controls button { min-width: 42px; padding: 8px 10px; font-size: 11px; }
 .ops-door-controls button .lucide { width: 15px; height: 15px; }

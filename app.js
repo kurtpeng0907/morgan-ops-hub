@@ -17,6 +17,12 @@ const COURSE_CATALOG = {
   OUT_NIGHT: { name: "外出 (22:00後)", duration: 120, price: 3500, therapistCut: 2200 }
 };
 
+// Historical-only profiles keep departed therapists visible in past reports
+// without restoring login, scheduling, or dispatch access.
+const HISTORICAL_THERAPISTS = {
+  "019": { nickname: "伊迪 Eddie", name: "伊迪 Eddie", employmentStatus: "resigned" }
+};
+
 const ADMIN_NAV_ITEMS = [
   { tab: "overview", label: "總覽", title: "總覽", icon: "layout-dashboard" },
   { tab: "dispatch", label: "預約", title: "預約系統", icon: "calendar-days" },
@@ -66,7 +72,12 @@ const refreshIcons = () => {
 const todayKey = () => toDateKey(new Date());
 const money = (n) => `$${(Number(n) || 0).toLocaleString()}`;
 const courseName = (code) => COURSE_CATALOG[code]?.name || code || "自訂服務";
-const therapistName = (id) => db.therapists[id]?.nickname || db.therapists[id]?.name || "未知";
+const therapistProfile = (id) => db.therapists[id] || HISTORICAL_THERAPISTS[id] || null;
+const therapistName = (id) => therapistProfile(id)?.nickname || therapistProfile(id)?.name || id || "未知";
+const isFormerTherapist = (id) => !db.therapists[id] && HISTORICAL_THERAPISTS[id]?.employmentStatus === "resigned";
+const reportTherapistIds = (rows = []) => [...new Set(rows.map((appt) => appt.therapistId).filter((id) => db.therapists[id] || HISTORICAL_THERAPISTS[id]))];
+const therapistReportNameHtml = (id) => `${esc(therapistName(id))}${isFormerTherapist(id) ? ' <span class="badge bg-slate-100 text-slate-600">已離職</span>' : ""}`;
+const therapistExportName = (id) => `${therapistName(id)}${isFormerTherapist(id) ? "（已離職）" : ""}`;
 const therapistWritePayload = (id, therapist = {}) => {
   const displayName = String(therapist.nickname || therapist.name || id || "").trim();
   return {
@@ -1255,7 +1266,7 @@ function openDailyBusinessSummary(day = todayKey()) {
   const unpaidCompany = Math.max(0, totalCompany - paidCompany);
   const completed = rows.filter((appt) => String(appt.isCompleted) === "true" || appt.bookingStage === "completed").length;
   const confirmed = rows.filter(isBookingConfirmed).length;
-  const therapistRows = Object.keys(db.therapists).map((id) => {
+  const therapistRows = reportTherapistIds(rows).map((id) => {
     const mine = rows.filter((appt) => appt.therapistId === id);
     return {
       id,
@@ -1266,7 +1277,7 @@ function openDailyBusinessSummary(day = todayKey()) {
     };
   }).filter((row) => row.count > 0).sort((a, b) => b.revenue - a.revenue);
   const therapistBody = therapistRows.length ? therapistRows.map((row) => `<tr>
-    <td class="font-black text-teal-700">${esc(therapistName(row.id))}</td>
+    <td class="font-black text-teal-700">${therapistReportNameHtml(row.id)}</td>
     <td class="text-right font-black">${row.count}</td>
     <td class="text-right font-black text-rose-700">${money(row.revenue)}</td>
     <td class="text-right font-black text-teal-700">${money(row.company)}</td>
@@ -1275,7 +1286,7 @@ function openDailyBusinessSummary(day = todayKey()) {
   const detailBody = rows.length ? rows.map((appt) => `<tr>
     <td><button data-open-appt="${esc(appt.id)}" class="font-mono font-black text-teal-700 hover:text-teal-900">${esc(appt.time || "--:--")}</button></td>
     <td><button data-open-appt="${esc(appt.id)}" class="text-left font-black hover:text-teal-700">${esc(customerDisplay(appt.phone, appt.customerName))}</button></td>
-    <td>${esc(therapistName(appt.therapistId))}</td>
+    <td>${therapistReportNameHtml(appt.therapistId)}</td>
     <td>${esc(courseName(appt.service))}</td>
     <td><span class="badge ${bookingStageClass(appt.bookingStage)}">${esc(bookingStageLabel(appt.bookingStage))}</span></td>
     <td class="text-right font-black text-rose-700">${money(appt.price)}</td>
@@ -1689,6 +1700,32 @@ function doorPasswordRecordHtml() {
   return records.length ? records.slice().map(normalizeAuditRecord).reverse().map((r) => `<tr><td class="font-mono font-black">${esc(backupLabelTime(auditTimestamp(r)) || "舊紀錄未記錄")}</td><td class="font-black">${esc(auditField(r, ["value", "password", "code", "doorPassword"]))}</td><td>${esc(auditField(r, ["reason", "source", "type"]))}</td></tr>`).join("") : `<tr><td colspan="3" class="py-8 text-center font-bold text-slate-400">尚無修改紀錄</td></tr>`;
 }
 
+function storeToolRecords(key) {
+  return Array.isArray(db.customers[key]?.records) ? db.customers[key].records : [];
+}
+
+function laundrySummary() {
+  const today = todayKey();
+  const records = storeToolRecords("SYS_LAUNDRY_LOG").filter((record) => String(record.date || record.at || "").startsWith(today));
+  const washes = records.filter((record) => record.type === "洗衣").reduce((sum, record) => sum + Number(record.count || 1), 0);
+  const dries = records.filter((record) => record.type === "烘衣").reduce((sum, record) => sum + Number(record.count || 1), 0);
+  return { washes, dries, total: washes + dries };
+}
+
+function storedValueBalance() {
+  return Number(db.customers.SYS_STORED_VALUE?.notes || 0);
+}
+
+function laundryRecordHtml() {
+  const records = storeToolRecords("SYS_LAUNDRY_LOG");
+  return records.length ? records.slice().reverse().map((record) => `<tr><td>${esc(record.at || record.date || "")}</td><td class="font-black">${esc(record.type || "")}</td><td>${esc(record.count || 1)} 次</td><td>${esc(record.note || "—")}</td></tr>`).join("") : `<tr><td colspan="4" class="py-8 text-center font-bold text-slate-400">尚無洗衣或烘衣紀錄</td></tr>`;
+}
+
+function storedValueRecordHtml() {
+  const records = storeToolRecords("SYS_STORED_VALUE");
+  return records.length ? records.slice().reverse().map((record) => `<tr><td>${esc(record.at || "")}</td><td class="${Number(record.change) >= 0 ? "text-teal-700" : "text-rose-600"} font-black">${Number(record.change) >= 0 ? "+" : ""}${money(Number(record.change || 0))}</td><td class="font-black">${money(Number(record.balance || 0))}</td><td>${esc(record.note || "—")}</td></tr>`).join("") : `<tr><td colspan="4" class="py-8 text-center font-bold text-slate-400">尚無儲值卡異動紀錄</td></tr>`;
+}
+
 function hydrateResponsiveTables(root = document) {
   root.querySelectorAll(".table-wrap table").forEach((table) => {
     if (table.querySelector("#scheduleHeader")) return;
@@ -2040,6 +2077,8 @@ function renderOverview() {
     <span class="ops-queue-count tone-${item.tone}">${item.count}</span>
     ${iconHtml("chevron-right", "ops-queue-arrow")}
   </button>`).join("");
+  const laundry = laundrySummary();
+  const storedBalance = storedValueBalance();
   $("view-overview").innerHTML = `
     <div class="ops-dashboard">
       <section class="ops-command-bar">
@@ -2078,9 +2117,22 @@ function renderOverview() {
             <header class="ops-panel-header"><div><span class="ops-section-kicker">下一步</span><h3>待處理</h3><p>依序完成今天還需要跟進的工作</p></div></header>
             <div class="ops-queue-list">${queueHtml}</div>
           </section>
-          <section class="ops-panel ops-door-panel">
-            <header class="ops-panel-header"><div><span class="ops-section-kicker">店務工具</span><h3>大門密碼</h3></div><span id="liveClock" class="ops-live-clock"></span></header>
-            <div class="ops-door-controls"><input id="doorPassword" class="input" value="${esc(db.customers.SYS_DOOR_PWD?.notes || "")}" aria-label="大門密碼"><button id="randomDoorBtn" class="btn-light">${iconHtml("dices")}<span>隨機</span></button><button id="doorHistoryBtn" class="btn-light">${iconHtml("history")}<span>紀錄</span></button><button id="saveDoorBtn" class="btn-teal">${iconHtml("save")}<span>儲存</span></button></div>
+          <section class="ops-panel ops-store-tools">
+            <header class="ops-panel-header"><div><span class="ops-section-kicker">店務工具</span><h3>每日店務紀錄</h3></div><span id="liveClock" class="ops-live-clock"></span></header>
+            <div class="ops-tool-list">
+              <article class="ops-tool-card">
+                <div class="ops-tool-heading"><span class="ops-tool-icon tone-blue">${iconHtml("key-round")}</span><div><strong>大門密碼</strong><small>更新後可查看歷史</small></div></div>
+                <div class="ops-door-controls"><input id="doorPassword" class="input" value="${esc(db.customers.SYS_DOOR_PWD?.notes || "")}" aria-label="大門密碼"><button id="randomDoorBtn" class="btn-light">${iconHtml("dices")}<span>隨機</span></button><button id="doorHistoryBtn" class="btn-light">${iconHtml("history")}<span>紀錄</span></button><button id="saveDoorBtn" class="btn-teal">${iconHtml("save")}<span>儲存</span></button></div>
+              </article>
+              <article class="ops-tool-card">
+                <div class="ops-tool-heading"><span class="ops-tool-icon tone-violet">${iconHtml("washing-machine")}</span><div><strong>洗衣／烘衣</strong><small>今日 洗 ${laundry.washes} 次 · 烘 ${laundry.dries} 次</small></div></div>
+                <div class="ops-tool-actions"><button id="addLaundryBtn" class="btn-teal">${iconHtml("plus")}<span>新增紀錄</span></button><button id="laundryHistoryBtn" class="btn-light">${iconHtml("history")}<span>查看紀錄</span></button></div>
+              </article>
+              <article class="ops-tool-card">
+                <div class="ops-tool-heading"><span class="ops-tool-icon tone-emerald">${iconHtml("wallet-cards")}</span><div><strong>儲值卡餘額</strong><small class="ops-tool-balance">${money(storedBalance)}</small></div></div>
+                <div class="ops-tool-actions"><button id="adjustStoredValueBtn" class="btn-teal">${iconHtml("plus-minus")}<span>登記異動</span></button><button id="storedValueHistoryBtn" class="btn-light">${iconHtml("history")}<span>查看紀錄</span></button></div>
+              </article>
+            </div>
           </section>
         </aside>
       </div>
@@ -2124,6 +2176,62 @@ function renderOverview() {
   $("doorHistoryBtn").onclick = () => {
     showModal(`<div class="modal max-w-2xl"><h3 class="mb-5 border-b pb-4 text-xl font-black">大門密碼修改紀錄</h3><div class="table-wrap"><table><thead><tr><th>時間</th><th>密碼</th><th>來源</th></tr></thead><tbody>${doorPasswordRecordHtml()}</tbody></table></div><div class="mt-5 flex justify-end border-t pt-4"><button class="btn-light" data-close-modal>關閉</button></div></div>`);
   };
+  $("addLaundryBtn").onclick = () => {
+    showModal(`<div class="modal max-w-lg"><h3 class="mb-5 border-b pb-4 text-xl font-black">新增洗衣／烘衣紀錄</h3><form id="laundryRecordForm" class="space-y-4"><div class="grid grid-cols-2 gap-3"><label><span class="label">作業</span><select name="type" class="input"><option>洗衣</option><option>烘衣</option></select></label><label><span class="label">次數</span><input name="count" type="number" min="1" class="input" value="1" required></label></div><label><span class="label">備註（選填）</span><input name="note" class="input" placeholder="例如：毛巾 2 袋"></label><div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">儲存紀錄</button></div></form></div>`);
+    $("laundryRecordForm").onsubmit = async (event) => {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.currentTarget));
+      const count = Number(data.count || 0);
+      if (!Number.isInteger(count) || count < 1) {
+        showSnackbar("次數必須是大於 0 的整數");
+        return;
+      }
+      const snapshot = snapshotDatabase();
+      const store = db.customers.SYS_LAUNDRY_LOG || { name: "洗衣烘衣紀錄", notes: "", records: [] };
+      store.records = Array.isArray(store.records) ? store.records : [];
+      store.records.push({ id: `LAUNDRY-${Date.now()}`, at: new Date().toLocaleString("zh-TW", { hour12: false }), date: todayKey(), type: data.type, count, note: String(data.note || "").trim() });
+      db.customers.SYS_LAUNDRY_LOG = store;
+      const saved = await saveCloudActions([{ action: "saveCustomer", data: { phone: "SYS_LAUNDRY_LOG", ...store } }], "洗衣烘衣紀錄已儲存");
+      if (!saved) {
+        restoreDatabase(snapshot, "洗衣烘衣紀錄未獲雲端確認，已還原");
+        return;
+      }
+      closeModal();
+      renderOverview();
+    };
+  };
+  $("laundryHistoryBtn").onclick = () => showModal(`<div class="modal max-w-2xl"><h3 class="mb-5 border-b pb-4 text-xl font-black">洗衣／烘衣紀錄</h3><div class="table-wrap"><table><thead><tr><th>時間</th><th>作業</th><th>次數</th><th>備註</th></tr></thead><tbody>${laundryRecordHtml()}</tbody></table></div><div class="mt-5 flex justify-end border-t pt-4"><button class="btn-light" data-close-modal>關閉</button></div></div>`);
+  $("adjustStoredValueBtn").onclick = () => {
+    showModal(`<div class="modal max-w-lg"><h3 class="mb-2 text-xl font-black">登記儲值卡異動</h3><p class="mb-5 text-sm font-bold text-slate-500">目前餘額 ${money(storedValueBalance())}；儲值輸入正數，使用輸入負數。</p><form id="storedValueForm" class="space-y-4"><label><span class="label">異動金額</span><input name="change" type="number" step="1" class="input" placeholder="例如 3000 或 -500" required></label><label><span class="label">備註</span><input name="note" class="input" placeholder="例如：購卡、耗材採購" required></label><div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">確認異動</button></div></form></div>`);
+    $("storedValueForm").onsubmit = async (event) => {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.currentTarget));
+      const change = Number(data.change || 0);
+      if (!Number.isFinite(change) || change === 0) {
+        showSnackbar("異動金額不可為 0");
+        return;
+      }
+      const snapshot = snapshotDatabase();
+      const store = db.customers.SYS_STORED_VALUE || { name: "儲值卡餘額", notes: "0", records: [] };
+      const balance = Number(store.notes || 0) + change;
+      if (balance < 0) {
+        showSnackbar("異動後餘額不可小於 0");
+        return;
+      }
+      store.notes = String(balance);
+      store.records = Array.isArray(store.records) ? store.records : [];
+      store.records.push({ id: `STORED-${Date.now()}`, at: new Date().toLocaleString("zh-TW", { hour12: false }), change, balance, note: String(data.note || "").trim() });
+      db.customers.SYS_STORED_VALUE = store;
+      const saved = await saveCloudActions([{ action: "saveCustomer", data: { phone: "SYS_STORED_VALUE", ...store } }], "儲值卡餘額已更新");
+      if (!saved) {
+        restoreDatabase(snapshot, "儲值卡餘額未獲雲端確認，已還原");
+        return;
+      }
+      closeModal();
+      renderOverview();
+    };
+  };
+  $("storedValueHistoryBtn").onclick = () => showModal(`<div class="modal max-w-2xl"><h3 class="mb-5 border-b pb-4 text-xl font-black">儲值卡異動紀錄</h3><div class="table-wrap"><table><thead><tr><th>時間</th><th>異動</th><th>異動後餘額</th><th>備註</th></tr></thead><tbody>${storedValueRecordHtml()}</tbody></table></div><div class="mt-5 flex justify-end border-t pt-4"><button class="btn-light" data-close-modal>關閉</button></div></div>`);
   $("view-overview").querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => openAppointmentDetailPage(btn.dataset.openAppt));
   $("businessSummaryBtn").onclick = () => openDailyBusinessSummary();
   $("refreshOverviewBtn").onclick = refreshDashboardData;
@@ -2733,6 +2841,37 @@ function appointmentRecord(appt) {
   return db.customers[appt.phone]?.records?.find((r) => r.id === appt.id);
 }
 
+function bookingNextActionMeta(appt = {}) {
+  const stage = normalizeBookingStage(appt.bookingStage, appt);
+  const record = appointmentRecord(appt) || {};
+  const hasCollectedPrice = String(appt.collectedPrice || record.collectedPrice || "").trim() !== "";
+  const hasRecordNotes = String(record.notes || "").trim() !== "";
+  if (["inquiry", "candidate_sent", "therapist_match", "customer_confirm"].includes(stage)) {
+    const labels = {
+      inquiry: "整理需求，查時段或給客選",
+      candidate_sent: "等待客人選擇師傅",
+      therapist_match: "確認師傅可接",
+      customer_confirm: "完成顧客確認"
+    };
+    return { key: "match", label: labels[stage], tone: "amber", stage };
+  }
+  if (stage === "confirmed") return { key: "pre_notice", label: "完成行前通知", tone: "violet", stage };
+  if (stage === "pre_notice") return { key: "service_report", label: "填寫服務回報", tone: "indigo", stage };
+  if (stage === "completed" && (!hasCollectedPrice || !hasRecordNotes)) {
+    const missing = [
+      !hasCollectedPrice ? "實際回款" : "",
+      !hasRecordNotes ? "服務紀錄" : ""
+    ].filter(Boolean).join("與");
+    return { key: "payment_record", label: `補${missing}`, tone: "rose", stage };
+  }
+  return { key: "complete", label: "已完成，資料完整", tone: "teal", stage };
+}
+
+function bookingUrgencyValue(appt = {}) {
+  const timestamp = new Date(`${appt.date || "9999-12-31"}T${appt.time || "23:59"}:00`).getTime();
+  return Number.isFinite(timestamp) ? timestamp : Number.MAX_SAFE_INTEGER;
+}
+
 function renderDispatch() {
   renderAppointmentDetail();
 }
@@ -2793,6 +2932,30 @@ function renderAppointmentDetail() {
     confirmAction("快速確認預約？", "系統會直接建立已確認預約，並自動帶入課程價格、時長與房型。需要調整細節時請改用「編輯建立」。", () => quickConfirmClientSelection(btn.dataset.quickConfirmSelection), "快速確認");
   });
   section.querySelectorAll("[data-mark-stage]").forEach((btn) => btn.onclick = () => updateAppointmentStage(btn.dataset.markStage, btn.dataset.stage));
+  section.querySelectorAll("[data-primary-stage]").forEach((btn) => btn.onclick = () => {
+    confirmAction(
+      "推進預約階段？",
+      "確認後會更新這筆預約的處理階段。",
+      () => updateAppointmentStage(btn.dataset.primaryStage, btn.dataset.stage),
+      btn.dataset.actionLabel || "確認推進"
+    );
+  });
+  section.querySelectorAll("[data-copy-and-mark-notice]").forEach((btn) => btn.onclick = async () => {
+    const target = $("therapistNoticeText");
+    if (!target) return;
+    target.select();
+    const copied = await copyText(target.value, "給師傅通知已複製");
+    if (copied === false) return;
+    await updateAppointmentStage(btn.dataset.copyAndMarkNotice, "pre_notice");
+    showSnackbar("通知已複製，並標記為已完成");
+  });
+  section.querySelectorAll("[data-focus-appointment-field]").forEach((btn) => btn.onclick = () => {
+    const detailForm = $("appointmentDetailForm");
+    const field = detailForm?.elements?.namedItem(btn.dataset.focusAppointmentField);
+    if (!field) return;
+    field.scrollIntoView({ behavior: "smooth", block: "center" });
+    setTimeout(() => field.focus({ preventScroll: true }), 180);
+  });
   section.querySelectorAll("[data-copy-notice]").forEach((btn) => btn.onclick = async () => {
     const target = $(btn.dataset.copyNotice);
     if (!target) return;
@@ -2833,7 +2996,7 @@ function renderAppointmentDetail() {
 }
 
 function bookingWorkbenchIntroHtml(monthAppts, pendingSelections) {
-  const unconfirmed = monthAppts.filter(isBookingUnconfirmed).length;
+  const actionableCount = monthAppts.filter((appt) => bookingNextActionMeta(appt).key !== "complete").length;
   const tab = (key, icon, label, count = "") => `<button type="button" class="dispatch-view-tab ${activeDispatchPanel === key ? "active" : ""}" data-dispatch-view="${key}" aria-selected="${activeDispatchPanel === key}">${iconHtml(icon)}<span>${label}</span>${count !== "" ? `<b>${count}</b>` : ""}</button>`;
   return `<section class="card dispatch-command-bar">
     <div class="dispatch-command-main">
@@ -2844,7 +3007,7 @@ function bookingWorkbenchIntroHtml(monthAppts, pendingSelections) {
       </div>
       <nav class="dispatch-view-tabs" aria-label="預約工作區">
         ${tab("query", "calendar-plus", "建立預約")}
-        ${tab("tasks", "list-checks", "待處理", pendingSelections.length + unconfirmed)}
+        ${tab("tasks", "list-checks", "待處理", pendingSelections.length + actionableCount)}
         ${tab("records", "history", "全部預約", monthAppts.length)}
       </nav>
     </div>
@@ -2852,10 +3015,12 @@ function bookingWorkbenchIntroHtml(monthAppts, pendingSelections) {
 }
 
 function bookingCardHtml(appt, tone = "slate") {
+  const nextAction = bookingNextActionMeta(appt);
   const toneClass = {
     amber: "border-amber-200 bg-amber-50",
     teal: "border-teal-200 bg-teal-50",
     violet: "border-violet-200 bg-violet-50",
+    indigo: "border-indigo-200 bg-indigo-50",
     rose: "border-rose-200 bg-rose-50",
     slate: "border-slate-200 bg-white"
   }[tone] || "border-slate-200 bg-white";
@@ -2868,37 +3033,33 @@ function bookingCardHtml(appt, tone = "slate") {
 }
 
 function bookingStageBoardHtml(monthAppts) {
-  const today = todayKey();
-  const followupItems = monthAppts.filter((a) => a.bookingStage === "pre_notice" || (String(a.isCompleted) === "true" && (!String(a.collectedPrice || "").trim() || !String(appointmentRecord(a)?.notes || "").trim())));
+  const actionable = monthAppts
+    .map((appt) => ({ appt, action: bookingNextActionMeta(appt) }))
+    .filter((item) => item.action.key !== "complete")
+    .sort((a, b) => bookingUrgencyValue(a.appt) - bookingUrgencyValue(b.appt));
   const lanes = [
-    { title: "媒合 / 待確認", desc: "需要人員推進的預約", items: monthAppts.filter(isBookingUnconfirmed), tone: "amber", empty: "目前沒有未確認預約" },
-    { title: "等待行前", desc: "已確認且不是今日的預約", items: monthAppts.filter((a) => a.bookingStage === "confirmed" && a.date !== today), tone: "teal", empty: "尚無等待行前的預約" },
-    { title: "今日需通知", desc: "告知師傅房型與大門密碼", items: monthAppts.filter((a) => a.bookingStage === "confirmed" && a.date === today), tone: "violet", empty: "今日通知已完成或無預約" },
-    { title: "待回報", desc: "補回款金額與服務紀錄", items: followupItems, tone: "slate", empty: "尚無回報待補" }
-  ];
-  return `<div id="bookingStageBoard" class="grid scroll-mt-20 gap-4 xl:grid-cols-4">
+    { key: "match", title: "待媒合／待確認", desc: "完成客選、媒合與顧客確認", tone: "amber", empty: "目前沒有待媒合或待確認預約" },
+    { key: "pre_notice", title: "待行前通知", desc: "已確認，下一步通知師傅", tone: "violet", empty: "目前沒有待行前通知預約" },
+    { key: "service_report", title: "待服務回報", desc: "通知完成，等待服務結果", tone: "indigo", empty: "目前沒有待服務回報預約" },
+    { key: "payment_record", title: "待回款／補紀錄", desc: "服務完成但資料尚未齊全", tone: "rose", empty: "目前沒有待補資料" }
+  ].map((lane) => ({
+    ...lane,
+    items: actionable.filter((item) => item.action.key === lane.key).map((item) => item.appt)
+  }));
+  return `<div class="mb-3 flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
+    <div><span class="ops-section-kicker">下一步工作看板</span><h3 class="mt-1 text-xl font-black">每筆預約只顯示在一個待辦欄</h3></div>
+    <span class="badge bg-slate-900 text-white">${actionable.length} 筆待處理</span>
+  </div><div id="bookingStageBoard" class="grid scroll-mt-20 gap-4 xl:grid-cols-4">
     ${lanes.map((lane) => `<section class="card p-4">
       <div class="mb-3 flex items-start justify-between gap-3"><div><h3 class="font-black">${lane.title}</h3><p class="text-xs font-bold text-slate-500">${lane.desc}</p></div><span class="badge bg-slate-100 text-slate-600">${lane.items.length}</span></div>
       <div class="space-y-2">${lane.items.slice(0, 6).map((appt) => bookingCardHtml(appt, lane.tone)).join("") || `<p class="rounded-xl bg-slate-50 p-4 text-center text-sm font-bold text-slate-400">${lane.empty}</p>`}</div>
+      ${lane.items.length > 6 ? `<p class="mt-3 text-center text-xs font-black text-slate-400">另有 ${lane.items.length - 6} 筆，請至全部預約查看</p>` : ""}
     </section>`).join("")}
   </div>`;
 }
 
 function bookingNextAction(appt = {}) {
-  const stage = normalizeBookingStage(appt.bookingStage, appt);
-  if (stage === "inquiry") return "整理需求，查時段或給客選";
-  if (stage === "candidate_sent") return "等待客人選擇師傅";
-  if (stage === "therapist_match") return "確認師傅可接";
-  if (stage === "customer_confirm") return "回覆顧客確認課程與金額";
-  if (stage === "confirmed") return appt.date === todayKey() ? "行前通知師傅房型與密碼" : "等待行前通知";
-  if (stage === "pre_notice") return "服務後補回款與紀錄";
-  if (stage === "completed") {
-    const record = appointmentRecord(appt) || {};
-    if (!String(appt.collectedPrice || "").trim()) return "補實際回款";
-    if (!String(record.notes || "").trim()) return "補服務紀錄";
-    return "已完成";
-  }
-  return "檢查預約資料";
+  return bookingNextActionMeta(appt).label;
 }
 
 function bookingStageRailHtml(currentStage = "confirmed") {
@@ -2914,6 +3075,46 @@ function bookingStageRailHtml(currentStage = "confirmed") {
         </div>`;
       }).join("")}
     </div>
+  </div>`;
+}
+
+function bookingPrimaryActionHtml(appt) {
+  const action = bookingNextActionMeta(appt);
+  const stageConfigs = {
+    inquiry: { nextStage: "candidate_sent", button: "標記已給客選", desc: "整理需求並提供可選師傅後，推進到已給客選。" },
+    candidate_sent: { nextStage: "therapist_match", button: "開始師傅媒合", desc: "客選回覆後，開始確認師傅是否可接。" },
+    therapist_match: { nextStage: "customer_confirm", button: "提交顧客確認", desc: "師傅確認可接後，向顧客確認課程、時間與金額。" },
+    customer_confirm: { nextStage: "confirmed", button: "確認正式預約", desc: "顧客確認完成後，建立正式預約並準備行前通知。" }
+  };
+  if (action.key === "match") {
+    const config = stageConfigs[action.stage] || stageConfigs.inquiry;
+    return `<div class="mb-5 flex flex-col justify-between gap-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center">
+      <div><span class="ops-section-kicker text-amber-700">目前待辦</span><h4 class="mt-1 font-black">${esc(action.label)}</h4><p class="mt-1 text-sm font-bold text-slate-600">${config.desc}</p></div>
+      <button type="button" class="btn-teal shrink-0" data-primary-stage="${esc(appt.id)}" data-stage="${config.nextStage}" data-action-label="${config.button}">${config.button}</button>
+    </div>`;
+  }
+  if (action.key === "pre_notice") {
+    return `<div class="mb-5 flex flex-col justify-between gap-4 rounded-2xl border border-violet-200 bg-violet-50 p-4 sm:flex-row sm:items-center">
+      <div><span class="ops-section-kicker text-violet-700">目前待辦</span><h4 class="mt-1 font-black">完成行前通知</h4><p class="mt-1 text-sm font-bold text-slate-600">複製給師傅的通知內容，並將預約標記為已通知。</p></div>
+      <button type="button" class="btn-teal shrink-0" data-copy-and-mark-notice="${esc(appt.id)}">複製通知並標記完成</button>
+    </div>`;
+  }
+  if (action.key === "service_report") {
+    return `<div class="mb-5 flex flex-col justify-between gap-4 rounded-2xl border border-indigo-200 bg-indigo-50 p-4 sm:flex-row sm:items-center">
+      <div><span class="ops-section-kicker text-indigo-700">目前待辦</span><h4 class="mt-1 font-black">填寫服務回報</h4><p class="mt-1 text-sm font-bold text-slate-600">補上實際回款與服務紀錄，再勾選完成並儲存。</p></div>
+      <button type="button" class="btn-teal shrink-0" data-focus-appointment-field="collectedPrice">填寫服務結果</button>
+    </div>`;
+  }
+  if (action.key === "payment_record") {
+    const focusField = action.label.includes("實際回款") ? "collectedPrice" : "recordNotes";
+    return `<div class="mb-5 flex flex-col justify-between gap-4 rounded-2xl border border-rose-200 bg-rose-50 p-4 sm:flex-row sm:items-center">
+      <div><span class="ops-section-kicker text-rose-700">目前待辦</span><h4 class="mt-1 font-black">${esc(action.label)}</h4><p class="mt-1 text-sm font-bold text-slate-600">資料補齊並儲存後，這筆預約會離開待辦看板。</p></div>
+      <button type="button" class="btn-teal shrink-0" data-focus-appointment-field="${focusField}">補齊資料</button>
+    </div>`;
+  }
+  return `<div class="mb-5 flex flex-col justify-between gap-4 rounded-2xl border border-teal-200 bg-teal-50 p-4 sm:flex-row sm:items-center">
+    <div><span class="ops-section-kicker text-teal-700">目前狀態</span><h4 class="mt-1 font-black">已完成，資料完整</h4><p class="mt-1 text-sm font-bold text-slate-600">目前沒有後續待辦；如需修正可編輯下方資料。</p></div>
+    <span class="badge bg-teal-100 px-4 py-2 text-teal-800">已完成</span>
   </div>`;
 }
 
@@ -3065,6 +3266,7 @@ function renderAppointmentDetailForm(appt, allAppts) {
         <div class="flex gap-2"><button id="backToAppointmentListBtn" type="button" class="btn-light">返回清單</button><button data-delete-appt="${esc(appt.id)}" type="button" class="rounded-xl bg-rose-50 px-4 py-2 font-black text-rose-700">刪除</button></div>
       </div>
       ${bookingStageRailHtml(appt.bookingStage || "confirmed")}
+      ${bookingPrimaryActionHtml(appt)}
       <div class="grid gap-4 md:grid-cols-2">
         <div><label class="label">預約日期</label><input name="date" type="date" class="input" value="${esc(appt.date || todayKey())}"></div>
         <div><label class="label">預約時間</label><input name="time" type="time" class="input" value="${esc(appt.time || "")}"></div>
@@ -3997,7 +4199,7 @@ function renderReport() {
     }
   });
   const guestTable = `<div class="table-wrap"><table><thead><tr><th>日期</th><th class="text-right">來客數</th><th class="text-right">不重複顧客</th><th class="text-right">新客</th><th class="text-right">回客</th><th class="text-right">營業額</th></tr></thead><tbody>${Object.entries(guestByDate).length ? Object.entries(guestByDate).map(([date, b]) => `<tr><td class="font-mono font-black">${esc(date)}</td><td class="text-right font-black">${b.count}</td><td class="text-right font-black">${b.phones.size}</td><td class="text-right font-black text-emerald-700">${b.newGuests}</td><td class="text-right font-black text-amber-700">${b.returningGuests}</td><td class="text-right font-black text-rose-700">${money(b.total)}</td></tr>`).join("") : `<tr><td colspan="6" class="py-10 text-center font-bold text-slate-400">該區間無來客資料</td></tr>`}</tbody></table></div>`;
-  const therapistStats = Object.keys(db.therapists).map((id) => {
+  const therapistStats = reportTherapistIds(rows).map((id) => {
     const mine = rows.filter((a) => a.therapistId === id);
     const phoneCounts = {};
     mine.forEach((a) => { if (a.phone) phoneCounts[a.phone] = (phoneCounts[a.phone] || 0) + 1; });
@@ -4006,15 +4208,15 @@ function renderReport() {
     const rate = unique ? Math.round((returnGuests / unique) * 100) : 0;
     return { id, count: mine.length, unique, returnGuests, rate, total: mine.reduce((s, a) => s + Number(a.price || 0), 0) };
   }).filter((row) => row.count > 0).sort((a, b) => b.rate - a.rate || b.count - a.count);
-  const retentionTable = `<div class="table-wrap"><table><thead><tr><th>師傅</th><th class="text-right">服務筆數</th><th class="text-right">不重複顧客</th><th class="text-right">回客人數</th><th class="text-right">回客率</th><th class="text-right">營業額</th></tr></thead><tbody>${therapistStats.length ? therapistStats.map((s) => `<tr><td class="font-black text-teal-700">${esc(therapistName(s.id))}</td><td class="text-right font-black">${s.count}</td><td class="text-right font-black">${s.unique}</td><td class="text-right font-black text-amber-700">${s.returnGuests}</td><td class="text-right font-black text-indigo-700">${s.rate}%</td><td class="text-right font-black text-rose-700">${money(s.total)}</td></tr>`).join("") : `<tr><td colspan="6" class="py-10 text-center font-bold text-slate-400">該區間無師傅統計</td></tr>`}</tbody></table></div>`;
-  const commissionStats = Object.keys(db.therapists).map((id) => {
+  const retentionTable = `<div class="table-wrap"><table><thead><tr><th>師傅</th><th class="text-right">服務筆數</th><th class="text-right">不重複顧客</th><th class="text-right">回客人數</th><th class="text-right">回客率</th><th class="text-right">營業額</th></tr></thead><tbody>${therapistStats.length ? therapistStats.map((s) => `<tr><td class="font-black text-teal-700">${therapistReportNameHtml(s.id)}</td><td class="text-right font-black">${s.count}</td><td class="text-right font-black">${s.unique}</td><td class="text-right font-black text-amber-700">${s.returnGuests}</td><td class="text-right font-black text-indigo-700">${s.rate}%</td><td class="text-right font-black text-rose-700">${money(s.total)}</td></tr>`).join("") : `<tr><td colspan="6" class="py-10 text-center font-bold text-slate-400">該區間無師傅統計</td></tr>`}</tbody></table></div>`;
+  const commissionStats = reportTherapistIds(rows).map((id) => {
     const mine = rows.filter((a) => a.therapistId === id);
     const gross = mine.reduce((s, a) => s + Number(a.price || 0), 0);
     const paid = mine.reduce((s, a) => s + Number(a.collectedPrice || 0), 0);
     const cut = mine.reduce((s, a) => s + therapistCutFor(a), 0);
     return { id, count: mine.length, gross, paid, outstanding: Math.max(0, gross - paid), cut, company: Math.max(0, gross - cut) };
   }).filter((row) => row.count > 0).sort((a, b) => b.gross - a.gross);
-  const commissionTable = `<div class="table-wrap"><table><thead><tr><th>師傅</th><th class="text-right">服務筆數</th><th class="text-right">應收總額</th><th class="text-right">已回帳</th><th class="text-right">未回帳</th><th class="text-right">師傅抽成</th><th class="text-right">店家應收</th></tr></thead><tbody>${commissionStats.length ? commissionStats.map((s) => `<tr><td class="font-black text-teal-700">${esc(therapistName(s.id))}</td><td class="text-right font-black">${s.count}</td><td class="text-right font-black text-rose-700">${money(s.gross)}</td><td class="text-right font-black text-emerald-700">${money(s.paid)}</td><td class="text-right font-black text-amber-700">${money(s.outstanding)}</td><td class="text-right font-black text-indigo-700">${money(s.cut)}</td><td class="text-right font-black text-teal-700">${money(s.company)}</td></tr>`).join("") : `<tr><td colspan="7" class="py-10 text-center font-bold text-slate-400">該區間無抽成資料</td></tr>`}</tbody></table></div>`;
+  const commissionTable = `<div class="table-wrap"><table><thead><tr><th>師傅</th><th class="text-right">服務筆數</th><th class="text-right">應收總額</th><th class="text-right">已回帳</th><th class="text-right">未回帳</th><th class="text-right">師傅抽成</th><th class="text-right">店家應收</th></tr></thead><tbody>${commissionStats.length ? commissionStats.map((s) => `<tr><td class="font-black text-teal-700">${therapistReportNameHtml(s.id)}</td><td class="text-right font-black">${s.count}</td><td class="text-right font-black text-rose-700">${money(s.gross)}</td><td class="text-right font-black text-emerald-700">${money(s.paid)}</td><td class="text-right font-black text-amber-700">${money(s.outstanding)}</td><td class="text-right font-black text-indigo-700">${money(s.cut)}</td><td class="text-right font-black text-teal-700">${money(s.company)}</td></tr>`).join("") : `<tr><td colspan="7" class="py-10 text-center font-bold text-slate-400">該區間無抽成資料</td></tr>`}</tbody></table></div>`;
   const panelContent = { revenue: revenueTable, guests: guestTable, retention: retentionTable, commission: commissionTable }[activeReportPanel] || revenueTable;
   const panelDescriptions = {
     revenue: "逐筆核對服務金額、店家應收與師傅抽成。",
@@ -4078,24 +4280,24 @@ function exportReportCSV() {
   let csv = "\uFEFF";
   if (activeReportPanel === "commission") {
     csv += "師傅,服務筆數,應收總額,已回帳,未回帳,師傅抽成,店家應收\n";
-    Object.keys(db.therapists).forEach((id) => {
+    reportTherapistIds(rows).forEach((id) => {
       const mine = rows.filter((a) => a.therapistId === id);
       if (!mine.length) return;
       const gross = mine.reduce((s, a) => s + Number(a.price || 0), 0);
       const paid = mine.reduce((s, a) => s + Number(a.collectedPrice || 0), 0);
       const cut = mine.reduce((s, a) => s + therapistCutFor(a), 0);
-      csv += `"${therapistName(id)}",${mine.length},${gross},${paid},${Math.max(0, gross - paid)},${cut},${Math.max(0, gross - cut)}\n`;
+      csv += `"${therapistExportName(id)}",${mine.length},${gross},${paid},${Math.max(0, gross - paid)},${cut},${Math.max(0, gross - cut)}\n`;
     });
   } else if (activeReportPanel === "retention") {
     csv += "師傅,服務筆數,不重複顧客,回客人數,回客率,營業額\n";
-    Object.keys(db.therapists).forEach((id) => {
+    reportTherapistIds(rows).forEach((id) => {
       const mine = rows.filter((a) => a.therapistId === id);
       if (!mine.length) return;
       const phoneCounts = {};
       mine.forEach((a) => { if (a.phone) phoneCounts[a.phone] = (phoneCounts[a.phone] || 0) + 1; });
       const unique = Object.keys(phoneCounts).length;
       const returnGuests = Object.values(phoneCounts).filter((count) => count > 1).length;
-      csv += `"${therapistName(id)}",${mine.length},${unique},${returnGuests},${unique ? Math.round((returnGuests / unique) * 100) : 0}%,${mine.reduce((s, a) => s + Number(a.price || 0), 0)}\n`;
+      csv += `"${therapistExportName(id)}",${mine.length},${unique},${returnGuests},${unique ? Math.round((returnGuests / unique) * 100) : 0}%,${mine.reduce((s, a) => s + Number(a.price || 0), 0)}\n`;
     });
   } else if (activeReportPanel === "guests") {
     csv += "日期,來客數,不重複顧客,營業額\n";
