@@ -1,7 +1,7 @@
 "use strict";
 
 const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiTI5Z8c76YNlcPMYWyR17HGaU4QvzHJm32nWeCHsnaknVx/exec";
-const APP_VERSION = "MSOT2.2";
+const APP_VERSION = "MSOT2.3";
 const CLOUD_READ_TIMEOUT_MS = 45000;
 const CLOUD_WRITE_TIMEOUT_MS = 45000;
 const LOGIN_CLOUD_TIMEOUT_MS = 18000;
@@ -1767,9 +1767,15 @@ function storeToolRecords(key) {
   return Array.isArray(db.customers[key]?.records) ? db.customers[key].records : [];
 }
 
+function laundryRecords() {
+  const legacy = storeToolRecords("SYS_LAUNDRY_LOG");
+  const storedValueLinked = storeToolRecords("SYS_STORED_VALUE").filter((record) => record.sourceType === "laundry");
+  return [...legacy, ...storedValueLinked];
+}
+
 function laundrySummary() {
   const today = todayKey();
-  const records = storeToolRecords("SYS_LAUNDRY_LOG").filter((record) => String(record.date || record.at || "").startsWith(today));
+  const records = laundryRecords().filter((record) => String(record.date || record.at || "").startsWith(today));
   const washes = records.filter((record) => record.type === "洗衣").reduce((sum, record) => sum + Number(record.count || 1), 0);
   const dries = records.filter((record) => record.type === "烘衣").reduce((sum, record) => sum + Number(record.count || 1), 0);
   return { washes, dries, total: washes + dries };
@@ -1780,7 +1786,7 @@ function storedValueBalance() {
 }
 
 function laundryRecordHtml() {
-  const records = storeToolRecords("SYS_LAUNDRY_LOG");
+  const records = laundryRecords();
   return records.length ? records.slice().reverse().map((record) => `<tr><td>${esc(record.at || record.date || "")}</td><td class="font-black">${esc(record.type || "")}</td><td>${esc(record.count || 1)} 次</td><td class="font-black text-rose-600">${Number(record.totalCost || 0) ? `-${money(Number(record.totalCost))}` : "舊紀錄未登記"}</td><td>${esc(record.note || "—")}</td></tr>`).join("") : `<tr><td colspan="5" class="py-8 text-center font-bold text-slate-400">尚無洗衣或烘衣紀錄</td></tr>`;
 }
 
@@ -2283,21 +2289,14 @@ function renderOverview() {
         return;
       }
       const snapshot = snapshotDatabase();
-      const store = db.customers.SYS_LAUNDRY_LOG || { name: "洗衣烘衣紀錄", notes: "", records: [] };
-      store.records = Array.isArray(store.records) ? store.records : [];
       const transactionId = `LAUNDRY-${Date.now()}`;
-      store.records.push({ id: transactionId, at: new Date().toLocaleString("zh-TW", { hour12: false }), date: todayKey(), type: data.type, count, unitCost, totalCost, note: String(data.note || "").trim() });
-      db.customers.SYS_LAUNDRY_LOG = store;
       const storedValue = db.customers.SYS_STORED_VALUE || { name: "儲值卡餘額", notes: "0", records: [] };
       const balance = currentBalance - totalCost;
       storedValue.notes = String(balance);
       storedValue.records = Array.isArray(storedValue.records) ? storedValue.records : [];
-      storedValue.records.push({ id: `STORED-${transactionId}`, at: new Date().toLocaleString("zh-TW", { hour12: false }), change: -totalCost, balance, note: `${data.type} ${count} 次`, sourceId: transactionId });
+      storedValue.records.push({ id: transactionId, at: new Date().toLocaleString("zh-TW", { hour12: false }), date: todayKey(), change: -totalCost, balance, note: String(data.note || "").trim() || `${data.type} ${count} 次`, sourceType: "laundry", type: data.type, count, unitCost, totalCost });
       db.customers.SYS_STORED_VALUE = storedValue;
-      const saved = await saveCloudActions([
-        { action: "saveCustomer", data: { phone: "SYS_LAUNDRY_LOG", ...store } },
-        { action: "saveCustomer", data: { phone: "SYS_STORED_VALUE", ...storedValue } }
-      ], `已扣除 ${money(totalCost)} 並儲存洗衣烘衣紀錄`);
+      const saved = await saveCloudActions([{ action: "saveCustomer", data: { phone: "SYS_STORED_VALUE", ...storedValue } }], `已扣除 ${money(totalCost)} 並儲存洗衣烘衣紀錄`);
       if (!saved) {
         restoreDatabase(snapshot, "洗衣烘衣紀錄未獲雲端確認，已還原");
         return;
