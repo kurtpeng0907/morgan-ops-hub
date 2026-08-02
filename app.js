@@ -1,7 +1,7 @@
 "use strict";
 
 const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiTI5Z8c76YNlcPMYWyR17HGaU4QvzHJm32nWeCHsnaknVx/exec";
-const APP_VERSION = "MSOT2.1";
+const APP_VERSION = "MSOT2.2";
 const CLOUD_READ_TIMEOUT_MS = 45000;
 const CLOUD_WRITE_TIMEOUT_MS = 45000;
 const LOGIN_CLOUD_TIMEOUT_MS = 18000;
@@ -1781,7 +1781,7 @@ function storedValueBalance() {
 
 function laundryRecordHtml() {
   const records = storeToolRecords("SYS_LAUNDRY_LOG");
-  return records.length ? records.slice().reverse().map((record) => `<tr><td>${esc(record.at || record.date || "")}</td><td class="font-black">${esc(record.type || "")}</td><td>${esc(record.count || 1)} 次</td><td>${esc(record.note || "—")}</td></tr>`).join("") : `<tr><td colspan="4" class="py-8 text-center font-bold text-slate-400">尚無洗衣或烘衣紀錄</td></tr>`;
+  return records.length ? records.slice().reverse().map((record) => `<tr><td>${esc(record.at || record.date || "")}</td><td class="font-black">${esc(record.type || "")}</td><td>${esc(record.count || 1)} 次</td><td class="font-black text-rose-600">${Number(record.totalCost || 0) ? `-${money(Number(record.totalCost))}` : "舊紀錄未登記"}</td><td>${esc(record.note || "—")}</td></tr>`).join("") : `<tr><td colspan="5" class="py-8 text-center font-bold text-slate-400">尚無洗衣或烘衣紀錄</td></tr>`;
 }
 
 function storedValueRecordHtml() {
@@ -1913,7 +1913,7 @@ function navPendingCount(tab) {
   const recentStart = toDateKey(new Date(Date.now() - 30 * 86400000));
   const upcomingEnd = toDateKey(new Date(Date.now() + 30 * 86400000));
   const operational = appts.filter((a) => a.date >= recentStart && a.date <= upcomingEnd);
-  if (tab === "overview") return buildWorkItems().filter((item) => item.priority < 4).length;
+  if (tab === "overview") return buildWorkItems().filter((item) => item.group !== "逾期異常").length;
   if (tab === "dispatch") return operational.filter((a) => bookingNextActionMeta(a).key !== "complete").length;
   if (tab === "personnel") return approvalsList("pending").length;
   if (tab === "report") return appts.filter((a) => a.date >= recentStart && a.date <= today && String(a.isCompleted) === "true" && (!isRemittancePaid(a) || !String(appointmentRecord(a)?.notes || "").trim())).length;
@@ -2262,21 +2262,42 @@ function renderOverview() {
     showModal(`<div class="modal max-w-2xl"><h3 class="mb-5 border-b pb-4 text-xl font-black">大門密碼修改紀錄</h3><div class="table-wrap"><table><thead><tr><th>時間</th><th>密碼</th><th>來源</th></tr></thead><tbody>${doorPasswordRecordHtml()}</tbody></table></div><div class="mt-5 flex justify-end border-t pt-4"><button class="btn-light" data-close-modal>關閉</button></div></div>`);
   };
   $("addLaundryBtn").onclick = () => {
-    showModal(`<div class="modal max-w-lg"><h3 class="mb-5 border-b pb-4 text-xl font-black">新增洗衣／烘衣紀錄</h3><form id="laundryRecordForm" class="space-y-4"><div class="grid grid-cols-2 gap-3"><label><span class="label">作業</span><select name="type" class="input"><option>洗衣</option><option>烘衣</option></select></label><label><span class="label">次數</span><input name="count" type="number" min="1" class="input" value="1" required></label></div><label><span class="label">備註（選填）</span><input name="note" class="input" placeholder="例如：毛巾 2 袋"></label><div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">儲存紀錄</button></div></form></div>`);
+    showModal(`<div class="modal max-w-lg"><h3 class="mb-2 text-xl font-black">新增洗衣／烘衣紀錄</h3><p class="mb-5 text-sm font-bold text-slate-500">本次費用會同步從儲值卡扣除；目前餘額 ${money(storedValueBalance())}。</p><form id="laundryRecordForm" class="space-y-4"><div class="grid grid-cols-2 gap-3"><label><span class="label">作業</span><select name="type" class="input"><option>洗衣</option><option>烘衣</option></select></label><label><span class="label">次數</span><input name="count" type="number" min="1" class="input" value="1" required></label></div><label><span class="label">每次扣款金額</span><input name="unitCost" type="number" min="1" step="1" class="input" placeholder="請輸入每次費用" required></label><label><span class="label">備註（選填）</span><input name="note" class="input" placeholder="例如：毛巾 2 袋"></label><div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">扣款並儲存</button></div></form></div>`);
     $("laundryRecordForm").onsubmit = async (event) => {
       event.preventDefault();
       const data = Object.fromEntries(new FormData(event.currentTarget));
       const count = Number(data.count || 0);
+      const unitCost = Number(data.unitCost || 0);
       if (!Number.isInteger(count) || count < 1) {
         showSnackbar("次數必須是大於 0 的整數");
+        return;
+      }
+      if (!Number.isFinite(unitCost) || unitCost <= 0) {
+        showSnackbar("請輸入正確的每次扣款金額");
+        return;
+      }
+      const totalCost = count * unitCost;
+      const currentBalance = storedValueBalance();
+      if (currentBalance < totalCost) {
+        showSnackbar(`儲值卡餘額不足，尚缺 ${money(totalCost - currentBalance)}`);
         return;
       }
       const snapshot = snapshotDatabase();
       const store = db.customers.SYS_LAUNDRY_LOG || { name: "洗衣烘衣紀錄", notes: "", records: [] };
       store.records = Array.isArray(store.records) ? store.records : [];
-      store.records.push({ id: `LAUNDRY-${Date.now()}`, at: new Date().toLocaleString("zh-TW", { hour12: false }), date: todayKey(), type: data.type, count, note: String(data.note || "").trim() });
+      const transactionId = `LAUNDRY-${Date.now()}`;
+      store.records.push({ id: transactionId, at: new Date().toLocaleString("zh-TW", { hour12: false }), date: todayKey(), type: data.type, count, unitCost, totalCost, note: String(data.note || "").trim() });
       db.customers.SYS_LAUNDRY_LOG = store;
-      const saved = await saveCloudActions([{ action: "saveCustomer", data: { phone: "SYS_LAUNDRY_LOG", ...store } }], "洗衣烘衣紀錄已儲存");
+      const storedValue = db.customers.SYS_STORED_VALUE || { name: "儲值卡餘額", notes: "0", records: [] };
+      const balance = currentBalance - totalCost;
+      storedValue.notes = String(balance);
+      storedValue.records = Array.isArray(storedValue.records) ? storedValue.records : [];
+      storedValue.records.push({ id: `STORED-${transactionId}`, at: new Date().toLocaleString("zh-TW", { hour12: false }), change: -totalCost, balance, note: `${data.type} ${count} 次`, sourceId: transactionId });
+      db.customers.SYS_STORED_VALUE = storedValue;
+      const saved = await saveCloudActions([
+        { action: "saveCustomer", data: { phone: "SYS_LAUNDRY_LOG", ...store } },
+        { action: "saveCustomer", data: { phone: "SYS_STORED_VALUE", ...storedValue } }
+      ], `已扣除 ${money(totalCost)} 並儲存洗衣烘衣紀錄`);
       if (!saved) {
         restoreDatabase(snapshot, "洗衣烘衣紀錄未獲雲端確認，已還原");
         return;
@@ -2285,7 +2306,7 @@ function renderOverview() {
       renderOverview();
     };
   };
-  $("laundryHistoryBtn").onclick = () => showModal(`<div class="modal max-w-2xl"><h3 class="mb-5 border-b pb-4 text-xl font-black">洗衣／烘衣紀錄</h3><div class="table-wrap"><table><thead><tr><th>時間</th><th>作業</th><th>次數</th><th>備註</th></tr></thead><tbody>${laundryRecordHtml()}</tbody></table></div><div class="mt-5 flex justify-end border-t pt-4"><button class="btn-light" data-close-modal>關閉</button></div></div>`);
+  $("laundryHistoryBtn").onclick = () => showModal(`<div class="modal max-w-2xl"><h3 class="mb-5 border-b pb-4 text-xl font-black">洗衣／烘衣紀錄</h3><div class="table-wrap"><table><thead><tr><th>時間</th><th>作業</th><th>次數</th><th>儲值卡扣款</th><th>備註</th></tr></thead><tbody>${laundryRecordHtml()}</tbody></table></div><div class="mt-5 flex justify-end border-t pt-4"><button class="btn-light" data-close-modal>關閉</button></div></div>`);
   $("adjustStoredValueBtn").onclick = () => {
     showModal(`<div class="modal max-w-lg"><h3 class="mb-2 text-xl font-black">登記儲值卡異動</h3><p class="mb-5 text-sm font-bold text-slate-500">目前餘額 ${money(storedValueBalance())}；儲值輸入正數，使用輸入負數。</p><form id="storedValueForm" class="space-y-4"><label><span class="label">異動金額</span><input name="change" type="number" step="1" class="input" placeholder="例如 3000 或 -500" required></label><label><span class="label">備註</span><input name="note" class="input" placeholder="例如：購卡、耗材採購" required></label><div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">確認異動</button></div></form></div>`);
     $("storedValueForm").onsubmit = async (event) => {
@@ -2321,6 +2342,7 @@ function renderOverview() {
   $("businessSummaryBtn").onclick = () => openDailyBusinessSummary();
   $("refreshOverviewBtn").onclick = refreshDashboardData;
   renderLiveStatus();
+  enhanceOverviewWorkflow();
 }
 
 function renderLiveStatus() {
@@ -4937,9 +4959,9 @@ function buildWorkItems() {
 
 function enhanceOverviewWorkflow() {
   const view = $("view-overview");
-  if (!view) return;
-  const items = buildWorkItems();
-  const groups = ["逾期異常", "今日待辦", "即將發生", "一般提醒"];
+  if (!view || view.querySelector(".today-workbench")) return;
+  const items = buildWorkItems().filter((item) => item.group !== "逾期異常");
+  const groups = ["今日待辦", "即將發生"];
   const queue = groups.map((group) => {
     const groupItems = items.filter((item) => item.group === group);
     if (!groupItems.length) return "";
@@ -4948,7 +4970,7 @@ function enhanceOverviewWorkflow() {
   const shell = view.querySelector(".ops-dashboard");
   if (!shell) return;
   shell.classList.add("ops-dashboard-v2");
-  shell.insertAdjacentHTML("afterbegin", `<section class="today-workbench"><header><div><span class="page-kicker">店務工作佇列</span><h2>接著處理這些事</h2><p>完成營運確認與排班後，再依逾期、今日、即將發生排序處理。</p></div><div class="work-queue-total"><strong>${items.length}</strong><span>待處理</span></div></header><div class="work-queue-list">${queue || `<div class="work-queue-empty">${iconHtml("circle-check-big")}<strong>目前沒有待處理事項</strong><span>今日工作已整理完成</span></div>`}</div><details class="secondary-tools"><summary>展開完整今日服務流程</summary></details></section>`);
+  shell.insertAdjacentHTML("afterbegin", `<section class="today-workbench"><header><div><span class="page-kicker">店務工作佇列</span><h2>接著處理這些事</h2></div><div class="work-queue-total"><strong>${items.length}</strong><span>待處理</span></div></header><div class="work-queue-list">${queue || `<div class="work-queue-empty">${iconHtml("circle-check-big")}<strong>目前沒有待處理事項</strong><span>今日工作已整理完成</span></div>`}</div><details class="secondary-tools"><summary>展開完整今日服務流程</summary></details></section>`);
   const workbench = shell.querySelector(".today-workbench");
   [".ops-command-bar", ".ops-kpi-grid", ".ops-workspace-grid"].forEach((selector) => {
     const element = shell.querySelector(`:scope > ${selector}`);
