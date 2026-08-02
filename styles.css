@@ -46,8 +46,10 @@ html, body { height: 100%; }
 .secondary-tools-body { display:grid; gap:18px; border-top:1px solid #e2e8f0; padding:18px; }
 .ops-dashboard-v2 > .ops-command-bar,
 .ops-dashboard-v2 > .ops-kpi-grid,
-.ops-dashboard-v2 > .ops-workspace-grid,
-.ops-dashboard-v2 > .ops-flow-panel { display:none; }
+.ops-dashboard-v2 > .ops-workspace-grid { display:grid; }
+.ops-dashboard-v2 > .ops-workspace-grid { grid-template-columns:minmax(0,1.55fr) minmax(320px,.75fr); }
+.ops-dashboard-v2 .ops-side-stack { grid-template-columns:1fr; }
+.ops-dashboard-v2 .ops-store-tools { height:100%; }
 .booking-stage-strip { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; border:1px solid #e2e8f0; border-radius:16px; background:#fff; padding:10px; }
 .booking-stage-strip span { display:flex; align-items:center; justify-content:center; gap:7px; border-right:1px solid #e2e8f0; padding:8px; color:#475569; font-size:12px; font-weight:900; }
 .booking-stage-strip span:last-child { border-right:0; }

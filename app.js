@@ -1,7 +1,7 @@
 "use strict";
 
 const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiTI5Z8c76YNlcPMYWyR17HGaU4QvzHJm32nWeCHsnaknVx/exec";
-const APP_VERSION = "MSOT2.0";
+const APP_VERSION = "MSOT2.1";
 const CLOUD_READ_TIMEOUT_MS = 45000;
 const CLOUD_WRITE_TIMEOUT_MS = 45000;
 const LOGIN_CLOUD_TIMEOUT_MS = 18000;
@@ -4948,15 +4948,19 @@ function enhanceOverviewWorkflow() {
   const shell = view.querySelector(".ops-dashboard");
   if (!shell) return;
   shell.classList.add("ops-dashboard-v2");
-  shell.insertAdjacentHTML("afterbegin", `<section class="today-workbench"><header><div><span class="page-kicker">店務工作佇列</span><h2>今天先處理這些事</h2><p>依逾期、今日、即將發生排序；每筆只保留一個下一步。</p></div><div class="work-queue-total"><strong>${items.length}</strong><span>待處理</span></div></header><div class="work-queue-list">${queue || `<div class="work-queue-empty">${iconHtml("circle-check-big")}<strong>目前沒有待處理事項</strong><span>今日工作已整理完成</span></div>`}</div><details class="secondary-tools"><summary>展開今日營運摘要與店務工具</summary></details></section>`);
+  shell.insertAdjacentHTML("afterbegin", `<section class="today-workbench"><header><div><span class="page-kicker">店務工作佇列</span><h2>接著處理這些事</h2><p>完成營運確認與排班後，再依逾期、今日、即將發生排序處理。</p></div><div class="work-queue-total"><strong>${items.length}</strong><span>待處理</span></div></header><div class="work-queue-list">${queue || `<div class="work-queue-empty">${iconHtml("circle-check-big")}<strong>目前沒有待處理事項</strong><span>今日工作已整理完成</span></div>`}</div><details class="secondary-tools"><summary>展開完整今日服務流程</summary></details></section>`);
+  const workbench = shell.querySelector(".today-workbench");
+  [".ops-command-bar", ".ops-kpi-grid", ".ops-workspace-grid"].forEach((selector) => {
+    const element = shell.querySelector(`:scope > ${selector}`);
+    if (element && workbench) shell.insertBefore(element, workbench);
+  });
+  shell.querySelector(".ops-workspace-grid .ops-queue-panel")?.remove();
   const details = shell.querySelector(".secondary-tools");
   if (details) {
     const body = document.createElement("div");
     body.className = "secondary-tools-body";
-    [".ops-command-bar", ".ops-kpi-grid", ".ops-workspace-grid", ".ops-flow-panel"].forEach((selector) => {
-      const element = shell.querySelector(`:scope > ${selector}`);
-      if (element) body.appendChild(element);
-    });
+    const flow = shell.querySelector(":scope > .ops-flow-panel");
+    if (flow) body.appendChild(flow);
     details.appendChild(body);
   }
   view.querySelectorAll("[data-open-work-appt]").forEach((button) => button.onclick = () => openAppointmentDetailPage(button.dataset.openWorkAppt));
