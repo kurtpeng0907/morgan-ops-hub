@@ -1955,3 +1955,46 @@ tr:hover td { background:#f8fafc; }
   .work-queue-total { width:auto; min-width:62px; height:40px; }
   .work-queue-total strong { font-size:26px; }
 }
+
+/* Browser annotation refinement: schedule toolbar and shift cells. */
+#adminDashboard main > header > div.ops-date-toolbar {
+  border-width:0;
+  background:transparent;
+  padding:0;
+}
+.context-today { border-radius:12px; }
+.context-segment {
+  border-width:0;
+  border-radius:12px;
+}
+.context-range-picker {
+  height:38px;
+  min-height:38px;
+  border-radius:16px !important;
+  padding:1px;
+}
+#adminDashboard #contextCustomRange {
+  height:35px;
+  min-height:35px;
+  padding-top:2px;
+  padding-bottom:2px;
+  font-weight:500;
+}
+#adminDashboard #contextCustomRange span,
+#adminDashboard #contextCustomRange strong { font-weight:500; }
+#adminDashboard #topRefreshBtn { border-radius:12px !important; }
+#adminDashboard .schedule-table-wrap td:not(:first-child) {
+  border:0 solid #f7f7f7;
+  border-radius:16px;
+  padding:6px 8px;
+}
+#adminDashboard .schedule-table-wrap td.is-today:not(.is-anomaly) { box-shadow:none; }
+.schedule-table-wrap td > button[data-edit-shift] {
+  min-height:44px;
+  border-radius:12px;
+}
+
+@media (max-width:640px) {
+  .context-range-picker { height:38px; min-height:38px; }
+  #adminDashboard #contextCustomRange { height:35px; min-height:35px; }
+}
