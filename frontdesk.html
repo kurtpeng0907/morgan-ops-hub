@@ -441,6 +441,7 @@
 
     <script>
         const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiTI5Z8c76YNlcPMYWyR17HGaU4QvzHJm32nWeCHsnaknVx/exec";
+        const CLOUD_READ_TIMEOUT_MS = 45000;
         const FRONTDESK_LOGIN_LOG_KEY = "SYS_FRONTDESK_LOGIN_LOG";
         
         let globalDB = { therapists: {}, schedules: {}, appointments: {}, customers: {}, approvals: {} };
@@ -639,7 +640,7 @@
 
         async function fetchDatabase() {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 10000);
+            const timeoutId = setTimeout(() => controller.abort(), CLOUD_READ_TIMEOUT_MS);
             try {
                 const cacheBuster = "?t=" + new Date().getTime();
                 const res = await fetch(API_URL + cacheBuster, { signal: controller.signal, cache: "no-store" });

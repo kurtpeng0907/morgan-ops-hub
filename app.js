@@ -2,6 +2,8 @@
 
 const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiTI5Z8c76YNlcPMYWyR17HGaU4QvzHJm32nWeCHsnaknVx/exec";
 const APP_VERSION = "MSOT1.0";
+const CLOUD_READ_TIMEOUT_MS = 45000;
+const CLOUD_WRITE_TIMEOUT_MS = 45000;
 const STORAGE_KEY = "morgan-ops-hub-v2";
 const SYNC_META_KEY = `${STORAGE_KEY}-sync-meta`;
 const LOCAL_BACKUP_PREFIX = `${STORAGE_KEY}-backup`;
@@ -552,7 +554,7 @@ function markSyncPending(isPending, reason = "") {
 async function tryCloudSync(options = {}) {
   const force = Boolean(options.force);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = setTimeout(() => controller.abort(), CLOUD_READ_TIMEOUT_MS);
   try {
     const res = await fetch(`${API_URL}?t=${Date.now()}`, { signal: controller.signal, cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -584,7 +586,7 @@ function normalizeCloudPayload(payload) {
 async function postCloud(action, data) {
   persist();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000);
+  const timeout = setTimeout(() => controller.abort(), CLOUD_WRITE_TIMEOUT_MS);
   try {
     const res = await fetch(API_URL, {
       method: "POST",
@@ -1121,7 +1123,7 @@ async function restoreBackup(key) {
 
 async function fetchCloudDbSnapshot() {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = setTimeout(() => controller.abort(), CLOUD_READ_TIMEOUT_MS);
   try {
     const res = await fetch(`${API_URL}?t=${Date.now()}`, { signal: controller.signal, cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -2130,7 +2132,7 @@ function renderOverview() {
               </article>
               <article class="ops-tool-card">
                 <div class="ops-tool-heading"><span class="ops-tool-icon tone-emerald">${iconHtml("wallet-cards")}</span><div><strong>儲值卡餘額</strong><small class="ops-tool-balance">${money(storedBalance)}</small></div></div>
-                <div class="ops-tool-actions"><button id="adjustStoredValueBtn" class="btn-teal">${iconHtml("plus-minus")}<span>登記異動</span></button><button id="storedValueHistoryBtn" class="btn-light">${iconHtml("history")}<span>查看紀錄</span></button></div>
+                <div class="ops-tool-actions"><button id="adjustStoredValueBtn" class="btn-teal">${iconHtml("circle-dollar-sign")}<span>登記異動</span></button><button id="storedValueHistoryBtn" class="btn-light">${iconHtml("history")}<span>查看紀錄</span></button></div>
               </article>
             </div>
           </section>
