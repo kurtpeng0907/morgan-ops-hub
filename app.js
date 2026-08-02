@@ -1,7 +1,7 @@
 "use strict";
 
 const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiTI5Z8c76YNlcPMYWyR17HGaU4QvzHJm32nWeCHsnaknVx/exec";
-const APP_VERSION = "MSOT1.0";
+const APP_VERSION = "MSOT2.0";
 const CLOUD_READ_TIMEOUT_MS = 45000;
 const CLOUD_WRITE_TIMEOUT_MS = 45000;
 const LOGIN_CLOUD_TIMEOUT_MS = 18000;
@@ -10,6 +10,7 @@ const STORAGE_KEY = "morgan-ops-hub-v2";
 const SYNC_META_KEY = `${STORAGE_KEY}-sync-meta`;
 const LOCAL_BACKUP_PREFIX = `${STORAGE_KEY}-backup`;
 const MAX_LOCAL_BACKUPS = 12;
+const LOCAL_TEST_MODE = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 
 const COURSE_CATALOG = {
   A60: { name: "A課程 60分", duration: 60, price: 1800, therapistCut: 1000 },
@@ -28,11 +29,11 @@ const HISTORICAL_THERAPISTS = {
 };
 
 const ADMIN_NAV_ITEMS = [
-  { tab: "overview", label: "總覽", title: "總覽", icon: "layout-dashboard" },
+  { tab: "overview", label: "今日工作", title: "今日工作", icon: "list-checks" },
   { tab: "dispatch", label: "預約", title: "預約系統", icon: "calendar-days" },
   { tab: "customer", label: "顧客", title: "顧客", icon: "users" },
-  { tab: "personnel", label: "人事", title: "人事", icon: "user-cog" },
-  { tab: "report", label: "財務", title: "財務", icon: "circle-dollar-sign" },
+  { tab: "personnel", label: "人員班表", title: "人員班表", icon: "user-cog" },
+  { tab: "report", label: "營運帳務", title: "營運帳務", icon: "circle-dollar-sign" },
   { tab: "system", label: "系統", title: "系統", icon: "settings" }
 ];
 
@@ -55,6 +56,11 @@ let activePersonnelPanel = "schedule";
 let activeReportPanel = "revenue";
 let activeSystemPanel = "status";
 let customerSortState = { key: "code", direction: "asc" };
+let customerPage = 1;
+const CUSTOMER_PAGE_SIZE = 25;
+let scheduleViewMode = "week";
+let scheduleSearchQuery = "";
+let scheduleAnomalyOnly = false;
 let scheduleFilterStart = "";
 let scheduleFilterEnd = "";
 let reportFilterStart = "";
@@ -247,6 +253,25 @@ let loadedLocalDbFromStorage = false;
 let offlineReadOnlyMode = false;
 let loginInFlight = false;
 let db = seedDatabase();
+if (LOCAL_TEST_MODE && new URLSearchParams(window.location.search).get("fixture") === "1") applyLocalTestFixture(db);
+
+function applyLocalTestFixture(target) {
+  target.therapists["001"] = { id: "001", nickname: "測試師傅", name: "測試師傅", pin: "0000" };
+  target.schedules["001"] = {
+    [todayKey()]: "13:00-21:00",
+    [toDateKey(new Date(Date.now() + 86400000))]: "13-21"
+  };
+  for (let index = 1; index <= 527; index += 1) {
+    const phone = `TEST-${String(index).padStart(3, "0")}`;
+    target.customers[phone] = { code: `C${String(index).padStart(4, "0")}`, name: `測試顧客 ${index}`, notes: index % 9 === 0 ? "偏好安靜" : "", records: [] };
+  }
+  const fixtureAppointments = [
+    { id: "TEST-OVERDUE", date: toDateKey(new Date(Date.now() - 86400000)), time: "12:00", therapistId: "001", phone: "TEST-001", service: "C90", price: "2500", bookingStage: "confirmed", isCompleted: false },
+    { id: "TEST-TODAY", date: todayKey(), time: "18:00", therapistId: "001", phone: "TEST-002", service: "C120", price: "2800", bookingStage: "confirmed", isCompleted: false },
+    { id: "TEST-UNPAID", date: todayKey(), time: "14:00", therapistId: "001", phone: "TEST-003", service: "D90", price: "2100", bookingStage: "completed", isCompleted: true, collectedPrice: "" }
+  ];
+  fixtureAppointments.forEach((appointment) => { target.appointments[appointment.id] = appointment; });
+}
 
 function customerCode(phone = "") {
   return db.customers[phone]?.code || "";
@@ -715,6 +740,11 @@ async function readBackVerifiedCloud(actions, customVerifier) {
 async function saveCloudActions(actions, successMessage = "已儲存到雲端", options = {}) {
   actions = (actions || []).filter(Boolean);
   if (!actions.length) return true;
+  if (LOCAL_TEST_MODE) {
+    persist(`本地測試：${successMessage}`);
+    showSnackbar(`本地測試模式：已模擬「${successMessage}」，未寫入正式雲端`);
+    return true;
+  }
   if (offlineReadOnlyMode) {
     showSnackbar("目前使用上次同步資料，雲端恢復前不能寫入");
     return false;
@@ -1872,7 +1902,22 @@ function collapsibleCardHtml({ title, desc = "", badge = "", body = "", open = t
 
 function navItemHtml(item, attr = "data-tab") {
   const activeClass = item.tab === activeTab ? " active" : "";
-  return `<button type="button" ${attr}="${esc(item.tab)}" class="nav-btn${activeClass}">${iconHtml(item.icon || "circle")}<span>${esc(item.label)}</span></button>`;
+  const count = currentUser?.role === "admin" ? navPendingCount(item.tab) : 0;
+  return `<button type="button" ${attr}="${esc(item.tab)}" class="nav-btn${activeClass}">${iconHtml(item.icon || "circle")}<span>${esc(item.label)}</span>${count ? `<b class="nav-count">${count}</b>` : ""}</button>`;
+}
+
+function navPendingCount(tab) {
+  if (!db) return 0;
+  const appts = Object.values(db.appointments || {});
+  const today = todayKey();
+  const recentStart = toDateKey(new Date(Date.now() - 30 * 86400000));
+  const upcomingEnd = toDateKey(new Date(Date.now() + 30 * 86400000));
+  const operational = appts.filter((a) => a.date >= recentStart && a.date <= upcomingEnd);
+  if (tab === "overview") return buildWorkItems().filter((item) => item.priority < 4).length;
+  if (tab === "dispatch") return operational.filter((a) => bookingNextActionMeta(a).key !== "complete").length;
+  if (tab === "personnel") return approvalsList("pending").length;
+  if (tab === "report") return appts.filter((a) => a.date >= recentStart && a.date <= today && String(a.isCompleted) === "true" && (!isRemittancePaid(a) || !String(appointmentRecord(a)?.notes || "").trim())).length;
+  return 0;
 }
 
 function tabTitle(tab) {
@@ -1902,6 +1947,7 @@ function closestFromEvent(event, selector) {
 
 function renderAll() {
   generateMonthData();
+  renderAppShellNavigation();
   renderOverview();
   renderDispatch();
   renderCustomers();
@@ -1909,6 +1955,11 @@ function renderAll() {
   renderReport();
   renderSystem();
   renderPortal();
+  renderTopToolbar();
+  enhanceOverviewWorkflow();
+  enhanceDispatchWorkflow();
+  enhanceReportExceptions();
+  restoreViewStateFromUrl();
   hydrateResponsiveTables();
   refreshIcons();
 }
@@ -2011,6 +2062,7 @@ function switchTab(tab, options = {}) {
     activeDispatchPanel = "query";
   }
   activeTab = tab;
+  writeViewStateToUrl({ tab });
   document.querySelectorAll(".view").forEach((el) => el.classList.add("hidden"));
   $(`view-${tab}`)?.classList.remove("hidden");
   document.querySelectorAll(".nav-btn").forEach((btn) => {
@@ -3421,7 +3473,7 @@ function renderCustomers() {
   $("view-customer").innerHTML = `
     <div class="card p-5">
       <div class="mb-5 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-        <div><h3 class="text-lg font-black">顧客資料庫 (CRM)</h3><p class="text-sm font-bold text-slate-500">熟客輪廓、偏好與消費歷程</p></div>
+        <div><span class="page-kicker">顧客經營</span><h3 class="text-lg font-black">顧客資料庫</h3><p class="text-sm font-bold text-slate-500">先看最近消費、回訪狀態與下一步；點整列開啟完整檔案。</p></div>
         <button id="addCustomerBtn" class="btn-teal">新增顧客檔案</button>
       </div>
       <div class="mb-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
@@ -3439,14 +3491,16 @@ function renderCustomers() {
           <button id="customerSortDirection" type="button" class="btn-light inline-flex min-w-24 items-center justify-center gap-2" title="切換排序方向"></button>
         </div>
       </div>
-      <div class="table-wrap"><table><thead><tr><th>顧客編碼</th><th>聯絡方式</th><th>顧客姓名</th><th>來店次數</th><th>累積消費額</th><th>偏好備註</th><th class="text-right">操作</th></tr></thead><tbody id="customerRows"></tbody></table></div>
+      <div class="table-wrap"><table class="customer-table"><thead><tr><th>顧客</th><th>最近消費</th><th>累計次數</th><th>最後服務者</th><th>回訪狀態</th><th>下一步</th></tr></thead><tbody id="customerRows"></tbody></table></div>
+      <div id="customerPager" class="customer-pager"></div>
     </div>`;
   $("addCustomerBtn").onclick = () => openCustomerModal();
-  $("customerSearchInput").oninput = drawCustomerRows;
+  $("customerSearchInput").oninput = () => { customerPage = 1; drawCustomerRows(); };
   $("customerSortKey").value = customerSortState.key;
   $("customerSortKey").onchange = (event) => {
     customerSortState.key = event.currentTarget.value;
     customerSortState.direction = event.currentTarget.value === "code" ? "asc" : "desc";
+    customerPage = 1;
     drawCustomerRows();
   };
   $("customerSortDirection").onclick = () => {
@@ -3473,11 +3527,13 @@ function drawCustomerRows() {
     .filter(([phone, c]) => !isSystemCustomerKey(phone) && (!q || phone.toLowerCase().includes(q) || String(c.code || "").toLowerCase().includes(q) || String(c.name || "").toLowerCase().includes(q)))
     .map(([phone, customer]) => {
       const completed = (appointmentsByPhone[phone] || []).filter((appointment) => normalizeBookingStage(appointment.bookingStage, appointment) === "completed" || String(appointment.isCompleted) === "true");
+      const history = completed.slice().sort((a, b) => `${b.date || ""} ${b.time || ""}`.localeCompare(`${a.date || ""} ${a.time || ""}`));
       return {
         phone,
         customer,
         visits: completed.length,
-        spend: completed.reduce((sum, appointment) => sum + (Number(appointment.price) || 0), 0)
+        spend: completed.reduce((sum, appointment) => sum + (Number(appointment.price) || 0), 0),
+        latest: history[0] || null
       };
     });
   const direction = customerSortState.direction === "asc" ? 1 : -1;
@@ -3488,25 +3544,30 @@ function drawCustomerRows() {
     else comparison = customerCodeValue(a.customer.code) - customerCodeValue(b.customer.code) || String(a.customer.code || "").localeCompare(String(b.customer.code || ""), "zh-Hant", { numeric: true });
     return comparison * direction || String(a.customer.code || a.phone).localeCompare(String(b.customer.code || b.phone), "zh-Hant", { numeric: true });
   });
-  const html = customers.map(({ phone, customer: c, visits, spend }) => `<tr><td class="font-mono font-black text-teal-700">${esc(c.code || "")}</td><td class="font-mono font-black text-indigo-700">${esc(phone)}</td><td class="font-black">${esc(c.name || c.code || "未填寫")}</td><td><span class="badge ${visits <= 1 ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-800"}">${visits.toLocaleString()} 次</span></td><td class="font-black text-slate-800">${money(spend)}</td><td class="max-w-[280px] truncate">${esc(c.notes || "無")}</td><td class="text-right"><button class="btn-light px-3 py-1 text-xs" data-record="${esc(phone)}">檔案</button> <button class="rounded-lg bg-rose-50 px-3 py-1 text-xs font-black text-rose-700" data-delete-customer="${esc(phone)}">刪除</button></td></tr>`).join("");
-  rows.innerHTML = html || `<tr><td colspan="7" class="py-8 text-center font-bold text-slate-400">無符合顧客</td></tr>`;
+  const pageCount = Math.max(1, Math.ceil(customers.length / CUSTOMER_PAGE_SIZE));
+  customerPage = Math.min(Math.max(1, customerPage), pageCount);
+  const pageRows = customers.slice((customerPage - 1) * CUSTOMER_PAGE_SIZE, customerPage * CUSTOMER_PAGE_SIZE);
+  const html = pageRows.map(({ phone, customer: c, visits, spend, latest }) => {
+    const daysSince = latest?.date ? Math.floor((new Date(`${todayKey()}T00:00:00`) - new Date(`${latest.date}T00:00:00`)) / 86400000) : null;
+    const returnStatus = visits === 0 ? "尚無消費" : daysSince > 60 ? "久未回訪" : visits === 1 ? "首次消費" : "持續回訪";
+    const nextAction = daysSince > 60 ? "安排關懷" : visits <= 1 ? "追蹤體驗" : "查看偏好";
+    return `<tr tabindex="0" data-record="${esc(phone)}"><td><strong>${esc(c.name || c.code || "未填寫")}</strong><small>${esc(c.code || "未編碼")} · ${esc(phone)}</small></td><td><strong>${esc(latest?.date || "尚無")}</strong><small>${latest ? `${esc(courseName(latest.service))} · ${money(latest.price)}` : "沒有完成紀錄"}</small></td><td><strong>${visits.toLocaleString()} 次</strong><small>${money(spend)}</small></td><td><strong>${esc(latest ? therapistName(latest.therapistId) : "—")}</strong><small>最近服務</small></td><td><span class="customer-status status-${daysSince > 60 ? "risk" : visits <= 1 ? "new" : "active"}">${esc(returnStatus)}</span></td><td><strong class="text-teal-700">${esc(nextAction)}</strong><small>開啟顧客檔案 →</small></td></tr>`;
+  }).join("");
+  rows.innerHTML = html || `<tr><td colspan="6" class="py-8 text-center font-bold text-slate-400">無符合顧客</td></tr>`;
+  const pager = $("customerPager");
+  if (pager) pager.innerHTML = `<span>共 ${customers.length.toLocaleString()} 位 · 第 ${customerPage} / ${pageCount} 頁</span><div><button id="customerPrevPage" class="btn-light" ${customerPage <= 1 ? "disabled" : ""}>上一頁</button><button id="customerNextPage" class="btn-light" ${customerPage >= pageCount ? "disabled" : ""}>下一頁</button></div>`;
   const directionButton = $("customerSortDirection");
   if (directionButton) {
     const ascending = customerSortState.direction === "asc";
     directionButton.innerHTML = `${iconHtml(ascending ? "arrow-up" : "arrow-down", "h-4 w-4")}<span>${ascending ? "升冪" : "降冪"}</span>`;
   }
   refreshIcons();
-  rows.querySelectorAll("[data-record]").forEach((btn) => btn.onclick = () => openCustomerModal(btn.dataset.record, true));
-  rows.querySelectorAll("[data-delete-customer]").forEach((btn) => btn.onclick = () => confirmAction("刪除 CRM 檔案", "顧客基本資料與服務紀錄將移除。", async () => {
-    const snapshot = snapshotDatabase();
-    const phone = btn.dataset.deleteCustomer;
-    delete db.customers[phone];
-    renderAll();
-    const saved = await saveCloudActions([{ action: "deleteCustomer", data: { phone } }], "顧客檔案已刪除", {
-      verifyCloud: (cloudDb) => !cloudDb.customers?.[phone]
-    });
-    if (!saved) restoreDatabase(snapshot, "刪除未獲雲端確認，已還原顧客");
-  }));
+  rows.querySelectorAll("[data-record]").forEach((row) => {
+    row.onclick = () => openCustomerModal(row.dataset.record, true);
+    row.onkeydown = (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openCustomerModal(row.dataset.record, true); } };
+  });
+  if ($("customerPrevPage")) $("customerPrevPage").onclick = () => { customerPage -= 1; drawCustomerRows(); };
+  if ($("customerNextPage")) $("customerNextPage").onclick = () => { customerPage += 1; drawCustomerRows(); };
 }
 
 function openCustomerModal(phone = "", recordsOpen = false) {
@@ -3536,7 +3597,7 @@ function openCustomerModal(phone = "", recordsOpen = false) {
         </div>
         <div><h4 class="mb-3 font-black">消費與服務紀錄 <span id="recordCountBadge" class="badge bg-indigo-50 text-indigo-700">${historyCount}</span></h4><div id="recordList" class="space-y-3">${renderRecordList(phone)}</div></div>` : ""}
         <p id="customerError" class="hidden text-sm font-black text-rose-600"></p>
-        <div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>關閉</button><button class="btn-teal">儲存基本資料</button></div>
+        <div class="flex flex-wrap justify-between gap-3 border-t pt-4">${phone ? `<button id="deleteCustomerFromProfileBtn" type="button" class="rounded-xl bg-rose-50 px-4 py-2 font-black text-rose-700">刪除顧客檔案</button>` : `<span></span>`}<div class="flex gap-3"><button type="button" class="btn-light" data-close-modal>關閉</button><button class="btn-teal">儲存基本資料</button></div></div>
       </form>
     </div>`);
   $("customerForm").onsubmit = async (event) => {
@@ -3561,6 +3622,14 @@ function openCustomerModal(phone = "", recordsOpen = false) {
     renderAll();
   };
   if ($("addRecordBtn")) $("addRecordBtn").onclick = () => addCustomerRecord(phone);
+  if ($("deleteCustomerFromProfileBtn")) $("deleteCustomerFromProfileBtn").onclick = () => confirmAction("刪除 CRM 檔案", "顧客基本資料與服務紀錄將移除。", async () => {
+    const snapshot = snapshotDatabase();
+    delete db.customers[phone];
+    const saved = await saveCloudActions([{ action: "deleteCustomer", data: { phone } }], "顧客檔案已刪除", { verifyCloud: (cloudDb) => !cloudDb.customers?.[phone] });
+    if (!saved) { restoreDatabase(snapshot, "刪除未獲雲端確認，已還原顧客"); return; }
+    closeModal();
+    renderAll();
+  });
   $("modalRoot").querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => {
     closeModal();
     openAppointmentDetailPage(btn.dataset.openAppt);
@@ -3649,12 +3718,65 @@ function buildDateRange(start, end) {
   return out;
 }
 
+function setScheduleRangeForMode(mode = "week", anchor = todayKey()) {
+  scheduleViewMode = mode;
+  const date = new Date(`${anchor}T00:00:00`);
+  if (mode === "month") {
+    scheduleFilterStart = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-01`;
+    scheduleFilterEnd = toDateKey(new Date(date.getFullYear(), date.getMonth() + 1, 0));
+    return;
+  }
+  const mondayOffset = (date.getDay() + 6) % 7;
+  const start = new Date(date);
+  start.setDate(start.getDate() - mondayOffset);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  scheduleFilterStart = toDateKey(start);
+  scheduleFilterEnd = toDateKey(end);
+}
+
+function scheduleValueIsAnomalous(value = "") {
+  const text = String(value || "").trim();
+  if (!text || text.includes("休")) return false;
+  return !/^\d{1,2}:\d{2}-\d{1,2}:\d{2}(,\d{1,2}:\d{2}-\d{1,2}:\d{2})*$/.test(text) || /(^|[^\d])([3-9]\d):/.test(text);
+}
+
 function drawScheduleTable() {
   currentScheduleViewDates = buildDateRange(scheduleFilterStart, scheduleFilterEnd);
-  $("scheduleHeader").innerHTML = `<th class="sticky left-0 z-10 bg-slate-50">按摩師</th>` + currentScheduleViewDates.map((d) => `<th data-date-key="${esc(d.key)}" class="${d.isWeekend ? "text-rose-600" : ""} ${d.key === todayKey() ? "bg-teal-50 text-teal-700" : ""}">${esc(d.displayShort)}</th>`).join("");
-  $("scheduleRows").innerHTML = Object.keys(db.therapists).map((id) => `<tr><td class="sticky left-0 bg-white font-black">${esc(therapistName(id))} <button class="ml-2 rounded bg-slate-100 px-2 py-1 text-xs" data-edit-schedule="${id}">✎</button></td>${currentScheduleViewDates.map((d) => `<td data-date-key="${esc(d.key)}" class="${isWorking((db.schedules[id] || {})[d.key]) ? "font-bold text-slate-700" : "text-slate-400"} ${d.key === todayKey() ? "bg-teal-50/50" : ""}">${esc((db.schedules[id] || {})[d.key] || "休假")}</td>`).join("")}</tr>`).join("");
+  const query = scheduleSearchQuery.trim().toLowerCase();
+  const therapistIds = Object.keys(db.therapists).filter((id) => {
+    const matchesName = !query || id.toLowerCase().includes(query) || therapistName(id).toLowerCase().includes(query);
+    const hasAnomaly = currentScheduleViewDates.some((d) => scheduleValueIsAnomalous((db.schedules[id] || {})[d.key]));
+    return matchesName && (!scheduleAnomalyOnly || hasAnomaly);
+  });
+  $("scheduleHeader").innerHTML = `<th class="sticky left-0 z-20 bg-slate-50">人員</th>` + currentScheduleViewDates.map((d) => `<th data-date-key="${esc(d.key)}" class="sticky top-0 z-10 ${d.isWeekend ? "text-rose-600" : ""} ${d.key === todayKey() ? "bg-teal-50 text-teal-700" : "bg-slate-50"}">${esc(d.displayShort)}<small>${esc(d.displayFull.split(" ")[1] || "")}</small></th>`).join("");
+  $("scheduleRows").innerHTML = therapistIds.map((id) => `<tr><td class="sticky left-0 z-10 bg-white"><strong>${esc(therapistName(id))}</strong><button class="schedule-bulk-edit" data-edit-schedule="${id}" title="批次修改">${iconHtml("calendar-range")}</button></td>${currentScheduleViewDates.map((d) => { const shift=(db.schedules[id] || {})[d.key] || "休假"; const anomaly=scheduleValueIsAnomalous(shift); return `<td data-date-key="${esc(d.key)}" class="${isWorking(shift) ? "is-working" : "is-off"} ${d.isWeekend ? "is-weekend" : ""} ${d.key === todayKey() ? "is-today" : ""} ${anomaly ? "is-anomaly" : ""}"><button data-edit-shift="${esc(id)}" data-date="${esc(d.key)}" title="編輯 ${esc(therapistName(id))} ${esc(d.displayFull)}">${esc(shift)}</button></td>`; }).join("")}</tr>`).join("") || `<tr><td colspan="${currentScheduleViewDates.length + 1}" class="py-10 text-center font-bold text-slate-400">沒有符合條件的人員</td></tr>`;
   $("scheduleRows").querySelectorAll("[data-edit-schedule]").forEach((btn) => btn.onclick = () => openScheduleModal(btn.dataset.editSchedule));
+  $("scheduleRows").querySelectorAll("[data-edit-shift]").forEach((btn) => btn.onclick = () => openSingleShiftModal(btn.dataset.editShift, btn.dataset.date));
   setTimeout(() => centerTodayInDateScroll($("view-personnel")), 80);
+}
+
+function openSingleShiftModal(id, date) {
+  const original = (db.schedules[id] || {})[date] || "休假";
+  showModal(`<div class="modal max-w-lg"><h3 class="text-xl font-black">編輯單日班表</h3><p class="mt-1 text-sm font-bold text-slate-500">${esc(therapistName(id))} · ${esc(date)}</p><form id="singleShiftForm" class="mt-5 space-y-4"><label><span class="label">班別</span><input name="shift" class="input" value="${esc(original)}" placeholder="休假 / 13:00-22:00"></label><div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">檢查並儲存</button></div></form></div>`);
+  $("singleShiftForm").onsubmit = (event) => {
+    event.preventDefault();
+    const next = normalizeShift(new FormData(event.currentTarget).get("shift"));
+    showScheduleChangeConfirmation(id, [{ date, before: original, after: next }]);
+  };
+}
+
+function showScheduleChangeConfirmation(id, changes) {
+  showModal(`<div class="modal max-w-2xl"><h3 class="text-xl font-black">確認班表異動</h3><p class="mt-1 text-sm font-bold text-slate-500">只會修改下列 ${changes.length} 個日期，其他班表保持不變。</p><div class="table-wrap mt-5"><table><thead><tr><th>日期</th><th>原班表</th><th>新班表</th></tr></thead><tbody>${changes.map((change) => `<tr><td class="font-mono font-black">${esc(change.date)}</td><td>${esc(change.before)}</td><td class="font-black text-teal-700">${esc(change.after)}</td></tr>`).join("")}</tbody></table></div><div class="mt-5 flex justify-end gap-3 border-t pt-4"><button class="btn-light" data-close-modal>返回修改</button><button id="confirmScheduleChangesBtn" class="btn-teal">確認寫入 ${changes.length} 筆</button></div></div>`);
+  $("confirmScheduleChangesBtn").onclick = async () => {
+    const snapshot = snapshotDatabase();
+    db.schedules[id] ||= {};
+    changes.forEach((change) => { db.schedules[id][change.date] = change.after; });
+    const saved = await saveCloudActions([{ action: "saveSchedule", data: { id: String(id), schedule: db.schedules[id] } }], "班表已寫入雲端");
+    if (!saved) { restoreDatabase(snapshot, "班表未獲雲端確認，已還原"); return; }
+    closeModal();
+    renderAll();
+  };
 }
 
 function openScheduleFilterModal() {
@@ -3664,27 +3786,19 @@ function openScheduleFilterModal() {
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
     scheduleFilterStart = data.start || monthDates[0]?.key || todayKey();
     scheduleFilterEnd = data.end || monthDates.at(-1)?.key || todayKey();
+    scheduleViewMode = "custom";
     closeModal();
     renderPersonnel();
   };
 }
 
 function openScheduleModal(id) {
-  showModal(`<div class="modal max-w-4xl"><h3 class="mb-5 border-b pb-4 text-xl font-black">強制編輯：${esc(therapistName(id))}</h3><form id="scheduleForm" class="space-y-4"><div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">${currentScheduleViewDates.map((d) => `<label class="rounded-xl border bg-slate-50 p-3"><span class="label ${d.isWeekend ? "text-rose-600" : ""}">${esc(d.displayFull)}</span><input class="input py-2" name="${d.key}" value="${esc((db.schedules[id] || {})[d.key] || "")}" placeholder="休假 / 13:00-22:00"></label>`).join("")}</div><div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">覆寫紀錄</button></div></form></div>`);
-  $("scheduleForm").onsubmit = async (event) => {
+  showModal(`<div class="modal max-w-4xl"><h3 class="mb-1 text-xl font-black">批次修改：${esc(therapistName(id))}</h3><p class="mb-5 text-sm font-bold text-slate-500">只會送出實際變更的日期；未修改欄位不會覆寫。</p><form id="scheduleForm" class="space-y-4"><div class="grid max-h-[58vh] gap-3 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">${currentScheduleViewDates.map((d) => `<label class="rounded-xl border bg-slate-50 p-3"><span class="label ${d.isWeekend ? "text-rose-600" : ""}">${esc(d.displayFull)}</span><input class="input py-2" name="${d.key}" value="${esc((db.schedules[id] || {})[d.key] || "休假")}" placeholder="休假 / 13:00-22:00"></label>`).join("")}</div><div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">檢查異動</button></div></form></div>`);
+  $("scheduleForm").onsubmit = (event) => {
     event.preventDefault();
-    const snapshot = snapshotDatabase();
-    setFormBusy(event.currentTarget, true);
-    db.schedules[id] ||= {};
-    Object.entries(Object.fromEntries(new FormData(event.currentTarget).entries())).forEach(([date, value]) => db.schedules[id][date] = normalizeShift(value));
-    const saved = await saveCloudActions([{ action: "saveSchedule", data: { id, schedule: db.schedules[id] } }], "班表已寫入雲端");
-    setFormBusy(event.currentTarget, false);
-    if (!saved) {
-      restoreDatabase(snapshot, "班表未獲雲端確認，已還原");
-      return;
-    }
-    closeModal();
-    renderAll();
+    const changes = Object.entries(Object.fromEntries(new FormData(event.currentTarget).entries())).map(([date, value]) => ({ date, before: (db.schedules[id] || {})[date] || "休假", after: normalizeShift(value) })).filter((change) => change.before !== change.after);
+    if (!changes.length) return showSnackbar("沒有班表異動");
+    showScheduleChangeConfirmation(id, changes);
   };
 }
 
@@ -3904,8 +4018,7 @@ async function dismissApproval(id) {
 
 function renderPersonnel() {
   const section = $("view-personnel");
-  scheduleFilterStart ||= monthDates[0]?.key || todayKey();
-  scheduleFilterEnd ||= monthDates.at(-1)?.key || todayKey();
+  if (!scheduleFilterStart || !scheduleFilterEnd) setScheduleRangeForMode("week", todayKey());
   const pendingCount = approvalsList("pending").length;
   const personnelTabs = {
     schedule: { label: "班表", icon: "calendar-range" },
@@ -3973,13 +4086,16 @@ function renderPersonnel() {
   const schedulePanel = `
     <div class="workbench-panel card overflow-hidden">
       <div class="workbench-panel-head">
-        <div><span class="page-kicker">排班管理</span><h3>班表矩陣</h3><p>橫向瀏覽日期；點人員旁的編輯按鈕即可調整所選區間。</p></div>
+        <div><span class="page-kicker">排班管理</span><h3>班表矩陣</h3><p>預設顯示本週；點班表格編輯單日，點人員旁圖示才進行批次修改。</p></div>
         <div class="workbench-actions">
           <div class="date-range-chip">${iconHtml("calendar-range")}<span>${esc(scheduleFilterStart)} 至 ${esc(scheduleFilterEnd)}</span></div>
-          <button id="openScheduleFilterBtn" class="btn-light">${iconHtml("sliders-horizontal")}設定區間</button>
+          <div class="schedule-view-toggle"><button data-schedule-mode="week" class="${scheduleViewMode === "week" ? "active" : ""}">週</button><button data-schedule-mode="month" class="${scheduleViewMode === "month" ? "active" : ""}">月</button></div>
+          <button id="scheduleTodayBtn" class="btn-light">今天</button>
+          <button id="openScheduleFilterBtn" class="btn-light">${iconHtml("sliders-horizontal")}自訂區間</button>
           <button id="exportScheduleBtn" class="btn-teal">${iconHtml("download")}匯出</button>
         </div>
       </div>
+      <div class="schedule-filter-bar"><label>${iconHtml("search")}<input id="scheduleSearchInput" value="${esc(scheduleSearchQuery)}" placeholder="搜尋人員姓名或編號"></label><button id="scheduleAnomalyBtn" class="${scheduleAnomalyOnly ? "active" : ""}">${iconHtml("triangle-alert")}只看異常</button><span>異常包含格式錯誤或無法辨識的班別</span></div>
       <div class="schedule-table-wrap table-wrap rounded-none border-0" data-date-scroll><table><thead><tr id="scheduleHeader"></tr></thead><tbody id="scheduleRows"></tbody></table></div>
     </div>`;
   const adminPanel = `
@@ -4010,6 +4126,10 @@ function renderPersonnel() {
   if (activePersonnelPanel === "schedule") {
     $("openScheduleFilterBtn").onclick = openScheduleFilterModal;
     $("exportScheduleBtn").onclick = exportScheduleCSV;
+    $("scheduleTodayBtn").onclick = () => { setScheduleRangeForMode("week", todayKey()); renderPersonnel(); };
+    section.querySelectorAll("[data-schedule-mode]").forEach((button) => button.onclick = () => { setScheduleRangeForMode(button.dataset.scheduleMode, todayKey()); renderPersonnel(); });
+    $("scheduleSearchInput").oninput = (event) => { scheduleSearchQuery = event.currentTarget.value; drawScheduleTable(); };
+    $("scheduleAnomalyBtn").onclick = () => { scheduleAnomalyOnly = !scheduleAnomalyOnly; renderPersonnel(); };
     drawScheduleTable();
     return;
   }
@@ -4689,6 +4809,15 @@ async function handleLogin() {
   $("loginBtnText").textContent = "連線中...";
   $("loginLoader").classList.remove("hidden");
   try {
+    if (LOCAL_TEST_MODE) {
+      if (!finishLogin()) {
+        err.textContent = "本地測試帳號或密碼錯誤。";
+        err.classList.remove("hidden");
+      } else {
+        showSnackbar("本地測試模式：不會寫入正式雲端");
+      }
+      return;
+    }
     let synced = await tryCloudSync({ timeoutMs: LOGIN_CLOUD_TIMEOUT_MS });
     if (!synced && !loadedLocalDbFromStorage) {
       $("loginBtnText").textContent = "重新連線中...";
@@ -4745,6 +4874,115 @@ function changeMonth(offset) {
   if (currentMonth > 11) { currentMonth = 0; currentYear += 1; }
   if (currentMonth < 0) { currentMonth = 11; currentYear -= 1; }
   renderAll();
+}
+
+function writeViewStateToUrl(patch = {}) {
+  if (!window.history?.replaceState) return;
+  const url = new URL(window.location.href);
+  Object.entries(patch).forEach(([key, value]) => value ? url.searchParams.set(key, String(value)) : url.searchParams.delete(key));
+  window.history.replaceState({}, "", url);
+}
+
+let urlStateRestored = false;
+function restoreViewStateFromUrl() {
+  if (urlStateRestored || !currentUser) return;
+  urlStateRestored = true;
+  const params = new URLSearchParams(window.location.search);
+  const requestedTab = params.get("tab");
+  if (requestedTab && ADMIN_NAV_ITEMS.some((item) => item.tab === requestedTab) && requestedTab !== activeTab) {
+    requestAnimationFrame(() => switchTab(requestedTab));
+  }
+}
+
+function renderTopToolbar() {
+  const status = $("topSyncStatus");
+  if (status) status.textContent = `${new Date().toLocaleDateString("zh-TW", { month: "2-digit", day: "2-digit", weekday: "short" })} · ${syncStatusText()}`;
+  if ($("todayBtn")) $("todayBtn").onclick = () => {
+    const now = new Date();
+    currentYear = now.getFullYear();
+    currentMonth = now.getMonth();
+    scheduleViewMode = "week";
+    setScheduleRangeForMode("week", todayKey());
+    renderAll();
+  };
+  if ($("topRefreshBtn")) $("topRefreshBtn").onclick = refreshDashboardData;
+}
+
+function buildWorkItems() {
+  const now = new Date();
+  const today = todayKey();
+  const appts = Object.values(db.appointments || {});
+  const recentStart = toDateKey(new Date(Date.now() - 14 * 86400000));
+  const upcomingEnd = toDateKey(new Date(Date.now() + 7 * 86400000));
+  const items = [];
+  approvalsList("pending").forEach((approval) => items.push({
+    id: `approval:${approval.id}`, priority: 2, group: "今日待辦", status: "待審核",
+    subject: therapistName(approval.therapistId), due: "今天", action: "前往審核",
+    attrs: `data-jump-tab="personnel" data-personnel-panel="approvals"`
+  }));
+  appts.forEach((appt) => {
+    if (!appt.date || appt.date < recentStart || appt.date > upcomingEnd) return;
+    const next = bookingNextActionMeta(appt);
+    if (next.key === "complete") return;
+    const stamp = new Date(`${appt.date || today}T${appt.time || "23:59"}:00`);
+    const overdue = stamp.getTime() < now.getTime();
+    const isToday = appt.date === today;
+    const priority = overdue ? 1 : isToday ? 2 : 3;
+    const group = overdue ? "逾期異常" : isToday ? "今日待辦" : "即將發生";
+    items.push({ id: `appointment:${appt.id}`, priority, group, status: next.label, subject: `${customerDisplay(appt.phone, appt.customerName)} · ${therapistName(appt.therapistId)}`, due: `${appt.date || "未定日期"} ${appt.time || ""}`.trim(), action: "處理", attrs: `data-open-work-appt="${esc(appt.id)}"` });
+  });
+  const seen = new Set();
+  return items.filter((item) => item.id && !seen.has(item.id) && seen.add(item.id)).sort((a, b) => a.priority - b.priority || a.due.localeCompare(b.due));
+}
+
+function enhanceOverviewWorkflow() {
+  const view = $("view-overview");
+  if (!view) return;
+  const items = buildWorkItems();
+  const groups = ["逾期異常", "今日待辦", "即將發生", "一般提醒"];
+  const queue = groups.map((group) => {
+    const groupItems = items.filter((item) => item.group === group);
+    if (!groupItems.length) return "";
+    return `<section class="work-queue-group"><header><h3>${esc(group)}</h3><span>${groupItems.length}</span></header>${groupItems.slice(0, 20).map((item) => `<button class="work-item priority-${item.priority}" ${item.attrs}><span class="work-item-status">${esc(item.status)}</span><span class="work-item-subject">${esc(item.subject)}</span><time>${esc(item.due)}</time><strong>${esc(item.action)}</strong></button>`).join("")}</section>`;
+  }).join("");
+  const shell = view.querySelector(".ops-dashboard");
+  if (!shell) return;
+  shell.classList.add("ops-dashboard-v2");
+  shell.insertAdjacentHTML("afterbegin", `<section class="today-workbench"><header><div><span class="page-kicker">店務工作佇列</span><h2>今天先處理這些事</h2><p>依逾期、今日、即將發生排序；每筆只保留一個下一步。</p></div><div class="work-queue-total"><strong>${items.length}</strong><span>待處理</span></div></header><div class="work-queue-list">${queue || `<div class="work-queue-empty">${iconHtml("circle-check-big")}<strong>目前沒有待處理事項</strong><span>今日工作已整理完成</span></div>`}</div><details class="secondary-tools"><summary>展開今日營運摘要與店務工具</summary></details></section>`);
+  const details = shell.querySelector(".secondary-tools");
+  if (details) {
+    const body = document.createElement("div");
+    body.className = "secondary-tools-body";
+    [".ops-command-bar", ".ops-kpi-grid", ".ops-workspace-grid", ".ops-flow-panel"].forEach((selector) => {
+      const element = shell.querySelector(`:scope > ${selector}`);
+      if (element) body.appendChild(element);
+    });
+    details.appendChild(body);
+  }
+  view.querySelectorAll("[data-open-work-appt]").forEach((button) => button.onclick = () => openAppointmentDetailPage(button.dataset.openWorkAppt));
+}
+
+function enhanceDispatchWorkflow() {
+  const view = $("view-dispatch");
+  if (!view || view.querySelector(".booking-stage-strip")) return;
+  const stages = [
+    ["建立", "calendar-plus"], ["待確認", "badge-check"], ["行前通知", "send"], ["服務回報", "clipboard-pen-line"], ["回款", "wallet-cards"]
+  ];
+  view.insertAdjacentHTML("afterbegin", `<div class="booking-stage-strip" aria-label="預約處理流程">${stages.map(([label, icon], index) => `<span>${iconHtml(icon)}<b>${index + 1}</b>${label}</span>`).join("")}</div>`);
+}
+
+function enhanceReportExceptions() {
+  const view = $("view-report");
+  if (!view || view.querySelector(".accounting-exceptions")) return;
+  const start = reportFilterStart || todayKey();
+  const end = reportFilterEnd || todayKey();
+  const appts = Object.values(db.appointments || {}).filter((a) => a.date >= start && a.date <= end && String(a.isCompleted) === "true");
+  const unpaid = appts.filter((a) => !isRemittancePaid(a));
+  const missing = appts.filter((a) => !String(appointmentRecord(a)?.notes || "").trim());
+  const invalid = appts.filter((a) => Number(a.collectedPrice || 0) > Number(a.price || 0) || Number(a.price || 0) <= 0);
+  const header = view.querySelector(".page-workbench-header");
+  header?.insertAdjacentHTML("afterend", `<section class="accounting-exceptions"><button data-report-panel="commission"><span>未回款</span><strong>${unpaid.length}</strong><small>優先追蹤</small></button><button data-report-panel="commission"><span>缺服務紀錄</span><strong>${missing.length}</strong><small>資料待補</small></button><button data-report-panel="revenue"><span>金額異常</span><strong>${invalid.length}</strong><small>需要核對</small></button></section>`);
+  view.querySelectorAll(".accounting-exceptions [data-report-panel]").forEach((button) => button.onclick = () => { activeReportPanel = button.dataset.reportPanel; renderReport(); });
 }
 
 function bindEvents() {

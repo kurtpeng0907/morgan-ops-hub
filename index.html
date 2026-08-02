@@ -8,7 +8,7 @@
   <meta http-equiv="Expires" content="0">
   <title>內部營運管理中樞</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="./styles.css?v=MSOT1.1-store-tools-20260730">
+  <link rel="stylesheet" href="./styles.css?v=MSOT2.0-ops-workflow-20260803">
 </head>
 <body class="h-screen overflow-hidden bg-slate-100 text-slate-800">
   <section id="loginView" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
@@ -56,15 +56,19 @@
     </aside>
 
     <main class="flex h-full min-w-0 flex-1 flex-col">
-      <header class="glass-panel z-10 flex h-16 items-center justify-between border-b border-slate-200 px-4 md:px-8">
+      <header class="ops-topbar glass-panel z-10 flex min-h-16 items-center justify-between gap-4 border-b border-slate-200 px-4 py-2 md:px-8">
         <div class="flex min-w-0 items-center gap-3">
           <button id="openSidebarBtn" class="icon-button rounded-lg p-2 text-slate-600 hover:bg-slate-200 lg:hidden" aria-label="開啟選單"><i data-lucide="menu"></i></button>
-          <h2 id="pageTitle" class="truncate text-lg font-black md:text-xl">總覽儀表板</h2>
+          <div class="min-w-0"><h2 id="pageTitle" class="truncate text-lg font-black md:text-xl">今日工作</h2><p id="topSyncStatus" class="truncate text-xs font-bold text-slate-500">資料狀態確認中</p></div>
         </div>
-        <div class="flex items-center rounded-xl bg-slate-100 p-1">
+        <div class="ops-date-toolbar flex items-center gap-2">
+          <button id="todayBtn" class="btn-light hidden px-3 py-2 text-xs md:inline-flex">今天</button>
+          <div class="flex items-center rounded-xl bg-slate-100 p-1">
           <button id="prevMonthBtn" class="month-btn" aria-label="上一個月"><i data-lucide="chevron-left"></i></button>
           <span id="currentDateRange" class="min-w-28 px-3 text-center text-sm font-black md:text-base">--</span>
           <button id="nextMonthBtn" class="month-btn" aria-label="下一個月"><i data-lucide="chevron-right"></i></button>
+          </div>
+          <button id="topRefreshBtn" class="icon-button rounded-xl border border-slate-200 bg-white p-2 text-slate-600" aria-label="重新讀取雲端資料"><i data-lucide="refresh-cw"></i></button>
         </div>
       </header>
 
@@ -98,7 +102,7 @@
     });
   </script>
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-  <script src="./app.js?v=MSOT1.2-login-recovery-20260802"></script>
+  <script src="./app.js?v=MSOT2.0-ops-workflow-20260803"></script>
   <script src="./report-accounting-patch.js?v=MSOT1.0-20260730-inactive-export-scope"></script>
   <script src="./remittance-fields-patch.js?v=MSOT1.0-20260716c"></script>
 </body>

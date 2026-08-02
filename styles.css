@@ -15,6 +15,103 @@ html, body { height: 100%; }
   --danger: #c2413b;
 }
 
+/* MSOT2.0: task-first operations workflow */
+.ops-topbar { position:sticky; top:0; }
+.nav-btn { position:relative; }
+.nav-count { margin-left:auto; min-width:22px; border-radius:999px; background:#fb7185; padding:2px 7px; color:#fff; font-size:11px; text-align:center; }
+.today-workbench { display:grid; gap:18px; }
+.today-workbench > header { display:flex; align-items:flex-end; justify-content:space-between; gap:20px; border-radius:20px; background:#0f172a; padding:24px 28px; color:#fff; }
+.today-workbench h2 { margin-top:4px; font-size:26px; font-weight:900; }
+.today-workbench header p { margin-top:4px; color:#cbd5e1; font-size:13px; font-weight:700; }
+.work-queue-total { display:flex; align-items:baseline; gap:8px; }
+.work-queue-total strong { font-size:36px; line-height:1; }
+.work-queue-total span { color:#cbd5e1; font-size:12px; font-weight:900; }
+.work-queue-list { display:grid; gap:14px; }
+.work-queue-group { overflow:hidden; border:1px solid #e2e8f0; border-radius:18px; background:#fff; box-shadow:0 8px 24px rgba(15,23,42,.05); }
+.work-queue-group > header { display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid #e2e8f0; background:#f8fafc; padding:13px 18px; }
+.work-queue-group h3 { font-size:13px; font-weight:900; }
+.work-queue-group header span { border-radius:999px; background:#e2e8f0; padding:2px 9px; font-size:11px; font-weight:900; }
+.work-item { display:grid; width:100%; grid-template-columns:minmax(150px,.85fr) minmax(260px,1.8fr) minmax(150px,.8fr) 86px; align-items:center; gap:16px; border-bottom:1px solid #f1f5f9; padding:15px 18px; text-align:left; transition:.16s ease; }
+.work-item:last-child { border-bottom:0; }
+.work-item:hover { background:#f8fafc; }
+.work-item-status { font-size:12px; font-weight:900; color:#b45309; }
+.work-item-subject { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:900; }
+.work-item time { color:#64748b; font-size:12px; font-weight:800; }
+.work-item > strong { border-radius:10px; background:#0f766e; padding:8px 10px; color:#fff; font-size:12px; text-align:center; }
+.work-item.priority-1 { box-shadow:inset 4px 0 #ef4444; }
+.work-item.priority-1 .work-item-status { color:#dc2626; }
+.work-queue-empty { display:grid; justify-items:center; gap:6px; border:1px dashed #cbd5e1; border-radius:18px; padding:40px; color:#64748b; }
+.secondary-tools { overflow:hidden; border:1px solid #e2e8f0; border-radius:16px; background:#fff; }
+.secondary-tools > summary { cursor:pointer; padding:14px 18px; color:#475569; font-size:12px; font-weight:900; }
+.secondary-tools-body { display:grid; gap:18px; border-top:1px solid #e2e8f0; padding:18px; }
+.ops-dashboard-v2 > .ops-command-bar,
+.ops-dashboard-v2 > .ops-kpi-grid,
+.ops-dashboard-v2 > .ops-workspace-grid,
+.ops-dashboard-v2 > .ops-flow-panel { display:none; }
+.booking-stage-strip { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; border:1px solid #e2e8f0; border-radius:16px; background:#fff; padding:10px; }
+.booking-stage-strip span { display:flex; align-items:center; justify-content:center; gap:7px; border-right:1px solid #e2e8f0; padding:8px; color:#475569; font-size:12px; font-weight:900; }
+.booking-stage-strip span:last-child { border-right:0; }
+.booking-stage-strip b { display:grid; width:20px; height:20px; place-items:center; border-radius:999px; background:#ccfbf1; color:#0f766e; font-size:10px; }
+.schedule-view-toggle { display:flex; border-radius:11px; background:#e2e8f0; padding:3px; }
+.schedule-view-toggle button { min-width:40px; border-radius:8px; padding:7px 10px; font-size:12px; font-weight:900; }
+.schedule-view-toggle button.active { background:#fff; color:#0f766e; box-shadow:0 2px 8px rgba(15,23,42,.1); }
+.schedule-filter-bar { display:flex; align-items:center; gap:10px; border-bottom:1px solid #e2e8f0; background:#f8fafc; padding:12px 16px; }
+.schedule-filter-bar label { display:flex; min-width:260px; align-items:center; gap:8px; border:1px solid #cbd5e1; border-radius:11px; background:#fff; padding:8px 11px; }
+.schedule-filter-bar input { min-width:0; flex:1; outline:0; font-size:13px; font-weight:800; }
+.schedule-filter-bar > button { display:flex; align-items:center; gap:6px; border:1px solid #cbd5e1; border-radius:10px; background:#fff; padding:8px 11px; font-size:12px; font-weight:900; }
+.schedule-filter-bar > button.active { border-color:#f59e0b; background:#fffbeb; color:#b45309; }
+.schedule-filter-bar > span { color:#94a3b8; font-size:11px; font-weight:800; }
+.schedule-table-wrap { max-width:100%; max-height:calc(100vh - 330px); overflow:auto; }
+.schedule-table-wrap table { width:100%; min-width:980px; table-layout:fixed; }
+.schedule-table-wrap th:first-child,.schedule-table-wrap td:first-child { width:170px; }
+.schedule-table-wrap th:not(:first-child),.schedule-table-wrap td:not(:first-child) { width:116px; min-width:116px; padding:0; text-align:center; }
+.schedule-table-wrap th small { display:block; margin-top:2px; font-size:10px; }
+.schedule-table-wrap td > button[data-edit-shift] { width:100%; min-height:54px; padding:8px 5px; font-size:11px; font-weight:900; }
+.schedule-table-wrap td > button[data-edit-shift]:hover { background:#ccfbf1; color:#0f766e; }
+.schedule-table-wrap td.is-off { background:#f8fafc; color:#94a3b8; }
+.schedule-table-wrap td.is-weekend { background:#fff7ed; }
+.schedule-table-wrap td.is-today { box-shadow:inset 0 0 0 2px #14b8a6; }
+.schedule-table-wrap td.is-anomaly { background:#fff1f2; color:#be123c; box-shadow:inset 0 0 0 2px #fb7185; }
+.schedule-bulk-edit { float:right; border-radius:8px; background:#f1f5f9; padding:5px; color:#475569; }
+.customer-table tbody tr { cursor:pointer; }
+.customer-table tbody tr:hover { background:#f0fdfa; }
+.customer-table td strong,.customer-table td small { display:block; }
+.customer-table td small { margin-top:3px; color:#94a3b8; font-size:11px; font-weight:800; }
+.customer-status { display:inline-flex; border-radius:999px; padding:5px 9px; font-size:11px; font-weight:900; }
+.customer-status.status-active { background:#ecfdf5; color:#047857; }
+.customer-status.status-new { background:#eff6ff; color:#1d4ed8; }
+.customer-status.status-risk { background:#fff1f2; color:#be123c; }
+.customer-pager { display:flex; align-items:center; justify-content:space-between; border-top:1px solid #e2e8f0; padding:14px 4px 0; color:#64748b; font-size:12px; font-weight:900; }
+.customer-pager > div { display:flex; gap:8px; }
+.customer-pager button:disabled { cursor:not-allowed; opacity:.45; }
+.accounting-exceptions { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.accounting-exceptions button { display:grid; grid-template-columns:1fr auto; align-items:center; gap:3px 12px; border:1px solid #fecdd3; border-radius:16px; background:#fff; padding:16px; text-align:left; }
+.accounting-exceptions span { color:#64748b; font-size:12px; font-weight:900; }
+.accounting-exceptions strong { grid-row:1 / 3; grid-column:2; color:#be123c; font-size:28px; }
+.accounting-exceptions small { color:#94a3b8; font-size:11px; font-weight:800; }
+
+@media (max-width:900px) {
+  .work-item { grid-template-columns:1fr auto; gap:6px 12px; }
+  .work-item time { grid-column:1; }
+  .work-item > strong { grid-column:2; grid-row:1 / 3; }
+  .booking-stage-strip { overflow-x:auto; grid-template-columns:repeat(5,minmax(130px,1fr)); }
+  .schedule-filter-bar { align-items:stretch; flex-direction:column; }
+  .schedule-filter-bar label { min-width:0; }
+  .accounting-exceptions { grid-template-columns:1fr; }
+}
+
+@media (max-width:640px) {
+  .ops-topbar { min-height:58px; }
+  .ops-date-toolbar .month-btn,.ops-date-toolbar #currentDateRange { display:none; }
+  .today-workbench > header { align-items:flex-start; flex-direction:column; padding:20px; }
+  .today-workbench h2 { font-size:21px; }
+  .work-item { grid-template-columns:1fr; }
+  .work-item time,.work-item > strong { grid-column:auto; grid-row:auto; }
+  .work-item > strong { width:max-content; }
+  .booking-stage-strip { display:none; }
+  .customer-table th:nth-child(2),.customer-table td:nth-child(2),.customer-table th:nth-child(4),.customer-table td:nth-child(4) { display:none; }
+}
+
 /* Morgan SaaS shell: one quiet navigation layer, dense operational content. */
 #adminDashboard {
   background: var(--canvas);
