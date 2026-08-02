@@ -1,7 +1,7 @@
 "use strict";
 
 const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiTI5Z8c76YNlcPMYWyR17HGaU4QvzHJm32nWeCHsnaknVx/exec";
-const APP_VERSION = "MSOT2.3";
+const APP_VERSION = "MSOT2.4";
 const CLOUD_READ_TIMEOUT_MS = 45000;
 const CLOUD_WRITE_TIMEOUT_MS = 45000;
 const LOGIN_CLOUD_TIMEOUT_MS = 18000;
@@ -43,6 +43,7 @@ const THERAPIST_NAV_ITEMS = [
 
 let currentYear = new Date().getFullYear();
 let currentMonth = new Date().getMonth();
+let selectedOpsDate = "";
 let monthDates = [];
 let monthWeeks = [];
 let currentUser = null;
@@ -80,6 +81,13 @@ const refreshIcons = () => {
   if (window.lucide?.createIcons) window.lucide.createIcons({ attrs: { "aria-hidden": "true", "stroke-width": 2 } });
 };
 const todayKey = () => toDateKey(new Date());
+const initialOpsDate = new URLSearchParams(window.location.search).get("date");
+selectedOpsDate = /^\d{4}-\d{2}-\d{2}$/.test(initialOpsDate || "") ? initialOpsDate : todayKey();
+if (selectedOpsDate !== todayKey()) {
+  const initialDate = new Date(`${selectedOpsDate}T00:00:00`);
+  currentYear = initialDate.getFullYear();
+  currentMonth = initialDate.getMonth();
+}
 const money = (n) => `$${(Number(n) || 0).toLocaleString()}`;
 const courseName = (code) => COURSE_CATALOG[code]?.name || code || "自訂服務";
 const therapistProfile = (id) => db.therapists[id] || HISTORICAL_THERAPISTS[id] || null;
@@ -820,7 +828,7 @@ function generateMonthData() {
       week = [];
     }
   });
-  $("currentDateRange").textContent = `${currentYear}年 ${String(currentMonth + 1).padStart(2, "0")}月`;
+  if ($("currentDateRange")) $("currentDateRange").value = selectedOpsDate;
 }
 
 function showSnackbar(message) {
@@ -2097,12 +2105,14 @@ function hideSidebar() {
 }
 
 function renderOverview() {
-  const today = todayKey();
+  const today = selectedOpsDate;
+  const actualToday = todayKey();
+  const dayWord = today === actualToday ? "今日" : "當日";
   const appts = Object.values(db.appointments);
   const todayAppts = appts.filter((a) => a.date === today).sort(sortByTime);
   const pendingApprovals = approvalsList("pending");
   const now = new Date();
-  const currentMins = now.getHours() * 60 + now.getMinutes();
+  const currentMins = today === actualToday ? now.getHours() * 60 + now.getMinutes() : (today < actualToday ? 1440 : -1);
   const todayRevenue = todayAppts.reduce((s, a) => s + Number(a.price || 0), 0);
   const todayCompanyCut = todayAppts.reduce((s, a) => s + remittanceDueFor(a), 0);
   const todayCompanyPaid = todayAppts.reduce((s, a) => s + (isRemittancePaid(a) ? remittanceDueFor(a) : 0), 0);
@@ -2174,7 +2184,7 @@ function renderOverview() {
     <div class="ops-dashboard">
       <section class="ops-command-bar">
         <div class="ops-command-date">
-          <span class="ops-eyebrow">${iconHtml("activity")} 今日營運</span>
+          <span class="ops-eyebrow">${iconHtml("activity")} ${dayWord}營運</span>
           <h3>${esc(todayLabel)}</h3>
           <p id="overviewSyncStatus">${syncStatusText()}</p>
         </div>
@@ -2190,11 +2200,11 @@ function renderOverview() {
         </div>
       </section>
 
-      <section class="ops-kpi-grid" aria-label="今日營運指標">
-        <article class="ops-kpi-card tone-teal"><span class="ops-kpi-icon">${iconHtml("calendar-days")}</span><div><p>今日預約</p><strong>${todayAppts.length}</strong><small>完成 ${finishedToday} 筆 · 未確認 ${todayUnconfirmed.length}</small></div></article>
+      <section class="ops-kpi-grid" aria-label="${dayWord}營運指標">
+        <article class="ops-kpi-card tone-teal"><span class="ops-kpi-icon">${iconHtml("calendar-days")}</span><div><p>${dayWord}預約</p><strong>${todayAppts.length}</strong><small>完成 ${finishedToday} 筆 · 未確認 ${todayUnconfirmed.length}</small></div></article>
         <article class="ops-kpi-card tone-blue"><span class="ops-kpi-icon">${iconHtml("activity")}</span><div><p>現場狀態</p><strong>${ongoing.length}</strong><small>${ongoing[0] ? `進行中 ${customerDisplay(ongoing[0].phone, ongoing[0].customerName)}` : (nextAppt ? `下一筆 ${nextAppt.time}` : "目前空檔")}</small></div></article>
-        <article class="ops-kpi-card tone-emerald"><span class="ops-kpi-icon">${iconHtml("badge-dollar-sign")}</span><div><p>今日營收</p><strong>${money(todayRevenue)}</strong><small>平均 ${money(todayAppts.length ? Math.round(todayRevenue / todayAppts.length) : 0)}</small></div></article>
-        <article class="ops-kpi-card tone-slate"><span class="ops-kpi-icon">${iconHtml("wallet-cards")}</span><div><p>今日應回帳</p><strong>${money(todayCompanyCut)}</strong><small>已回帳 ${money(todayCompanyPaid)} · 未回帳 ${money(Math.max(0, todayCompanyCut - todayCompanyPaid))}</small></div></article>
+        <article class="ops-kpi-card tone-emerald"><span class="ops-kpi-icon">${iconHtml("badge-dollar-sign")}</span><div><p>${dayWord}營收</p><strong>${money(todayRevenue)}</strong><small>平均 ${money(todayAppts.length ? Math.round(todayRevenue / todayAppts.length) : 0)}</small></div></article>
+        <article class="ops-kpi-card tone-slate"><span class="ops-kpi-icon">${iconHtml("wallet-cards")}</span><div><p>${dayWord}應回帳</p><strong>${money(todayCompanyCut)}</strong><small>已回帳 ${money(todayCompanyPaid)} · 未回帳 ${money(Math.max(0, todayCompanyCut - todayCompanyPaid))}</small></div></article>
       </section>
 
       <div class="ops-workspace-grid">
@@ -4897,6 +4907,20 @@ function changeMonth(offset) {
   renderAll();
 }
 
+function selectOpsDate(dateKey) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey || "")) return;
+  selectedOpsDate = dateKey;
+  const date = new Date(`${dateKey}T00:00:00`);
+  currentYear = date.getFullYear();
+  currentMonth = date.getMonth();
+  writeViewStateToUrl({ date: dateKey });
+  renderAll();
+}
+
+function shiftOpsDate(offset) {
+  selectOpsDate(addDaysKey(selectedOpsDate, offset));
+}
+
 function writeViewStateToUrl(patch = {}) {
   if (!window.history?.replaceState) return;
   const url = new URL(window.location.href);
@@ -4917,15 +4941,16 @@ function restoreViewStateFromUrl() {
 
 function renderTopToolbar() {
   const status = $("topSyncStatus");
-  if (status) status.textContent = `${new Date().toLocaleDateString("zh-TW", { month: "2-digit", day: "2-digit", weekday: "short" })} · ${syncStatusText()}`;
+  if (status) status.textContent = syncStatusText();
   if ($("todayBtn")) $("todayBtn").onclick = () => {
-    const now = new Date();
-    currentYear = now.getFullYear();
-    currentMonth = now.getMonth();
     scheduleViewMode = "week";
     setScheduleRangeForMode("week", todayKey());
-    renderAll();
+    selectOpsDate(todayKey());
   };
+  if ($("currentDateRange")) {
+    $("currentDateRange").value = selectedOpsDate;
+    $("currentDateRange").onchange = (event) => selectOpsDate(event.target.value);
+  }
   if ($("topRefreshBtn")) $("topRefreshBtn").onclick = refreshDashboardData;
 }
 
@@ -5015,8 +5040,8 @@ function bindEvents() {
   $("loginBtn").addEventListener("click", handleLogin);
   $("adminPin").addEventListener("keydown", (e) => { if (e.key === "Enter") handleLogin(); });
   $("logoutBtn").addEventListener("click", logout);
-  $("prevMonthBtn").addEventListener("click", () => changeMonth(-1));
-  $("nextMonthBtn").addEventListener("click", () => changeMonth(1));
+  $("prevMonthBtn").addEventListener("click", () => shiftOpsDate(-1));
+  $("nextMonthBtn").addEventListener("click", () => shiftOpsDate(1));
   $("openSidebarBtn").addEventListener("click", showSidebar);
   $("closeSidebarBtn").addEventListener("click", hideSidebar);
   $("sidebarOverlay").addEventListener("click", hideSidebar);
