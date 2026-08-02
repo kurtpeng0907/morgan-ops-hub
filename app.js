@@ -1,7 +1,7 @@
 "use strict";
 
 const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiTI5Z8c76YNlcPMYWyR17HGaU4QvzHJm32nWeCHsnaknVx/exec";
-const APP_VERSION = "MSOT2.6";
+const APP_VERSION = "MSOT2.7";
 const CLOUD_READ_TIMEOUT_MS = 45000;
 const CLOUD_WRITE_TIMEOUT_MS = 45000;
 const LOGIN_CLOUD_TIMEOUT_MS = 18000;
@@ -2999,6 +2999,7 @@ function bookingUrgencyValue(appt = {}) {
 
 function renderDispatch() {
   renderAppointmentDetail();
+  enhanceDispatchWorkflow();
 }
 
 function renderAppointmentDetail() {
@@ -5104,11 +5105,11 @@ function enhanceOverviewWorkflow() {
 
 function enhanceDispatchWorkflow() {
   const view = $("view-dispatch");
-  if (!view || view.querySelector(".booking-stage-strip")) return;
+  if (!view || view.querySelector(".booking-stage-float")) return;
   const stages = [
     ["建立", "calendar-plus"], ["待確認", "badge-check"], ["行前通知", "send"], ["服務回報", "clipboard-pen-line"], ["回款", "wallet-cards"]
   ];
-  view.insertAdjacentHTML("afterbegin", `<div class="booking-stage-strip" aria-label="預約處理流程">${stages.map(([label, icon], index) => `<span>${iconHtml(icon)}<b>${index + 1}</b>${label}</span>`).join("")}</div>`);
+  view.insertAdjacentHTML("afterbegin", `<details class="booking-stage-float"><summary>${iconHtml("list-ordered")}<span>預約流程</span><b>5</b></summary><div class="booking-stage-popover" aria-label="預約處理流程"><header><strong>預約處理流程</strong><small>依序完成五個階段</small></header>${stages.map(([label, icon], index) => `<span>${iconHtml(icon)}<b>${index + 1}</b><strong>${label}</strong></span>`).join("")}</div></details>`);
 }
 
 function enhanceReportExceptions() {
