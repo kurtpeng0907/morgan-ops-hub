@@ -143,8 +143,10 @@
   };
 
   renderReport = function renderReport() {
-    const start = $("reportStartDate")?.value || todayKey();
-    const end = $("reportEndDate")?.value || todayKey();
+    reportFilterStart ||= selectedOpsDate || todayKey();
+    reportFilterEnd ||= selectedOpsDate || todayKey();
+    const start = reportFilterStart;
+    const end = reportFilterEnd;
     const rows = reportRows(start, end);
     const total = rows.reduce((sum, appt) => sum + grossAmount(appt), 0);
     const due = rows.reduce((sum, appt) => sum + remittanceDueAmount(appt), 0);
@@ -173,12 +175,7 @@
           <h2>營運與回帳</h2>
           <p>先掌握區間金額，再進入營收、來客、回客或回帳明細。</p>
         </div>
-        <div class="workbench-actions report-filter-actions">
-          <label class="compact-date-field"><span>開始</span><input id="reportStartDate" type="date" value="${start}"></label>
-          <label class="compact-date-field"><span>結束</span><input id="reportEndDate" type="date" value="${end}"></label>
-          <button id="queryReportBtn" class="btn-light">${iconHtml("search")}查詢</button>
-          <button id="exportReportBtn" class="btn-teal">${iconHtml("download")}${activeReportPanel === "overdue" ? "輸出目前級距" : "輸出"}</button>
-        </div>
+        <div class="workbench-actions"><div class="date-range-chip">${iconHtml("calendar-range")}<span>${esc(start)} 至 ${esc(end)}</span></div><button id="exportReportBtn" class="btn-teal">${iconHtml("download")}${activeReportPanel === "overdue" ? "輸出目前級距" : "輸出"}</button></div>
       </div>
       <div class="report-summary-grid">
         <div class="report-summary-card tone-slate"><span>${iconHtml("users")}</span><div><p>服務筆數</p><strong>${rows.length}</strong><small>${start === end ? "當日" : "所選區間"}</small></div></div>
@@ -194,7 +191,6 @@
         </div>
         <div class="report-data-body">${panelContent}</div>
       </div>`;
-    $("queryReportBtn").onclick = renderReport;
     $("exportReportBtn").onclick = exportReportCSV;
     $("view-report").querySelectorAll("[data-report-panel]").forEach((btn) => btn.onclick = () => {
       activeReportPanel = btn.dataset.reportPanel;
@@ -206,11 +202,12 @@
       renderReport();
     });
     if (typeof hydrateResponsiveTables === "function") hydrateResponsiveTables($("view-report"));
+    if (typeof enhanceReportExceptions === "function") enhanceReportExceptions();
   };
 
   exportReportCSV = function exportReportCSV() {
-    const start = $("reportStartDate").value;
-    const end = $("reportEndDate").value;
+    const start = reportFilterStart || selectedOpsDate || todayKey();
+    const end = reportFilterEnd || selectedOpsDate || todayKey();
     const rows = reportRows(start, end);
     let csv = "\uFEFF";
     if (activeReportPanel === "overdue") {

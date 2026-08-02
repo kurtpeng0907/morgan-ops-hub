@@ -1,7 +1,7 @@
 "use strict";
 
 const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiTI5Z8c76YNlcPMYWyR17HGaU4QvzHJm32nWeCHsnaknVx/exec";
-const APP_VERSION = "MSOT2.4";
+const APP_VERSION = "MSOT2.5";
 const CLOUD_READ_TIMEOUT_MS = 45000;
 const CLOUD_WRITE_TIMEOUT_MS = 45000;
 const LOGIN_CLOUD_TIMEOUT_MS = 18000;
@@ -81,8 +81,15 @@ const refreshIcons = () => {
   if (window.lucide?.createIcons) window.lucide.createIcons({ attrs: { "aria-hidden": "true", "stroke-width": 2 } });
 };
 const todayKey = () => toDateKey(new Date());
-const initialOpsDate = new URLSearchParams(window.location.search).get("date");
+const initialUrlState = new URLSearchParams(window.location.search);
+const initialOpsDate = initialUrlState.get("date");
 selectedOpsDate = /^\d{4}-\d{2}-\d{2}$/.test(initialOpsDate || "") ? initialOpsDate : todayKey();
+dispatchQueryState.date = selectedOpsDate;
+scheduleViewMode = ["week", "month", "custom"].includes(initialUrlState.get("scheduleMode")) ? initialUrlState.get("scheduleMode") : "week";
+scheduleFilterStart = /^\d{4}-\d{2}-\d{2}$/.test(initialUrlState.get("scheduleStart") || "") ? initialUrlState.get("scheduleStart") : "";
+scheduleFilterEnd = /^\d{4}-\d{2}-\d{2}$/.test(initialUrlState.get("scheduleEnd") || "") ? initialUrlState.get("scheduleEnd") : "";
+reportFilterStart = /^\d{4}-\d{2}-\d{2}$/.test(initialUrlState.get("reportStart") || "") ? initialUrlState.get("reportStart") : "";
+reportFilterEnd = /^\d{4}-\d{2}-\d{2}$/.test(initialUrlState.get("reportEnd") || "") ? initialUrlState.get("reportEnd") : "";
 if (selectedOpsDate !== todayKey()) {
   const initialDate = new Date(`${selectedOpsDate}T00:00:00`);
   currentYear = initialDate.getFullYear();
@@ -828,7 +835,6 @@ function generateMonthData() {
       week = [];
     }
   });
-  if ($("currentDateRange")) $("currentDateRange").value = selectedOpsDate;
 }
 
 function showSnackbar(message) {
@@ -2076,7 +2082,12 @@ function switchTab(tab, options = {}) {
     activeDispatchPanel = "query";
   }
   activeTab = tab;
-  writeViewStateToUrl({ tab });
+  const tabState = { tab };
+  if (tab === "overview") tabState.date = selectedOpsDate;
+  if (tab === "dispatch") tabState.date = dispatchQueryState.date || selectedOpsDate;
+  if (tab === "personnel" && activePersonnelPanel === "schedule") Object.assign(tabState, { scheduleMode: scheduleViewMode, scheduleStart: scheduleFilterStart, scheduleEnd: scheduleFilterEnd });
+  if (tab === "report") Object.assign(tabState, { reportStart: reportFilterStart, reportEnd: reportFilterEnd });
+  writeViewStateToUrl(tabState);
   document.querySelectorAll(".view").forEach((el) => el.classList.add("hidden"));
   $(`view-${tab}`)?.classList.remove("hidden");
   document.querySelectorAll(".nav-btn").forEach((btn) => {
@@ -2407,7 +2418,7 @@ function appointmentCandidateStripHtml(date, time, service) {
 }
 
 function appointmentQueryPanelHtml() {
-  const selectedDate = $("appointmentDate")?.value || dispatchQueryState.date || todayKey();
+  const selectedDate = dispatchQueryState.date || selectedOpsDate || todayKey();
   const selectedTime = queryTimeLabel($("appointmentTime")?.value || dispatchQueryState.time || "");
   const selectedService = $("appointmentService")?.value || dispatchQueryState.service || "C120";
   dispatchQueryState = { date: selectedDate, time: selectedTime, service: selectedService };
@@ -2423,8 +2434,7 @@ function appointmentQueryPanelHtml() {
           </div>
           <div id="dispatchQueryStatus" class="dispatch-query-status">${selectedTime ? `${iconHtml("check-circle-2")} 可從下方選擇師傅` : `${iconHtml("clock-3")} 請先輸入時間`}</div>
         </div>
-        <div class="grid gap-3 lg:grid-cols-[1fr_1fr_1.2fr_auto] lg:items-end">
-          <div><label class="label">日期</label><input id="appointmentDate" type="date" class="input py-2" value="${selectedDate}"></div>
+        <div class="grid gap-3 lg:grid-cols-[1fr_1.2fr_auto] lg:items-end">
           <div><label class="label">時間</label><input id="appointmentTime" type="time" class="input py-2" value="${esc(selectedTime)}"></div>
           <div><label class="label">服務</label><select id="appointmentService" class="input py-2">${serviceOptions}</select></div>
           <button id="queryAppointmentBtn" class="btn-primary px-5 py-3">${iconHtml("search")}<span>尋找可接師傅</span></button>
@@ -2443,8 +2453,8 @@ function appointmentQueryPanelHtml() {
 }
 
 function bindAppointmentQueryControls() {
-  if (!$("appointmentDate") || !$("appointmentBoard") || !$("appointmentTimeline")) return;
-  const getDate = () => $("appointmentDate").value || todayKey();
+  if (!$("appointmentBoard") || !$("appointmentTimeline")) return;
+  const getDate = () => dispatchQueryState.date || selectedOpsDate || todayKey();
   const getTime = () => queryTimeLabel($("appointmentTime")?.value || "");
   const getService = () => $("appointmentService")?.value || "C120";
   const selectedDate = getDate();
@@ -2462,7 +2472,6 @@ function bindAppointmentQueryControls() {
     renderAppointmentBoard(getDate(), getTime());
     refreshIcons();
   };
-  $("appointmentDate").onchange = markQueryChanged;
   $("appointmentTime").onchange = markQueryChanged;
   $("appointmentService").onchange = markQueryChanged;
   $("queryAppointmentBtn").onclick = () => {
@@ -2684,7 +2693,7 @@ function openAppointmentModal({ therapistId, date, appointmentId, time = "", ser
   pendingClientSelectionId = selectionId || null;
   const existing = appointmentId ? db.appointments[appointmentId] : null;
   const selectedTherapist = existing?.therapistId || therapistId;
-  const selectedDate = existing?.date || date || $("appointmentDate")?.value || todayKey();
+  const selectedDate = existing?.date || date || dispatchQueryState.date || selectedOpsDate || todayKey();
   const selectedService = existing?.service || service || "";
   const selectedCourse = COURSE_CATALOG[selectedService] || {};
   const selectedStage = existing?.bookingStage || bookingStage || "confirmed";
@@ -3003,13 +3012,11 @@ function renderAppointmentDetail() {
   section.querySelectorAll("[data-open-appt]").forEach((btn) => btn.onclick = () => openAppointmentDetailPage(btn.dataset.openAppt));
   section.querySelectorAll("[data-delete-appt]").forEach((btn) => btn.onclick = () => confirmAction("刪除預約", "此動作會移除該筆預約與關聯紀錄。", () => deleteAppointment(btn.dataset.deleteAppt)));
   section.querySelectorAll("[data-dispatch-view]").forEach((btn) => btn.onclick = () => {
-    if ($("appointmentDate")) {
-      dispatchQueryState = {
-        date: $("appointmentDate").value || todayKey(),
-        time: queryTimeLabel($("appointmentTime")?.value || ""),
-        service: $("appointmentService")?.value || "C120"
-      };
-    }
+    dispatchQueryState = {
+      date: dispatchQueryState.date || selectedOpsDate || todayKey(),
+      time: queryTimeLabel($("appointmentTime")?.value || dispatchQueryState.time || ""),
+      service: $("appointmentService")?.value || dispatchQueryState.service || "C120"
+    };
     activeDispatchPanel = btn.dataset.dispatchView;
     renderAppointmentDetail();
   });
@@ -3817,9 +3824,15 @@ function openScheduleFilterModal() {
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
     scheduleFilterStart = data.start || monthDates[0]?.key || todayKey();
     scheduleFilterEnd = data.end || monthDates.at(-1)?.key || todayKey();
+    if (scheduleFilterStart > scheduleFilterEnd) {
+      showSnackbar("開始日期不可晚於結束日期");
+      return;
+    }
     scheduleViewMode = "custom";
+    syncScheduleUrl();
     closeModal();
     renderPersonnel();
+    renderTopToolbar();
   };
 }
 
@@ -4049,7 +4062,7 @@ async function dismissApproval(id) {
 
 function renderPersonnel() {
   const section = $("view-personnel");
-  if (!scheduleFilterStart || !scheduleFilterEnd) setScheduleRangeForMode("week", todayKey());
+  if (!scheduleFilterStart || !scheduleFilterEnd) setScheduleRangeForMode("week", selectedOpsDate || todayKey());
   const pendingCount = approvalsList("pending").length;
   const personnelTabs = {
     schedule: { label: "班表", icon: "calendar-range" },
@@ -4118,13 +4131,7 @@ function renderPersonnel() {
     <div class="workbench-panel card overflow-hidden">
       <div class="workbench-panel-head">
         <div><span class="page-kicker">排班管理</span><h3>班表矩陣</h3><p>預設顯示本週；點班表格編輯單日，點人員旁圖示才進行批次修改。</p></div>
-        <div class="workbench-actions">
-          <div class="date-range-chip">${iconHtml("calendar-range")}<span>${esc(scheduleFilterStart)} 至 ${esc(scheduleFilterEnd)}</span></div>
-          <div class="schedule-view-toggle"><button data-schedule-mode="week" class="${scheduleViewMode === "week" ? "active" : ""}">週</button><button data-schedule-mode="month" class="${scheduleViewMode === "month" ? "active" : ""}">月</button></div>
-          <button id="scheduleTodayBtn" class="btn-light">今天</button>
-          <button id="openScheduleFilterBtn" class="btn-light">${iconHtml("sliders-horizontal")}自訂區間</button>
-          <button id="exportScheduleBtn" class="btn-teal">${iconHtml("download")}匯出</button>
-        </div>
+        <div class="workbench-actions"><div class="date-range-chip">${iconHtml("calendar-range")}<span>${esc(scheduleFilterStart)} 至 ${esc(scheduleFilterEnd)}</span></div><button id="exportScheduleBtn" class="btn-teal">${iconHtml("download")}匯出</button></div>
       </div>
       <div class="schedule-filter-bar"><label>${iconHtml("search")}<input id="scheduleSearchInput" value="${esc(scheduleSearchQuery)}" placeholder="搜尋人員姓名或編號"></label><button id="scheduleAnomalyBtn" class="${scheduleAnomalyOnly ? "active" : ""}">${iconHtml("triangle-alert")}只看異常</button><span>異常包含格式錯誤或無法辨識的班別</span></div>
       <div class="schedule-table-wrap table-wrap rounded-none border-0" data-date-scroll><table><thead><tr id="scheduleHeader"></tr></thead><tbody id="scheduleRows"></tbody></table></div>
@@ -4153,12 +4160,10 @@ function renderPersonnel() {
   section.querySelectorAll("[data-personnel-panel]").forEach((btn) => btn.onclick = () => {
     activePersonnelPanel = btn.dataset.personnelPanel;
     renderPersonnel();
+    renderTopToolbar();
   });
   if (activePersonnelPanel === "schedule") {
-    $("openScheduleFilterBtn").onclick = openScheduleFilterModal;
     $("exportScheduleBtn").onclick = exportScheduleCSV;
-    $("scheduleTodayBtn").onclick = () => { setScheduleRangeForMode("week", todayKey()); renderPersonnel(); };
-    section.querySelectorAll("[data-schedule-mode]").forEach((button) => button.onclick = () => { setScheduleRangeForMode(button.dataset.scheduleMode, todayKey()); renderPersonnel(); });
     $("scheduleSearchInput").oninput = (event) => { scheduleSearchQuery = event.currentTarget.value; drawScheduleTable(); };
     $("scheduleAnomalyBtn").onclick = () => { scheduleAnomalyOnly = !scheduleAnomalyOnly; renderPersonnel(); };
     drawScheduleTable();
@@ -4343,8 +4348,8 @@ function staffMobileCardsHtml() {
 }
 
 function renderReport() {
-  reportFilterStart ||= todayKey();
-  reportFilterEnd ||= todayKey();
+  reportFilterStart ||= selectedOpsDate || todayKey();
+  reportFilterEnd ||= selectedOpsDate || todayKey();
   const start = reportFilterStart;
   const end = reportFilterEnd;
   const rows = Object.values(db.appointments).filter((a) => a.date >= start && a.date <= end).sort((a, b) => a.date === b.date ? sortByTime(a, b) : a.date.localeCompare(b.date));
@@ -4415,11 +4420,7 @@ function renderReport() {
         <h2>營運與回帳</h2>
         <p>先掌握區間金額，再進入營收、來客、回客或回帳明細。</p>
       </div>
-      <div class="workbench-actions">
-        <div class="date-range-chip">${iconHtml("calendar-range")}<span>${esc(start)} 至 ${esc(end)}</span></div>
-        <button id="queryReportBtn" class="btn-light">${iconHtml("sliders-horizontal")}設定區間</button>
-        <button id="exportReportBtn" class="btn-teal">${iconHtml("download")}輸出</button>
-      </div>
+      <div class="workbench-actions"><div class="date-range-chip">${iconHtml("calendar-range")}<span>${esc(start)} 至 ${esc(end)}</span></div><button id="exportReportBtn" class="btn-teal">${iconHtml("download")}輸出</button></div>
     </div>
     <div class="report-summary-grid">
       <div class="report-summary-card tone-slate"><span>${iconHtml("users")}</span><div><p>服務筆數</p><strong>${rows.length}</strong><small>${start === end ? "當日" : "所選區間"}</small></div></div>
@@ -4435,7 +4436,6 @@ function renderReport() {
       </div>
       <div class="report-data-body">${panelContent}</div>
     </div>`;
-  $("queryReportBtn").onclick = openReportFilterModal;
   $("exportReportBtn").onclick = exportReportCSV;
   $("view-report").querySelectorAll("[data-report-panel]").forEach((btn) => btn.onclick = () => {
     activeReportPanel = btn.dataset.reportPanel;
@@ -4921,6 +4921,75 @@ function shiftOpsDate(offset) {
   selectOpsDate(addDaysKey(selectedOpsDate, offset));
 }
 
+function syncScheduleUrl() {
+  writeViewStateToUrl({ scheduleMode: scheduleViewMode, scheduleStart: scheduleFilterStart, scheduleEnd: scheduleFilterEnd });
+}
+
+function syncReportUrl() {
+  writeViewStateToUrl({ reportStart: reportFilterStart, reportEnd: reportFilterEnd });
+}
+
+function setSinglePageDate(dateKey) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey || "")) return;
+  if (activeTab === "dispatch") {
+    dispatchQueryState.date = dateKey;
+    writeViewStateToUrl({ date: dateKey });
+    renderDispatch();
+    renderTopToolbar();
+    return;
+  }
+  selectOpsDate(dateKey);
+}
+
+function shiftSinglePageDate(offset) {
+  const base = activeTab === "dispatch" ? (dispatchQueryState.date || selectedOpsDate) : selectedOpsDate;
+  setSinglePageDate(addDaysKey(base, offset));
+}
+
+function updateScheduleContext(mode, anchor) {
+  setScheduleRangeForMode(mode, anchor || scheduleFilterStart || selectedOpsDate || todayKey());
+  syncScheduleUrl();
+  renderPersonnel();
+  renderTopToolbar();
+}
+
+function shiftScheduleContext(offset) {
+  const anchor = new Date(`${scheduleFilterStart || todayKey()}T00:00:00`);
+  if (scheduleViewMode === "month") anchor.setMonth(anchor.getMonth() + offset);
+  else anchor.setDate(anchor.getDate() + (scheduleViewMode === "week" ? offset * 7 : offset * Math.max(1, Math.round((new Date(`${scheduleFilterEnd}T00:00:00`) - new Date(`${scheduleFilterStart}T00:00:00`)) / 86400000) + 1)));
+  if (scheduleViewMode === "custom") {
+    const span = Math.max(0, Math.round((new Date(`${scheduleFilterEnd}T00:00:00`) - new Date(`${scheduleFilterStart}T00:00:00`)) / 86400000));
+    scheduleFilterStart = toDateKey(anchor);
+    scheduleFilterEnd = addDaysKey(scheduleFilterStart, span);
+    syncScheduleUrl();
+    renderPersonnel();
+    renderTopToolbar();
+    return;
+  }
+  updateScheduleContext(scheduleViewMode, toDateKey(anchor));
+}
+
+function applyReportContext(start, end) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start || "") || !/^\d{4}-\d{2}-\d{2}$/.test(end || "")) return false;
+  if (start > end) {
+    showSnackbar("開始日期不可晚於結束日期");
+    renderTopToolbar();
+    return false;
+  }
+  reportFilterStart = start;
+  reportFilterEnd = end;
+  syncReportUrl();
+  renderReport();
+  renderTopToolbar();
+  return true;
+}
+
+function shiftReportContext(offset) {
+  const span = Math.max(0, Math.round((new Date(`${reportFilterEnd}T00:00:00`) - new Date(`${reportFilterStart}T00:00:00`)) / 86400000));
+  const delta = offset * (span + 1);
+  applyReportContext(addDaysKey(reportFilterStart, delta), addDaysKey(reportFilterEnd, delta));
+}
+
 function writeViewStateToUrl(patch = {}) {
   if (!window.history?.replaceState) return;
   const url = new URL(window.location.href);
@@ -4942,24 +5011,44 @@ function restoreViewStateFromUrl() {
 function renderTopToolbar() {
   const status = $("topSyncStatus");
   if (status) status.textContent = syncStatusText();
-  if ($("todayBtn")) $("todayBtn").onclick = () => {
-    scheduleViewMode = "week";
-    setScheduleRangeForMode("week", todayKey());
-    selectOpsDate(todayKey());
-  };
-  if ($("currentDateRange")) {
-    $("currentDateRange").value = selectedOpsDate;
-    $("currentDateRange").onchange = (event) => selectOpsDate(event.target.value);
-  }
+  const controls = $("opsDateControls");
+  if (!controls) return;
+  const singleDate = activeTab === "dispatch" ? (dispatchQueryState.date || selectedOpsDate) : selectedOpsDate;
+  const singleMode = activeTab === "overview" || activeTab === "dispatch";
+  const scheduleMode = activeTab === "personnel" && activePersonnelPanel === "schedule";
+  const reportMode = activeTab === "report";
+  controls.classList.toggle("hidden", !singleMode && !scheduleMode && !reportMode);
+  controls.setAttribute("aria-label", singleMode ? (activeTab === "dispatch" ? "預約日期" : "營運日期") : scheduleMode ? "班表日期區間" : reportMode ? "帳務查詢區間" : "");
+  if (singleMode) controls.innerHTML = `<button class="context-today">今天</button><div class="ops-date-picker"><button data-context-shift="-1" class="month-btn" aria-label="前一天">${iconHtml("chevron-left")}</button><label><span>${activeTab === "dispatch" ? "預約日期" : "營運日期"}</span><input id="contextSingleDate" type="date" value="${esc(singleDate)}" aria-label="${activeTab === "dispatch" ? "選擇預約日期" : "選擇營運日期"}"></label><button data-context-shift="1" class="month-btn" aria-label="後一天">${iconHtml("chevron-right")}</button></div>`;
+  if (scheduleMode) controls.innerHTML = `<button class="context-today">今天</button><div class="context-segment"><button data-schedule-mode="week" class="${scheduleViewMode === "week" ? "active" : ""}">週</button><button data-schedule-mode="month" class="${scheduleViewMode === "month" ? "active" : ""}">月</button></div><div class="ops-date-picker context-range-picker"><button data-context-shift="-1" class="month-btn" aria-label="上一個區間">${iconHtml("chevron-left")}</button><button id="contextCustomRange" class="context-range-label"><span>班表區間</span><strong>${esc(scheduleFilterStart)} – ${esc(scheduleFilterEnd)}</strong></button><button data-context-shift="1" class="month-btn" aria-label="下一個區間">${iconHtml("chevron-right")}</button></div>`;
+  if (reportMode) controls.innerHTML = `<button class="context-today">今天</button><div class="ops-date-picker context-report-picker"><button data-context-shift="-1" class="month-btn" aria-label="上一個區間">${iconHtml("chevron-left")}</button><label><span>開始</span><input id="contextReportStart" type="date" value="${esc(reportFilterStart)}" aria-label="帳務開始日期"></label><label><span>結束</span><input id="contextReportEnd" type="date" value="${esc(reportFilterEnd)}" aria-label="帳務結束日期"></label><button data-context-shift="1" class="month-btn" aria-label="下一個區間">${iconHtml("chevron-right")}</button></div>`;
+  controls.querySelector(".context-today")?.addEventListener("click", () => {
+    if (singleMode) setSinglePageDate(todayKey());
+    else if (scheduleMode) updateScheduleContext("week", todayKey());
+    else applyReportContext(todayKey(), todayKey());
+  });
+  controls.querySelectorAll("[data-context-shift]").forEach((button) => button.onclick = () => {
+    const offset = Number(button.dataset.contextShift || 0);
+    if (singleMode) shiftSinglePageDate(offset);
+    else if (scheduleMode) shiftScheduleContext(offset);
+    else shiftReportContext(offset);
+  });
+  $("contextSingleDate")?.addEventListener("change", (event) => setSinglePageDate(event.target.value));
+  controls.querySelectorAll("[data-schedule-mode]").forEach((button) => button.onclick = () => updateScheduleContext(button.dataset.scheduleMode, scheduleFilterStart));
+  $("contextCustomRange")?.addEventListener("click", openScheduleFilterModal);
+  const applyReportInputs = () => applyReportContext($("contextReportStart")?.value, $("contextReportEnd")?.value);
+  $("contextReportStart")?.addEventListener("change", applyReportInputs);
+  $("contextReportEnd")?.addEventListener("change", applyReportInputs);
   if ($("topRefreshBtn")) $("topRefreshBtn").onclick = refreshDashboardData;
+  refreshIcons();
 }
 
 function buildWorkItems() {
   const now = new Date();
-  const today = todayKey();
+  const today = selectedOpsDate || todayKey();
   const appts = Object.values(db.appointments || {});
-  const recentStart = toDateKey(new Date(Date.now() - 14 * 86400000));
-  const upcomingEnd = toDateKey(new Date(Date.now() + 7 * 86400000));
+  const recentStart = addDaysKey(today, -14);
+  const upcomingEnd = addDaysKey(today, 7);
   const items = [];
   approvalsList("pending").forEach((approval) => items.push({
     id: `approval:${approval.id}`, priority: 2, group: "今日待辦", status: "待審核",
@@ -5040,8 +5129,6 @@ function bindEvents() {
   $("loginBtn").addEventListener("click", handleLogin);
   $("adminPin").addEventListener("keydown", (e) => { if (e.key === "Enter") handleLogin(); });
   $("logoutBtn").addEventListener("click", logout);
-  $("prevMonthBtn").addEventListener("click", () => shiftOpsDate(-1));
-  $("nextMonthBtn").addEventListener("click", () => shiftOpsDate(1));
   $("openSidebarBtn").addEventListener("click", showSidebar);
   $("closeSidebarBtn").addEventListener("click", hideSidebar);
   $("sidebarOverlay").addEventListener("click", hideSidebar);

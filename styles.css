@@ -13,6 +13,14 @@ html, body { height: 100%; }
   --brand-soft: #eaf4f2;
   --canvas: #f6f7f8;
   --danger: #c2413b;
+  --brand-700: #185a52;
+  --brand-600: #287a73;
+  --brand-500: #3c9188;
+  --brand-100: #dff1ed;
+  --brand-50: #f1f8f6;
+  --shadow-card: 0 3px 12px rgba(21, 39, 37, .045);
+  --shadow-float: 0 12px 32px rgba(21, 39, 37, .09);
+  --radius-card: 12px;
 }
 
 /* MSOT2.0: task-first operations workflow */
@@ -117,6 +125,115 @@ html, body { height: 100%; }
   .work-item > strong { width:max-content; }
   .booking-stage-strip { display:none; }
   .customer-table th:nth-child(2),.customer-table td:nth-child(2),.customer-table th:nth-child(4),.customer-table td:nth-child(4) { display:none; }
+}
+
+/* MSOT2.5: contextual date controls and a quieter operational visual system */
+#adminDashboard main > header.ops-topbar.glass-panel {
+  background: rgba(255,255,255,.88);
+  border-color: rgba(210,219,217,.82);
+  box-shadow: 0 8px 28px rgba(31,55,51,.055);
+  -webkit-backdrop-filter: blur(16px) saturate(1.08);
+  backdrop-filter: blur(16px) saturate(1.08);
+}
+.ops-context-date { display:flex; align-items:center; gap:8px; min-width:0; }
+.ops-context-date.hidden { display:none; }
+.context-today,
+.context-segment button,
+.context-range-label {
+  min-height:36px;
+  border:1px solid #dfe7e5;
+  border-radius:9px;
+  background:rgba(255,255,255,.86);
+  color:#45524f;
+  padding:7px 11px;
+  font-size:12px;
+  font-weight:600;
+}
+.context-today:hover,.context-range-label:hover { border-color:#a9cbc5; color:var(--brand-700); }
+.context-segment { display:flex; border:1px solid #dfe7e5; border-radius:10px; background:#eef3f2; padding:3px; }
+.context-segment button { min-height:30px; border:0; background:transparent; padding:5px 10px; }
+.context-segment button.active { background:#fff; color:var(--brand-700); box-shadow:0 2px 8px rgba(31,55,51,.08); }
+.ops-context-date .ops-date-picker { border-color:#dfe7e5; background:rgba(248,251,250,.9); box-shadow:0 3px 12px rgba(31,55,51,.04); }
+.ops-context-date .ops-date-picker label { border-color:#dfe7e5; }
+.ops-context-date .ops-date-picker label span { color:#71807c; font-weight:600; }
+.ops-context-date .ops-date-picker input { color:#26332f; font-weight:600; }
+.context-range-label { display:grid; min-width:228px; gap:1px; border-block:0; border-radius:0; text-align:left; }
+.context-range-label span { color:#71807c; font-size:9px; font-weight:600; }
+.context-range-label strong { font-size:12px; font-weight:700; white-space:nowrap; }
+.context-report-picker label { padding-inline:8px; }
+.context-report-picker input { width:118px; }
+
+#adminDashboard .font-black { font-weight:700 !important; }
+#adminDashboard .font-bold { font-weight:600 !important; }
+#adminDashboard button,
+#adminDashboard .label,
+#adminDashboard th { font-weight:600; }
+#adminDashboard .page-workbench-header h2,
+#adminDashboard #pageTitle { font-weight:700; }
+#adminDashboard .ops-command-date h3,
+#adminDashboard .ops-next-action strong,
+#adminDashboard .ops-kpi-card strong,
+#adminDashboard .report-summary-card strong,
+#adminDashboard .work-queue-total strong { font-weight:700; }
+
+#adminDashboard .card,
+#adminDashboard .ops-panel,
+#adminDashboard .ops-command-bar,
+#adminDashboard .ops-kpi-card,
+#adminDashboard .report-summary-card,
+#adminDashboard .report-data-card,
+#adminDashboard .work-queue-group,
+#adminDashboard .secondary-tools {
+  border-color:#e1e8e6;
+  border-radius:var(--radius-card);
+  box-shadow:var(--shadow-card);
+}
+#adminDashboard .card .card,
+#adminDashboard .ops-panel .card,
+#adminDashboard .report-data-card .table-wrap { box-shadow:none; }
+#modalRoot .modal { border:1px solid rgba(214,224,221,.9); border-radius:16px; box-shadow:var(--shadow-float); }
+
+.btn-teal,.btn-primary { background:var(--brand-700); box-shadow:none; font-weight:600; }
+.btn-teal:hover,.btn-primary:hover { background:#124a44; }
+.btn-light { border-color:#dce5e3; color:#42504d; box-shadow:none; font-weight:600; }
+.nav-btn.active { background:var(--brand-50); color:var(--brand-700); }
+.nav-btn.active::before { background:var(--brand-600); }
+.ops-section-kicker,.ops-eyebrow,.page-kicker { color:var(--brand-600); font-weight:600; }
+
+#adminDashboard table { width:100%; table-layout:auto; }
+#adminDashboard thead { height:44px; }
+#adminDashboard th { height:44px; padding:10px 14px; color:#5f6d69; font-size:11px; letter-spacing:.01em; }
+#adminDashboard td { min-height:48px; padding:12px 14px; vertical-align:middle; }
+#adminDashboard tbody tr { transition:background-color .14s ease; }
+#adminDashboard tbody tr:hover td { background:#f5faf8; }
+#adminDashboard td,
+#adminDashboard th { overflow:hidden; text-overflow:ellipsis; }
+#adminDashboard .table-wrap { max-width:100%; overflow:auto; border-color:#e1e8e6; box-shadow:none; }
+#adminDashboard table tbody:empty::after { display:block; min-height:120px; content:"目前沒有資料"; padding:44px; color:#8b9794; text-align:center; }
+
+.ops-kpi-card,.report-summary-card { align-content:center; }
+.ops-kpi-card small,.report-summary-card small { min-height:15px; font-weight:500; }
+.ops-kpi-card p,.report-summary-card p { font-weight:600; }
+.ops-kpi-icon,.report-summary-card > span { border-radius:10px; }
+
+@media (max-width:900px) {
+  .ops-context-date { max-width:calc(100vw - 220px); overflow-x:auto; scrollbar-width:none; }
+  .ops-context-date::-webkit-scrollbar { display:none; }
+  .context-report-picker { min-width:max-content; }
+}
+@media (max-width:640px) {
+  .ops-date-toolbar { gap:5px; }
+  .ops-context-date { max-width:calc(100vw - 138px); gap:5px; }
+  .ops-context-date .context-today,.ops-context-date .context-segment { display:none; }
+  .ops-context-date .ops-date-picker { min-width:max-content; }
+  .ops-context-date .ops-date-picker label { padding-inline:5px; }
+  .ops-context-date .ops-date-picker label span { display:none; }
+  .ops-context-date .ops-date-picker input { width:108px; font-size:11px; }
+  .context-range-label { min-width:190px; padding-inline:8px; }
+  .context-range-label span { display:block; }
+  .context-report-picker input { width:104px !important; }
+  #topRefreshBtn { flex:0 0 auto; }
+  #adminDashboard th,#adminDashboard td { padding:10px 11px; }
 }
 
 /* Morgan SaaS shell: one quiet navigation layer, dense operational content. */
@@ -1755,3 +1872,20 @@ tr:hover td { background:#f8fafc; }
   .report-data-head .workspace-tabs { grid-template-columns:repeat(4,minmax(88px,1fr)); overflow-x:auto; }
   .report-data-head > p { max-width:none; text-align:left; }
 }
+
+/* Final cascade ownership for the shared shell tokens. */
+.ops-topbar.glass-panel {
+  background:rgba(255,255,255,.88);
+  border-color:rgba(210,219,217,.82);
+  box-shadow:0 8px 28px rgba(31,55,51,.055);
+  -webkit-backdrop-filter:blur(16px) saturate(1.08);
+  backdrop-filter:blur(16px) saturate(1.08);
+}
+#adminDashboard .font-black { font-weight:700 !important; }
+#adminDashboard .font-bold { font-weight:600 !important; }
+#adminDashboard .card,
+#adminDashboard .ops-panel,
+#adminDashboard .ops-command-bar,
+#adminDashboard .ops-kpi-card,
+#adminDashboard .report-summary-card,
+#adminDashboard .report-data-card { border-radius:var(--radius-card); box-shadow:var(--shadow-card); }
