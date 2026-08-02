@@ -1,7 +1,7 @@
 "use strict";
 
 const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiTI5Z8c76YNlcPMYWyR17HGaU4QvzHJm32nWeCHsnaknVx/exec";
-const APP_VERSION = "MSOT2.5";
+const APP_VERSION = "MSOT2.6";
 const CLOUD_READ_TIMEOUT_MS = 45000;
 const CLOUD_WRITE_TIMEOUT_MS = 45000;
 const LOGIN_CLOUD_TIMEOUT_MS = 18000;
@@ -3776,6 +3776,7 @@ function setScheduleRangeForMode(mode = "week", anchor = todayKey()) {
 function scheduleValueIsAnomalous(value = "") {
   const text = String(value || "").trim();
   if (!text || text.includes("休")) return false;
+  if (["行政"].includes(text)) return false;
   return !/^\d{1,2}:\d{2}-\d{1,2}:\d{2}(,\d{1,2}:\d{2}-\d{1,2}:\d{2})*$/.test(text) || /(^|[^\d])([3-9]\d):/.test(text);
 }
 
