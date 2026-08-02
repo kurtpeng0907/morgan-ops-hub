@@ -25,8 +25,8 @@
       </div>
       <div class="space-y-4">
         <input id="adminId" autocomplete="username" class="input" placeholder="帳號">
-        <input id="adminPin" autocomplete="current-password" type="password" class="input" placeholder="密碼" onkeydown="if(event.key==='Enter') window.handleLogin && window.handleLogin()">
-        <button id="loginBtn" class="btn-primary w-full py-3 text-lg" onclick="window.handleLogin && window.handleLogin()">
+        <input id="adminPin" autocomplete="current-password" type="password" class="input" placeholder="密碼">
+        <button id="loginBtn" class="btn-primary w-full py-3 text-lg">
           <span id="loginBtnText">授權登入</span>
           <span id="loginLoader" class="loader hidden"></span>
         </button>
@@ -68,6 +68,10 @@
         </div>
       </header>
 
+      <div id="offlineModeBanner" role="status" class="hidden border-b border-amber-300 bg-amber-50 px-4 py-2 text-center text-sm font-black text-amber-800">
+        雲端暫時無回應：目前使用最近一次已驗證資料，僅供查閱；恢復連線前不會寫入變更。
+      </div>
+
       <div id="mainContent" class="flex-1 overflow-y-auto p-4 md:p-8">
         <section id="view-overview" class="view space-y-6"></section>
         <section id="view-dispatch" class="view hidden space-y-6"></section>
@@ -94,7 +98,7 @@
     });
   </script>
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-  <script src="./app.js?v=MSOT1.1-sync-hotfix-20260802"></script>
+  <script src="./app.js?v=MSOT1.2-login-recovery-20260802"></script>
   <script src="./report-accounting-patch.js?v=MSOT1.0-20260730-inactive-export-scope"></script>
   <script src="./remittance-fields-patch.js?v=MSOT1.0-20260716c"></script>
 </body>

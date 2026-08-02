@@ -4,6 +4,8 @@ const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiT
 const APP_VERSION = "MSOT1.0";
 const CLOUD_READ_TIMEOUT_MS = 45000;
 const CLOUD_WRITE_TIMEOUT_MS = 45000;
+const LOGIN_CLOUD_TIMEOUT_MS = 18000;
+const TRUSTED_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const STORAGE_KEY = "morgan-ops-hub-v2";
 const SYNC_META_KEY = `${STORAGE_KEY}-sync-meta`;
 const LOCAL_BACKUP_PREFIX = `${STORAGE_KEY}-backup`;
@@ -242,6 +244,8 @@ function therapistDisplayMeta(therapist = {}) {
 
 let syncMeta = loadSyncMeta();
 let loadedLocalDbFromStorage = false;
+let offlineReadOnlyMode = false;
+let loginInFlight = false;
 let db = seedDatabase();
 
 function customerCode(phone = "") {
@@ -267,7 +271,25 @@ function seedDatabase() {
     appointments: {},
     customers: { SYS_DOOR_PWD: { name: "設定", notes: "", records: [] } }
   };
+  if (hasTrustedCloudCache()) {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+      const required = ["therapists", "schedules", "appointments", "customers"];
+      if (saved && required.every((key) => saved[key] && typeof saved[key] === "object" && !Array.isArray(saved[key]))) {
+        loadedLocalDbFromStorage = true;
+        return normalizeDb(saved);
+      }
+    } catch {}
+  }
   return normalizeDb(base);
+}
+
+function hasTrustedCloudCache() {
+  const lastSync = Date.parse(String(syncMeta?.lastSync || ""));
+  return syncMeta?.pending === false
+    && syncMeta?.source === "cloud"
+    && Number.isFinite(lastSync)
+    && Date.now() - lastSync <= TRUSTED_CACHE_MAX_AGE_MS;
 }
 
 function normalizeDb(data) {
@@ -277,6 +299,7 @@ function normalizeDb(data) {
     admin: { name: "系統總管理員", pin: "admin123", email: "" },
     ...(data.admins || {})
   };
+  delete data.admins[ADMIN_LOGIN_LOG_KEY.replace("SYS_ADMIN_", "")];
   data.appointments ||= {};
   data.customers ||= {};
   data.approvals ||= {};
@@ -297,7 +320,7 @@ function normalizeDb(data) {
       record.remittancePaid = String(record.remittancePaid) === "true" || record.remittancePaid === true;
       record.remittanceMethod = String(record.remittanceMethod || "").trim();
     });
-    if (!key.startsWith("SYS_ADMIN_")) return;
+    if (!key.startsWith("SYS_ADMIN_") || key === ADMIN_LOGIN_LOG_KEY) return;
     const id = key.replace("SYS_ADMIN_", "");
     data.admins[id] = {
       name: data.customers[key].name || id,
@@ -554,7 +577,8 @@ function markSyncPending(isPending, reason = "") {
 async function tryCloudSync(options = {}) {
   const force = Boolean(options.force);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), CLOUD_READ_TIMEOUT_MS);
+  const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : CLOUD_READ_TIMEOUT_MS;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(`${API_URL}?t=${Date.now()}`, { signal: controller.signal, cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -563,6 +587,8 @@ async function tryCloudSync(options = {}) {
     db = cloudDb;
     persist();
     markSyncPending(false);
+    loadedLocalDbFromStorage = true;
+    setOfflineReadOnlyMode(false);
     $("sysStatus").textContent = "已連線雲端資料";
     return true;
   } catch {
@@ -689,6 +715,10 @@ async function readBackVerifiedCloud(actions, customVerifier) {
 async function saveCloudActions(actions, successMessage = "已儲存到雲端", options = {}) {
   actions = (actions || []).filter(Boolean);
   if (!actions.length) return true;
+  if (offlineReadOnlyMode) {
+    showSnackbar("目前使用上次同步資料，雲端恢復前不能寫入");
+    return false;
+  }
   showSnackbar("正在寫入雲端...");
   pendingBackupReason = successMessage;
   const results = [];
@@ -828,7 +858,7 @@ function systemRecordStats(data = db) {
   const keys = Object.keys(data.customers || {}).filter(isSystemCustomerKey);
   return {
     total: keys.length,
-    admins: keys.filter((key) => key.startsWith("SYS_ADMIN_")).length,
+    admins: keys.filter((key) => key.startsWith("SYS_ADMIN_") && key !== ADMIN_LOGIN_LOG_KEY).length,
     therapistProfiles: keys.filter((key) => key.startsWith("SYS_THERAPIST_PROFILE_")).length,
     approvals: keys.filter((key) => key.startsWith(APPROVAL_PREFIX)).length,
     clientSelections: keys.filter((key) => key.startsWith(CLIENT_SELECTION_PREFIX)).length,
@@ -1027,6 +1057,7 @@ async function saveSystemNote() {
 }
 
 async function recordAdminLogin(id) {
+  if (offlineReadOnlyMode) return;
   const store = adminLoginLogStore();
   store.records.push({
     id: `LOGIN-${Date.now().toString(36).toUpperCase()}`,
@@ -4614,7 +4645,14 @@ function downloadCSV(csv, filename) {
   showSnackbar("CSV 已匯出");
 }
 
+function setOfflineReadOnlyMode(enabled) {
+  offlineReadOnlyMode = Boolean(enabled);
+  const banner = $("offlineModeBanner");
+  if (banner) banner.classList.toggle("hidden", !offlineReadOnlyMode);
+}
+
 async function handleLogin() {
+  if (loginInFlight) return;
   const id = $("adminId").value.trim();
   const pin = $("adminPin").value.trim();
   const err = $("loginErrorMsg");
@@ -4646,24 +4684,41 @@ async function handleLogin() {
     err.classList.remove("hidden");
     return;
   }
+  loginInFlight = true;
   $("loginBtn").disabled = true;
   $("loginBtnText").textContent = "連線中...";
   $("loginLoader").classList.remove("hidden");
-  const synced = await tryCloudSync();
-  if (synced) await ensureCloudSyncMeta("登入後讀取雲端資料");
-  if (!finishLogin() && effectiveSyncMeta().pending) {
-    $("loginBtnText").textContent = "重抓雲端...";
-    const forceSynced = await tryCloudSync({ force: true });
-    if (forceSynced) await ensureCloudSyncMeta("登入後重抓雲端資料");
-    if (finishLogin()) showSnackbar("已改用最新資料登入");
+  try {
+    let synced = await tryCloudSync({ timeoutMs: LOGIN_CLOUD_TIMEOUT_MS });
+    if (!synced && !loadedLocalDbFromStorage) {
+      $("loginBtnText").textContent = "重新連線中...";
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      synced = await tryCloudSync({ force: true, timeoutMs: LOGIN_CLOUD_TIMEOUT_MS });
+    }
+    if (synced) {
+      await ensureCloudSyncMeta("登入後讀取雲端資料");
+      if (!finishLogin()) {
+        err.textContent = "帳號或密碼錯誤。";
+        err.classList.remove("hidden");
+      }
+    } else if (loadedLocalDbFromStorage && hasTrustedCloudCache()) {
+      setOfflineReadOnlyMode(true);
+      if (finishLogin()) {
+        showSnackbar("雲端暫時無回應；已用 24 小時內的同步資料進入唯讀模式");
+      } else {
+        err.textContent = "帳號或密碼錯誤（目前以最近同步資料驗證）。";
+        err.classList.remove("hidden");
+      }
+    } else {
+      err.textContent = "雲端服務暫時無回應，尚未驗證帳密；請稍後再試。";
+      err.classList.remove("hidden");
+    }
+  } finally {
+    loginInFlight = false;
+    $("loginBtn").disabled = false;
+    $("loginBtnText").textContent = "授權登入";
+    $("loginLoader").classList.add("hidden");
   }
-  if (!currentUser) {
-    err.textContent = "帳號或密碼錯誤。";
-    err.classList.remove("hidden");
-  }
-  $("loginBtn").disabled = false;
-  $("loginBtnText").textContent = "授權登入";
-  $("loginLoader").classList.add("hidden");
 }
 
 function enterDashboard(tab) {
@@ -4677,6 +4732,7 @@ function enterDashboard(tab) {
 
 function logout() {
   currentUser = null;
+  setOfflineReadOnlyMode(false);
   syncMobileBottomNav();
   clearInterval(liveTimer);
   $("adminDashboard").classList.add("hidden");
