@@ -2069,8 +2069,241 @@ tr:hover td { background:#f8fafc; }
 .booking-stage-popover > span .lucide { width:17px; height:17px; color:var(--brand-600); }
 .booking-stage-popover > span b { display:grid; width:22px; height:22px; place-items:center; border-radius:999px; background:var(--brand-100); color:var(--brand-700); font-size:10px; font-weight:700; }
 .booking-stage-popover > span strong { font-size:12px; font-weight:600; }
+.booking-stage-popover > span.is-complete { background:#f5faf8; color:#52615c; }
+.booking-stage-popover > span.is-complete .lucide { color:#72a397; }
+.booking-stage-popover > span.is-current { background:var(--brand-50); color:var(--brand-800); }
+.booking-stage-popover > span.is-current .lucide { color:var(--brand-700); }
+.booking-stage-popover > span.is-current b { background:var(--brand-600); color:#fff; }
+.booking-stage-popover > span.is-current strong { font-weight:700; }
 
 @media (max-width:640px) {
   .booking-stage-float { top:auto; right:12px; bottom:calc(76px + env(safe-area-inset-bottom)); }
   .booking-stage-popover { top:auto; right:0; bottom:calc(100% + 8px); width:min(320px,calc(100vw - 24px)); }
+}
+
+/* Appointment detail: one-column workspace with a shared floating tool dock. */
+.appointment-detail-layout { width:100%; max-width:1120px; margin:0 auto; }
+.appointment-accounting-strip {
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  margin:0 0 20px;
+  overflow:hidden;
+  border:1px solid var(--border-soft,#e2e8e5);
+  border-radius:12px;
+  background:#f8faf9;
+}
+.appointment-accounting-strip > div { display:grid; gap:3px; min-height:76px; align-content:center; padding:12px 18px; }
+.appointment-accounting-strip > div + div { border-left:1px solid var(--border-soft,#e2e8e5); }
+.appointment-accounting-strip span { color:#6b7874; font-size:11px; font-weight:600; }
+.appointment-accounting-strip strong { font-size:20px; font-weight:700; line-height:1.15; }
+.appointment-customer-summary { margin-top:20px; overflow:hidden; border:1px solid var(--border-soft,#e2e8e5); border-radius:12px; background:#fff; }
+.appointment-customer-summary > summary { display:flex; min-height:58px; cursor:pointer; list-style:none; align-items:center; justify-content:space-between; gap:16px; padding:10px 16px; }
+.appointment-customer-summary > summary::-webkit-details-marker { display:none; }
+.appointment-customer-summary > summary span { display:grid; gap:2px; }
+.appointment-customer-summary > summary b { color:#26332f; font-size:13px; font-weight:700; }
+.appointment-customer-summary > summary small { color:#73807c; font-size:11px; font-weight:500; }
+.appointment-customer-summary > summary .lucide { width:17px; transition:transform .18s ease; }
+.appointment-customer-summary[open] > summary .lucide { transform:rotate(180deg); }
+.appointment-customer-summary > div { display:grid; grid-template-columns:1fr 2fr; gap:16px; border-top:1px solid #edf1ef; padding:14px 16px; }
+.appointment-customer-summary p { display:grid; gap:4px; }
+.appointment-customer-summary p span { color:#73807c; font-size:11px; font-weight:600; }
+.appointment-customer-summary p b { color:#35413d; font-size:13px; font-weight:500; }
+
+.dispatch-floating-tools {
+  position:fixed;
+  z-index:36;
+  top:84px;
+  right:28px;
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.dispatch-floating-tools > .booking-stage-float,
+.dispatch-floating-tools > .appointment-notice-float { position:relative; inset:auto; }
+.appointment-notice-float > summary {
+  display:flex;
+  min-height:38px;
+  cursor:pointer;
+  list-style:none;
+  align-items:center;
+  gap:7px;
+  border:1px solid #d7e4e0;
+  border-radius:999px;
+  background:rgba(255,255,255,.92);
+  padding:8px 12px;
+  color:var(--brand-700);
+  font-size:12px;
+  font-weight:600;
+  box-shadow:0 8px 24px rgba(31,55,51,.1);
+  -webkit-backdrop-filter:blur(14px);
+  backdrop-filter:blur(14px);
+}
+.appointment-notice-float > summary::-webkit-details-marker { display:none; }
+.appointment-notice-float > summary .lucide { width:16px; height:16px; }
+.appointment-notice-float[open] > summary { background:var(--brand-700); color:#fff; }
+.appointment-notice-popover {
+  position:absolute;
+  top:calc(100% + 8px);
+  right:0;
+  width:360px;
+  overflow:hidden;
+  border:1px solid #dce6e2;
+  border-radius:16px;
+  background:rgba(255,255,255,.98);
+  box-shadow:0 18px 48px rgba(20,42,37,.16);
+  -webkit-backdrop-filter:blur(18px);
+  backdrop-filter:blur(18px);
+}
+.appointment-notice-popover > header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; border-bottom:1px solid #e5ece9; padding:14px 16px; }
+.appointment-notice-popover > header > div { display:grid; gap:2px; }
+.appointment-notice-popover > header strong { color:#26332f; font-size:14px; font-weight:700; }
+.appointment-notice-popover > header small { color:#75827e; font-size:11px; font-weight:500; }
+.appointment-notice-snapshot { display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; padding:12px 16px; background:#f7faf8; }
+.appointment-notice-snapshot span { display:grid; gap:2px; color:#77837f; font-size:10px; font-weight:600; }
+.appointment-notice-snapshot b { overflow:hidden; color:#35413d; font-size:11px; font-weight:600; text-overflow:ellipsis; white-space:nowrap; }
+.appointment-notice-tabs { display:grid; grid-template-columns:1fr 1fr; gap:4px; margin:12px 16px 0; border-radius:10px; background:#edf3f0; padding:3px; }
+.appointment-notice-tabs button { min-height:32px; border-radius:8px; color:#66736f; font-size:11px; font-weight:600; }
+.appointment-notice-tabs button.active { background:#fff; color:var(--brand-700); box-shadow:0 2px 8px rgba(31,55,51,.08); }
+.appointment-notice-pane { display:grid; gap:8px; padding:12px 16px; }
+.appointment-notice-pane[hidden] { display:none; }
+.appointment-notice-pane textarea { min-height:170px; resize:none; background:#f8faf9; font-size:12px; line-height:1.6; }
+.appointment-notice-popover > footer { border-top:1px solid #e8eeeb; padding:12px 16px; }
+.appointment-notice-popover > footer .btn-teal,
+.appointment-notice-pane .btn-light { width:100%; justify-content:center; }
+
+@media (max-width:640px) {
+  .appointment-accounting-strip { grid-template-columns:1fr; }
+  .appointment-accounting-strip > div { min-height:58px; }
+  .appointment-accounting-strip > div + div { border-top:1px solid var(--border-soft,#e2e8e5); border-left:0; }
+  .appointment-customer-summary > div { grid-template-columns:1fr; }
+  .dispatch-floating-tools { top:auto; right:12px; bottom:calc(76px + env(safe-area-inset-bottom)); }
+  .dispatch-floating-tools > .booking-stage-float { right:auto; bottom:auto; }
+  .booking-stage-popover,
+  .appointment-notice-popover { top:auto; right:0; bottom:calc(100% + 8px); width:min(360px,calc(100vw - 24px)); max-height:calc(100vh - 164px); overflow:auto; }
+}
+
+/* Homepage action hierarchy: one primary action per operational block. */
+#adminDashboard .ops-command-actions { align-items:center; }
+#adminDashboard .ops-kpi-card { width:100%; color:inherit; font:inherit; text-align:left; }
+#adminDashboard .ops-kpi-card.is-actionable {
+  cursor:pointer;
+  transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease;
+}
+#adminDashboard .ops-kpi-card.is-actionable:hover {
+  transform:translateY(-1px);
+  border-color:#b9d2ca;
+  box-shadow:0 7px 20px rgba(31,55,51,.08);
+}
+#adminDashboard .ops-kpi-card.is-actionable:focus-visible {
+  outline:3px solid rgba(40,122,115,.2);
+  outline-offset:2px;
+}
+.ops-door-controls { grid-template-columns:42px 42px minmax(0,1fr); }
+.ops-door-controls .ops-icon-button { width:42px; padding:8px; justify-content:center; }
+.ops-icon-button > span {
+  position:absolute;
+  width:1px;
+  height:1px;
+  overflow:hidden;
+  clip:rect(0 0 0 0);
+  clip-path:inset(50%);
+  white-space:nowrap;
+}
+.ops-tool-actions { grid-template-columns:auto minmax(0,1fr); align-items:center; }
+.ops-history-link {
+  display:inline-flex;
+  min-height:34px;
+  align-items:center;
+  justify-content:center;
+  gap:5px;
+  border-radius:9px;
+  padding:7px 8px;
+  color:#66736f;
+  font-size:10px;
+  font-weight:500;
+  white-space:nowrap;
+}
+.ops-history-link:hover { background:#eef4f1; color:var(--brand-700); }
+.ops-history-link:focus-visible { outline:3px solid rgba(40,122,115,.18); outline-offset:1px; }
+.ops-history-link .lucide { width:14px; height:14px; }
+
+@media (max-width:640px) {
+  #adminDashboard .ops-command-actions { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  #adminDashboard .ops-command-actions button:last-child { grid-column:auto; }
+  .ops-door-controls { grid-template-columns:42px 42px minmax(0,1fr); }
+  .ops-tool-actions { grid-template-columns:auto minmax(0,1fr); }
+}
+
+/* Homepage empty states: reclaim vertical space without affecting populated views. */
+.ops-schedule-empty {
+  display:flex;
+  min-height:76px;
+  align-items:center;
+  justify-content:center;
+  gap:12px;
+  border:1px dashed #d5dfdc;
+  border-radius:12px;
+  background:#f7faf9;
+  padding:12px 18px;
+  color:#6f7d78;
+  text-align:left;
+}
+.ops-schedule-empty > .lucide { width:22px; height:22px; flex:0 0 22px; color:var(--brand-500); }
+.ops-schedule-empty > div { display:grid; gap:2px; }
+.ops-schedule-empty strong { color:#40504b; font-size:12px; font-weight:600; }
+.ops-schedule-empty small { font-size:10px; font-weight:500; }
+.ops-dashboard-v2 > .ops-workspace-grid.is-schedule-empty { grid-template-columns:minmax(0,1fr); }
+.ops-workspace-grid.is-schedule-empty > .ops-schedule-panel,
+.ops-workspace-grid.is-schedule-empty > .ops-side-stack { grid-column:1 / -1; }
+.ops-workspace-grid.is-schedule-empty .ops-side-stack { display:block; }
+.ops-workspace-grid.is-schedule-empty .ops-store-tools .ops-tool-list { grid-template-columns:repeat(3,minmax(0,1fr)); }
+.ops-workspace-grid.is-schedule-empty .ops-tool-card { min-height:150px; }
+.ops-store-tools .ops-tool-list { gap:8px; padding:10px 12px 12px; }
+.ops-store-tools .ops-tool-card { display:flex; flex-direction:column; padding:10px; }
+.ops-store-tools .ops-door-controls,
+.ops-store-tools .ops-tool-actions { margin-top:auto; padding-top:9px; }
+.work-queue-empty {
+  min-height:68px;
+  grid-template-columns:auto auto minmax(0,1fr);
+  align-items:center;
+  justify-items:start;
+  gap:8px 12px;
+  border-radius:12px;
+  padding:12px 18px;
+  text-align:left;
+}
+.work-queue-empty .lucide { width:20px; height:20px; color:var(--brand-600); }
+.work-queue-empty strong { color:#40504b; font-size:12px; font-weight:600; }
+.work-queue-empty span { color:#7a8783; font-size:11px; font-weight:500; }
+.secondary-tools .overview-empty-state { min-height:112px; }
+.today-workbench.has-service-only { gap:0; }
+
+@media (max-width:1100px) {
+  .ops-workspace-grid.is-schedule-empty .ops-store-tools .ops-tool-list { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .ops-workspace-grid.is-schedule-empty .ops-tool-card:first-child { grid-column:1 / -1; }
+}
+
+@media (max-width:640px) {
+  .ops-schedule-empty { min-height:72px; justify-content:flex-start; padding:11px 14px; }
+  .ops-workspace-grid.is-schedule-empty .ops-store-tools .ops-tool-list { grid-template-columns:minmax(0,1fr); }
+  .ops-workspace-grid.is-schedule-empty .ops-tool-card:first-child { grid-column:auto; }
+  .ops-workspace-grid.is-schedule-empty .ops-tool-card { min-height:auto; }
+  .work-queue-empty { grid-template-columns:auto minmax(0,1fr); padding:12px 14px; }
+  .work-queue-empty strong,.work-queue-empty span { grid-column:2; }
+}
+
+/* Homepage context bar: the top toolbar owns the date and sync state. */
+#adminDashboard .ops-command-bar.is-compact-context {
+  grid-template-columns:minmax(0,1fr) auto;
+  min-height:76px;
+}
+#adminDashboard .ops-command-bar.is-compact-context .ops-next-action,
+#adminDashboard .ops-command-bar.is-compact-context .ops-command-actions { padding:13px 18px; }
+#adminDashboard .ops-command-bar.is-compact-context .ops-next-action { min-height:76px; justify-content:center; }
+#adminDashboard .ops-command-bar.is-compact-context .ops-eyebrow { text-transform:none; }
+
+@media (max-width:640px) {
+  #adminDashboard .ops-command-bar.is-compact-context { grid-template-columns:minmax(0,1fr); }
+  #adminDashboard .ops-command-bar.is-compact-context .ops-next-action { min-height:70px; border-right:0; border-bottom:1px solid #edf0f5; }
+  #adminDashboard .ops-command-bar.is-compact-context .ops-command-actions { grid-column:auto; border-top:0; }
 }
