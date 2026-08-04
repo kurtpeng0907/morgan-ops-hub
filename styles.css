@@ -1069,8 +1069,9 @@ tr:hover td { background:#f8fafc; }
   .ops-next-action { border-right: 0; }
   .ops-command-actions { grid-column: 1 / -1; justify-content: flex-start; border-top: 1px solid #edf0f5; padding-top: 14px; padding-bottom: 14px; }
   .ops-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .ops-workspace-grid { grid-template-columns: minmax(0, 1fr); }
-  .ops-side-stack { grid-template-columns: minmax(0, 1.25fr) minmax(300px, .75fr); }
+  /* The schedule is the primary mobile work surface; store tools follow below it. */
+  .ops-dashboard-v2 > .ops-workspace-grid { grid-template-columns: minmax(0, 1fr); }
+  .ops-dashboard-v2 > .ops-workspace-grid > .ops-side-stack { grid-template-columns: minmax(0, 1fr); }
   .dispatch-command-main { align-items: flex-start; flex-direction: column; }
   .dispatch-view-tabs { width: 100%; }
   .dispatch-view-tab { flex: 1; }
