@@ -21,6 +21,7 @@ html, body { height: 100%; }
   --shadow-card: 0 3px 12px rgba(21, 39, 37, .045);
   --shadow-float: 0 12px 32px rgba(21, 39, 37, .09);
   --radius-card: 12px;
+  --mobile-bottom-nav-height: calc(84px + env(safe-area-inset-bottom));
 }
 
 /* MSOT2.0: task-first operations workflow */
@@ -523,7 +524,7 @@ tr:hover td {
     flex-basis: 58px;
   }
   #mainContent {
-    padding: 12px 12px calc(84px + env(safe-area-inset-bottom));
+    padding: 12px 12px calc(var(--mobile-bottom-nav-height, 84px) + 16px);
   }
   .card,
   .metric,
@@ -1098,7 +1099,7 @@ tr:hover td { background:#f8fafc; }
   }
   .month-btn { padding: 6px 8px; }
   #mainContent {
-    padding: 12px 12px calc(84px + env(safe-area-inset-bottom));
+    padding: 12px 12px calc(var(--mobile-bottom-nav-height, 84px) + 16px);
   }
   .system-page { gap: 12px; }
   .system-command {
@@ -1379,11 +1380,11 @@ tr:hover td { background:#f8fafc; }
     scroll-snap-align: start;
   }
   .appointment-detail-form {
-    padding-bottom: calc(92px + env(safe-area-inset-bottom)) !important;
+    padding-bottom: calc(var(--mobile-bottom-nav-height, 84px) + 24px) !important;
   }
   .appointment-detail-actions {
     position: sticky;
-    bottom: calc(65px + env(safe-area-inset-bottom));
+    bottom: calc(var(--mobile-bottom-nav-height, 84px) + 8px);
     z-index: 30;
     margin-right: -14px;
     margin-left: -14px;
@@ -1602,7 +1603,7 @@ tr:hover td { background:#f8fafc; }
 
 @media (max-width:640px) {
   #adminDashboard main > header { height:58px; flex-basis:58px; }
-  #mainContent { padding:12px 12px calc(84px + env(safe-area-inset-bottom)); }
+  #mainContent { padding:12px 12px calc(var(--mobile-bottom-nav-height, 84px) + 16px); }
 }
 
 /* Personnel and finance workbenches */
@@ -2077,7 +2078,7 @@ tr:hover td { background:#f8fafc; }
 .booking-stage-popover > span.is-current strong { font-weight:700; }
 
 @media (max-width:640px) {
-  .booking-stage-float { top:auto; right:12px; bottom:calc(76px + env(safe-area-inset-bottom)); }
+  .booking-stage-float { top:auto; right:12px; bottom:calc(var(--mobile-bottom-nav-height, 84px) + 12px); }
   .booking-stage-popover { top:auto; right:0; bottom:calc(100% + 8px); width:min(320px,calc(100vw - 24px)); }
 }
 
@@ -2176,10 +2177,10 @@ tr:hover td { background:#f8fafc; }
   .appointment-accounting-strip > div { min-height:58px; }
   .appointment-accounting-strip > div + div { border-top:1px solid var(--border-soft,#e2e8e5); border-left:0; }
   .appointment-customer-summary > div { grid-template-columns:1fr; }
-  .dispatch-floating-tools { top:auto; right:12px; bottom:calc(76px + env(safe-area-inset-bottom)); }
+  .dispatch-floating-tools { top:auto; right:12px; bottom:calc(var(--mobile-bottom-nav-height, 84px) + 12px); }
   .dispatch-floating-tools > .booking-stage-float { right:auto; bottom:auto; }
   .booking-stage-popover,
-  .appointment-notice-popover { top:auto; right:0; bottom:calc(100% + 8px); width:min(360px,calc(100vw - 24px)); max-height:calc(100vh - 164px); overflow:auto; }
+  .appointment-notice-popover { top:auto; right:0; bottom:calc(100% + 8px); width:min(360px,calc(100vw - 24px)); max-height:calc(100dvh - var(--mobile-bottom-nav-height, 84px) - 92px); overflow:auto; }
 }
 
 /* Homepage action hierarchy: one primary action per operational block. */

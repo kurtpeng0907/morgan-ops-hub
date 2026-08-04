@@ -2078,7 +2078,15 @@ function syncMobileBottomNav() {
     button.classList.toggle("active", isActive);
     button.setAttribute("aria-current", isActive ? "page" : "false");
   });
+  requestAnimationFrame(() => {
+    const height = !nav.classList.contains("hidden") ? Math.ceil(nav.getBoundingClientRect().height) : 0;
+    document.documentElement.style.setProperty("--mobile-bottom-nav-height", `${height}px`);
+  });
 }
+
+window.addEventListener("resize", () => {
+  if (window.innerWidth <= 640) syncMobileBottomNav();
+});
 
 function switchTab(tab, options = {}) {
   if (tab === "schedule") {
