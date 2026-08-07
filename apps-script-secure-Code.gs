@@ -48,6 +48,20 @@ function setup() {
   Logger.log('授權成功，Email 功能可使用。');
 }
 
+// Callable only through the owner-authorized Apps Script Execution API.
+// Secrets are stored in Script Properties and are never returned.
+function configureGatewaySecret(secret) {
+  const value = String(secret || '').trim();
+  if (value.length < 32) throw new Error('Gateway secret must contain at least 32 characters');
+  PropertiesService.getScriptProperties().setProperty('GATEWAY_SECRET', value);
+  return { success: true, configured: true };
+}
+
+function gatewayConfigurationStatus() {
+  const value = String(PropertiesService.getScriptProperties().getProperty('GATEWAY_SECRET') || '');
+  return { success: true, configured: value.length >= 32 };
+}
+
 function doGet(e) {
   try {
     const mode = String(e && e.parameter && e.parameter.mode || '');
@@ -858,8 +872,7 @@ function sendUpcomingLineAppointmentAlerts_() {
   const now = new Date();
   const date = Utilities.formatDate(now, LINE_REMINDER_TIMEZONE, 'yyyy-MM-dd');
   const leadMinutes = clampNumber_(PropertiesService.getScriptProperties().getProperty('LINE_REMINDER_LEAD_MINUTES'), 15, 180, 60);
-  const db = getAllData();
-  const appointments = appointmentsForDate_(db, date);
+  const appointments = appointmentsForDate_(getAllData(), date);
   const sent = PropertiesService.getScriptProperties();
   appointments.forEach(appt => {
     if (appt.isCompleted || !appt.time) return;
@@ -868,7 +881,7 @@ function sendUpcomingLineAppointmentAlerts_() {
     if (minutesAway < 0 || minutesAway > leadMinutes) return;
     const dedupeKey = 'LINE_APPT_ALERT_' + date + '_' + appt.id;
     if (sent.getProperty(dedupeKey)) return;
-    const therapist = getTherapistDisplayName_(db, appt.therapistId);
+    const therapist = getTherapistDisplayName_(getAllData(), appt.therapistId);
     const message = '⏰ 即將開始\n' + appt.time + '（約 ' + minutesAway + ' 分鐘後）\n' +
       (appt.customerName || '未填姓名') + '／' + therapist + '／' + (appt.service || '未填服務') + '／' + (appt.room || '未排房');
     pushLineToStaff_(message);
