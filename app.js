@@ -1,7 +1,7 @@
 "use strict";
 
 const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiTI5Z8c76YNlcPMYWyR17HGaU4QvzHJm32nWeCHsnaknVx/exec";
-const APP_VERSION = "MSOT3.0-fast-session";
+const APP_VERSION = "MSOT3.0.1-preview-login";
 const CLOUD_READ_TIMEOUT_MS = 45000;
 const CLOUD_WRITE_TIMEOUT_MS = 45000;
 const LOGIN_CLOUD_TIMEOUT_MS = 18000;
@@ -11,8 +11,15 @@ const SYNC_META_KEY = `${STORAGE_KEY}-sync-meta`;
 const LOCAL_BACKUP_PREFIX = `${STORAGE_KEY}-backup`;
 const MAX_LOCAL_BACKUPS = 12;
 const LOCAL_TEST_MODE = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
-const FAST_API_ENABLED = !LOCAL_TEST_MODE || new URLSearchParams(window.location.search).get("fastApi") === "1";
-const FAST_API_TIMEOUT_MS = 15000;
+const URL_OPTIONS = new URLSearchParams(window.location.search);
+const KNOWN_PRODUCTION_HOSTS = new Set([
+  "morgan-ops-hub.vercel.app",
+  "morgan-ops-hub-kurtpeng0907s-projects.vercel.app",
+  "morgan-ops-hub-git-main-kurtpeng0907s-projects.vercel.app"
+]);
+const VERCEL_PREVIEW_MODE = window.location.hostname.endsWith(".vercel.app") && !KNOWN_PRODUCTION_HOSTS.has(window.location.hostname);
+const FAST_API_ENABLED = URL_OPTIONS.get("fastApi") === "1" || (!LOCAL_TEST_MODE && !VERCEL_PREVIEW_MODE);
+const FAST_API_TIMEOUT_MS = 5000;
 
 const COURSE_CATALOG = {
   A60: { name: "A課程 60分", duration: 60, price: 1800, therapistCut: 1000 },
@@ -5044,8 +5051,12 @@ async function handleLogin() {
       if (isAdmin) setTimeout(() => recordAdminLogin(currentUser.id), 0);
       return;
     }
+    if (VERCEL_PREVIEW_MODE) {
+      $("loginBtnText").textContent = "讀取雲端資料（約 5–10 秒）";
+      $("sysStatus").textContent = "Preview 使用目前正式資料通道驗證";
+    }
     let synced = await tryCloudSync({ timeoutMs: LOGIN_CLOUD_TIMEOUT_MS });
-    if (!synced && !loadedLocalDbFromStorage) {
+    if (!synced && !loadedLocalDbFromStorage && !VERCEL_PREVIEW_MODE) {
       $("loginBtnText").textContent = "重新連線中...";
       await new Promise((resolve) => setTimeout(resolve, 500));
       synced = await tryCloudSync({ force: true, timeoutMs: LOGIN_CLOUD_TIMEOUT_MS });
