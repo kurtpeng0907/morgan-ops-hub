@@ -1,6 +1,7 @@
 "use strict";
 
 (function patchRemittanceFields() {
+  if (typeof renderAppointmentDetail !== "function") return;
   const originalRenderAppointmentDetail = renderAppointmentDetail;
 
   const remittanceDueAmount = (appt) => remittanceDueFor(appt);
