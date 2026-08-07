@@ -7,7 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>專業按摩師排班與預約中樞</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="./tailwind.generated.css?v=MSOT3.0-fast-session-20260807">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700;900&display=swap');
         body { 
@@ -455,6 +455,7 @@
         let currentReportingPhone = null;
         let currentEditAppointmentId = null;
         let currentApptViewMode = 'list'; 
+        let fastFrontdeskSession = false;
 
         const cleanPin = (value = "") => String(value ?? "").replace(/^'/, "").trim();
         const sheetText = (value = "") => {
@@ -638,10 +639,82 @@
             }
         }
 
+        function normalizeFastFrontdeskDatabase(nextDB) {
+            if (!nextDB || typeof nextDB !== 'object' || !['therapists', 'schedules', 'appointments', 'customers'].every(key => nextDB[key] && typeof nextDB[key] === 'object')) {
+                throw new Error("雲端資料不完整");
+            }
+            globalDB = nextDB;
+            globalDB.approvals = {};
+            globalDB.appointmentMeta = {};
+            Object.keys(globalDB.customers).forEach(key => {
+                if (key.startsWith('SYS_THERAPIST_PROFILE_')) {
+                    const id = key.replace('SYS_THERAPIST_PROFILE_', '');
+                    let profile = {};
+                    try { profile = JSON.parse(globalDB.customers[key].notes || "{}"); } catch(e) {}
+                    globalDB.therapists[id] = { ...(globalDB.therapists[id] || {}), ...profile };
+                }
+                if (key.startsWith(APPOINTMENT_META_PREFIX)) {
+                    try {
+                        const meta = JSON.parse(globalDB.customers[key].notes || "{}");
+                        const id = meta.id || key.replace(APPOINTMENT_META_PREFIX, '');
+                        if (id) globalDB.appointmentMeta[id] = { ...meta, id };
+                    } catch(e) {}
+                }
+                if (key.startsWith(APPROVAL_PREFIX)) {
+                    try {
+                        const approval = JSON.parse(globalDB.customers[key].notes || "{}");
+                        if (approval.id) globalDB.approvals[approval.id] = approval;
+                    } catch(e) {}
+                }
+            });
+            Object.keys(globalDB.therapists).forEach(id => { globalDB.therapists[id] = normalizeTherapistProfile(globalDB.therapists[id]); });
+            Object.keys(globalDB.appointments).forEach(key => {
+                const appt = globalDB.appointments[key];
+                const meta = globalDB.appointmentMeta[key] || {};
+                ['bookingStage', 'isCompleted', 'collectedPrice', 'remittanceDue', 'remittancePaid', 'remittanceMethod', 'selectionId'].forEach(field => {
+                    if (Object.prototype.hasOwnProperty.call(meta, field)) appt[field] = meta[field];
+                });
+                appt.id = key;
+            });
+        }
+
+        async function tryFastFrontdeskLogin(inputId, pin) {
+            try {
+                const auth = await fetch('/api/session', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    cache: 'no-store',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: String(inputId), pin: String(pin) })
+                });
+                if (auth.status === 401) return { available: true, authenticated: false };
+                if (!auth.ok) return { available: false };
+                const authPayload = await auth.json();
+                if (!authPayload.success || authPayload.identity?.role !== 'therapist') return { available: true, authenticated: false };
+                const date = new Date().toISOString().slice(0, 10);
+                const bootstrap = await fetch(`/api/bootstrap?date=${date}`, { credentials: 'same-origin', cache: 'no-store' });
+                const bootstrapPayload = await bootstrap.json();
+                if (!bootstrap.ok || !bootstrapPayload.success) return { available: false };
+                normalizeFastFrontdeskDatabase(bootstrapPayload.data);
+                fastFrontdeskSession = true;
+                return { available: true, authenticated: true, id: String(authPayload.identity.sub || inputId) };
+            } catch(e) {
+                return { available: false };
+            }
+        }
+
         async function fetchDatabase() {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), CLOUD_READ_TIMEOUT_MS);
             try {
+                if (fastFrontdeskSession) {
+                    const res = await fetch('/api/full-data', { signal: controller.signal, credentials: 'same-origin', cache: 'no-store' });
+                    const payload = await res.json();
+                    if (!res.ok || !payload.success) throw new Error(payload.error || `HTTP ${res.status}`);
+                    normalizeFastFrontdeskDatabase(payload.data);
+                    clearTimeout(timeoutId);
+                    return;
+                }
                 const cacheBuster = "?t=" + new Date().getTime();
                 const res = await fetch(API_URL + cacheBuster, { signal: controller.signal, cache: "no-store" });
                 clearTimeout(timeoutId);
@@ -721,6 +794,18 @@
         }
 
         async function postToDatabase(payload) {
+            if (fastFrontdeskSession) {
+                const res = await fetch('/api/cloud', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    cache: 'no-store',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await res.json();
+                if (!res.ok || !result.success || result.verified !== true) throw new Error(result.error || '雲端未確認寫入');
+                return result;
+            }
             const res = await fetch(API_URL, {
                 method: 'POST',
                 body: JSON.stringify(payload),
@@ -777,6 +862,9 @@
 
         async function recordFrontdeskLogin(id) {
             if (!id) return;
+            // The signed gateway intentionally blocks shared audit-log overwrites
+            // from therapist sessions. Legacy mode keeps the previous behavior.
+            if (fastFrontdeskSession) return;
             if (!globalDB.customers) globalDB.customers = {};
             const store = globalDB.customers[FRONTDESK_LOGIN_LOG_KEY] || { name: "前台師傅登入紀錄", notes: "", records: [] };
             store.records = store.records || [];
@@ -1062,6 +1150,23 @@
 
             btn.disabled = true; btnText.innerText = ""; loader.classList.remove('hidden'); err.classList.add('hidden');
             try {
+                const fast = await tryFastFrontdeskLogin(inputId, pin);
+                if (fast.available) {
+                    if (!fast.authenticated) {
+                        err.innerText = "身分驗證失敗，請檢查編號或密碼。";
+                        err.classList.remove('hidden');
+                        return;
+                    }
+                    currentUserId = fast.id;
+                    document.getElementById('loggedInName').innerText = therapistName(currentUserId);
+                    populateWeekSelector();
+                    renderEditInputs();
+                    switchPortalTab('appointments');
+                    document.getElementById('loginForm').classList.add('hidden');
+                    document.getElementById('editForm').classList.remove('hidden');
+                    recordFrontdeskLogin(currentUserId);
+                    return;
+                }
                 await fetchDatabase();
                 const id = findTherapistId(inputId);
                 if (globalDB.therapists[id] && pinMatches(globalDB.therapists[id].pin, pin)) {
@@ -1527,6 +1632,8 @@
         };
 
         window.logout = function() {
+            if (fastFrontdeskSession) fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+            fastFrontdeskSession = false;
             currentUserId = null; document.getElementById('authPin').value = '';
             document.getElementById('editForm').classList.add('hidden'); document.getElementById('loginForm').classList.remove('hidden');
             generateMonthData(); 

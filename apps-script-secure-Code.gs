@@ -24,6 +24,11 @@ const SHEET_CUSTOMERS = 'Customers';
 const CLIENT_SELECTION_PREFIX = 'SYS_CLIENT_SELECTION_';
 const THERAPIST_PROFILE_PREFIX = 'SYS_THERAPIST_PROFILE_';
 const APPOINTMENT_META_PREFIX = 'SYS_APPT_META_';
+const ADMIN_PREFIX = 'SYS_ADMIN_';
+const ADMIN_LOGIN_LOG_KEY = 'SYS_ADMIN_LOGIN_LOG';
+const FRONTDESK_LOGIN_LOG_KEY = 'SYS_FRONTDESK_LOGIN_LOG';
+const BOOTSTRAP_CACHE_VERSION_KEY = 'BOOTSTRAP_CACHE_VERSION';
+const BOOTSTRAP_CACHE_TTL_SECONDS = 45;
 
 function setup() {
   MailApp.getRemainingDailyQuota();
@@ -58,10 +63,22 @@ function doPost(e) {
     const params = JSON.parse((e.postData && e.postData.contents) || '{}');
     const action = String(params.action || '');
     const data = params.data || {};
+    const actor = params.actor || {};
+
+    if (action === 'authenticate' || action === 'bootstrap' || action === 'fullData') {
+      if (!isGatewayAuthorized_(params)) return jsonOutput({ success: false, error: 'unauthorized_gateway' });
+      if (action === 'authenticate') return jsonOutput(authenticateGatewayUser_(data));
+      if (action === 'bootstrap') return jsonOutput(getGatewayBootstrap_(data));
+      return jsonOutput(getGatewayFullData_(data));
+    }
 
     const secret = getApiSecret_();
-    if (secret && action !== 'submitClientSelection' && !isAuthorized_(params)) {
+    if (secret && action !== 'submitClientSelection' && !isAuthorized_(params) && !isGatewayAuthorized_(params)) {
       return jsonOutput({ success: false, error: 'unauthorized' });
+    }
+
+    if (isGatewayAuthorized_(params) && String(actor.role || '') === 'therapist' && !isTherapistGatewayWriteAllowed_(actor, action, data)) {
+      return jsonOutput({ success: false, error: 'forbidden' });
     }
 
     if (action !== 'sendEmailNotification') {
@@ -70,20 +87,56 @@ function doPost(e) {
       lockHeld = true;
     }
 
+    let actions = [];
     if (action === 'batch') {
-      const actions = Array.isArray(data.actions) ? data.actions : [];
+      actions = Array.isArray(data.actions) ? data.actions : [];
       if (!actions.length) throw new Error('Empty batch');
       actions.forEach(item => executeAction_(String(item.action || ''), item.data || {}));
     } else {
+      actions = [{ action: action, data: data }];
       executeAction_(action, data);
     }
 
-    return jsonOutput({ success: true });
+    bumpBootstrapCacheVersion_();
+    const gatewayRequest = isGatewayAuthorized_(params);
+    return jsonOutput({ success: true, verified: gatewayRequest ? verifyGatewayActions_(actions) : false });
   } catch (err) {
     return jsonOutput({ success: false, error: String(err) });
   } finally {
     if (lockHeld && lock) lock.releaseLock();
   }
+}
+
+function flattenGatewayActions_(action, data) {
+  if (action !== 'batch') return [{ action: action, data: data || {} }];
+  const nested = Array.isArray(data && data.actions) ? data.actions : [];
+  return nested.reduce(function(all, item) {
+    return all.concat(flattenGatewayActions_(String(item && item.action || ''), item && item.data || {}));
+  }, []);
+}
+
+function isTherapistGatewayWriteAllowed_(actor, action, data) {
+  const actorId = cleanCellId_(actor && actor.id);
+  const actions = flattenGatewayActions_(action, data);
+  if (!actorId || !actions.length) return false;
+  const ownAppointments = actions.filter(function(item) {
+    return item.action === 'addAppointment' && cleanCellId_(item.data && item.data.therapistId) === actorId;
+  }).map(function(item) { return item.data || {}; });
+  return actions.every(function(item) {
+    const itemData = item.data || {};
+    if (item.action === 'saveSchedule') return cleanCellId_(itemData.id) === actorId;
+    if (item.action === 'addAppointment') return cleanCellId_(itemData.therapistId) === actorId;
+    if (item.action !== 'saveCustomer') return false;
+    const key = String(itemData.phone || '');
+    if (key.indexOf('SYS_APPROVAL_') === 0) {
+      try { return cleanCellId_(JSON.parse(String(itemData.notes || '{}')).therapistId) === actorId; } catch (err) { return false; }
+    }
+    if (key.indexOf(APPOINTMENT_META_PREFIX) === 0) {
+      const appointmentId = key.slice(APPOINTMENT_META_PREFIX.length);
+      return ownAppointments.some(function(appt) { return String(appt.appId || appt.id || '') === appointmentId; });
+    }
+    return ownAppointments.some(function(appt) { return String(appt.phone || '') === key; });
+  });
 }
 
 function executeAction_(action, data) {
@@ -108,6 +161,8 @@ function executeAction_(action, data) {
     saveClientSelectionSubmission(data);
   } else if (action === 'sendEmailNotification') {
     sendEmailNotification(data);
+  } else if (action === 'saveAdmin') {
+    saveAdmin_(data);
   } else {
     throw new Error('Unknown action: ' + action);
   }
@@ -274,10 +329,12 @@ function therapistPublicProfile_(id, therapist, customers) {
 
 function saveTherapist(data) {
   if (!data || !data.id) throw new Error('Missing therapist id');
+  const existing = findSheetRow_(SHEET_THERAPISTS, data.id);
+  const nextPin = cleanPin_(data.pin || '') || cleanPin_(existing && existing[2] || '');
   updateRow(SHEET_THERAPISTS, data.id, [
     sheetText_(data.id),
-    String(data.nickname || data.name || ''),
-    sheetText_(data.pin || '')
+    String(data.nickname || data.name || existing && existing[1] || ''),
+    sheetText_(nextPin)
   ]);
 }
 
@@ -525,6 +582,343 @@ function normalizeShift_(value) {
     .replace(/[－–—~～至到]/g, '-')
     .replace(/\s+/g, '')
     .trim();
+}
+
+function getGatewaySecret_() {
+  return String(PropertiesService.getScriptProperties().getProperty('GATEWAY_SECRET') || '').trim();
+}
+
+function isGatewayAuthorized_(params) {
+  const secret = getGatewaySecret_();
+  if (secret.length < 24) return false;
+  return String(params && params.gatewayToken || '') === secret;
+}
+
+function findSheetRow_(sheetName, key) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+  if (!sheet || !sheet.getLastRow()) return null;
+  const normalizedKey = cleanCellId_(key);
+  const firstColumn = sheet.getRange(1, 1, sheet.getLastRow(), 1);
+  const match = firstColumn.createTextFinder(String(normalizedKey)).matchEntireCell(true).findNext();
+  if (match) return sheet.getRange(match.getRow(), 1, 1, Math.max(1, sheet.getLastColumn())).getValues()[0];
+  const values = firstColumn.getValues();
+  for (let i = 0; i < values.length; i++) {
+    if (cleanCellId_(values[i][0]) === normalizedKey) {
+      return sheet.getRange(i + 1, 1, 1, Math.max(1, sheet.getLastColumn())).getValues()[0];
+    }
+  }
+  return null;
+}
+
+function pinMatches_(stored, entered) {
+  const storedText = cleanPin_(stored);
+  const enteredText = cleanPin_(entered);
+  if (storedText === enteredText) return true;
+  // Compatibility is limited to legacy numeric cells. String PINs retain
+  // leading-zero identity, so "0007" is not treated as the same PIN as "7".
+  if (typeof stored === 'number' && /^\d+$/.test(storedText) && /^\d+$/.test(enteredText)) {
+    return storedText.replace(/^0+/, '') === enteredText.replace(/^0+/, '');
+  }
+  return false;
+}
+
+function authenticateGatewayUser_(data) {
+  const id = cleanCellId_(data && data.id);
+  const pin = cleanPin_(data && data.pin);
+  if (!id || !pin) return { success: true, authenticated: false };
+
+  const adminRow = findSheetRow_(SHEET_CUSTOMERS, ADMIN_PREFIX + id);
+  if (adminRow && cleanCellId_(adminRow[0]) !== ADMIN_LOGIN_LOG_KEY && pinMatches_(adminRow[2], pin)) {
+    return {
+      success: true,
+      authenticated: true,
+      identity: { id: id, name: String(adminRow[1] || id), role: 'admin' }
+    };
+  }
+
+  const legacyAdminRow = findSheetRow_(SHEET_ADMINS, id);
+  if (legacyAdminRow && pinMatches_(legacyAdminRow[2], pin)) {
+    return {
+      success: true,
+      authenticated: true,
+      identity: { id: id, name: String(legacyAdminRow[1] || id), role: 'admin' }
+    };
+  }
+
+  const therapistRow = findSheetRow_(SHEET_THERAPISTS, id);
+  if (therapistRow && pinMatches_(therapistRow[2], pin)) {
+    return {
+      success: true,
+      authenticated: true,
+      identity: { id: id, name: String(therapistRow[1] || id), role: 'therapist' }
+    };
+  }
+  return { success: true, authenticated: false };
+}
+
+function addDaysDateKey_(dateKey, offset) {
+  const parts = String(dateKey || '').split('-').map(Number);
+  const date = new Date(parts[0] || 1970, Math.max(0, (parts[1] || 1) - 1), parts[2] || 1);
+  date.setDate(date.getDate() + Number(offset || 0));
+  return Utilities.formatDate(date, Session.getScriptTimeZone() || 'Asia/Taipei', 'yyyy-MM-dd');
+}
+
+function adminDirectoryFromCustomers_(customers) {
+  const admins = {};
+  Object.keys(customers || {}).forEach(function(key) {
+    if (key.indexOf(ADMIN_PREFIX) !== 0 || key === ADMIN_LOGIN_LOG_KEY) return;
+    const id = key.slice(ADMIN_PREFIX.length);
+    const record = customers[key] || {};
+    let email = '';
+    try { email = String(record.records && record.records[0] && record.records[0].email || ''); } catch (err) {}
+    admins[id] = { name: String(record.name || id), pin: '', pinConfigured: Boolean(cleanPin_(record.notes)), email: email };
+  });
+  return admins;
+}
+
+function sanitizeSystemCustomer_(key, record) {
+  if (key === ADMIN_LOGIN_LOG_KEY || key === FRONTDESK_LOGIN_LOG_KEY || key.indexOf(ADMIN_PREFIX) === 0) return null;
+  const safe = {
+    name: String(record && record.name || ''),
+    notes: String(record && record.notes || ''),
+    records: Array.isArray(record && record.records) ? record.records : []
+  };
+  if (key.indexOf(THERAPIST_PROFILE_PREFIX) === 0) {
+    try {
+      const profile = JSON.parse(safe.notes || '{}');
+      delete profile.pin;
+      safe.notes = JSON.stringify(profile);
+    } catch (err) {
+      safe.notes = '{}';
+    }
+  }
+  return safe;
+}
+
+function sanitizeGatewayDb_(full) {
+  const safe = {
+    therapists: {},
+    schedules: full.schedules || {},
+    admins: adminDirectoryFromCustomers_(full.customers || {}),
+    appointments: full.appointments || {},
+    customers: {}
+  };
+  Object.keys(full.therapists || {}).forEach(function(id) {
+    const therapist = full.therapists[id] || {};
+    safe.therapists[id] = { name: String(therapist.name || ''), pin: '', pinConfigured: Boolean(cleanPin_(therapist.pin)) };
+  });
+  Object.keys(full.customers || {}).forEach(function(key) {
+    const record = full.customers[key] || {};
+    if (key.indexOf('SYS_') === 0) {
+      const systemRecord = sanitizeSystemCustomer_(key, record);
+      if (systemRecord) safe.customers[key] = systemRecord;
+    } else {
+      safe.customers[key] = {
+        name: String(record.name || ''),
+        notes: String(record.notes || ''),
+        records: Array.isArray(record.records) ? record.records : []
+      };
+    }
+  });
+  return safe;
+}
+
+function filterCustomersForAppointments_(customers, appointments, includeSystem) {
+  const selected = {};
+  const appointmentIds = {};
+  const phones = {};
+  Object.keys(appointments || {}).forEach(function(id) {
+    appointmentIds[id] = true;
+    const phone = cleanCellId_(appointments[id] && appointments[id].phone);
+    if (phone) phones[phone] = true;
+  });
+  Object.keys(customers || {}).forEach(function(key) {
+    const record = customers[key] || {};
+    if (key.indexOf('SYS_') === 0) {
+      if (!includeSystem) return;
+      if (key.indexOf(APPOINTMENT_META_PREFIX) === 0 && !appointmentIds[key.slice(APPOINTMENT_META_PREFIX.length)]) return;
+      selected[key] = record;
+      return;
+    }
+    if (!phones[key]) return;
+    selected[key] = {
+      name: String(record.name || ''),
+      notes: String(record.notes || ''),
+      records: (record.records || []).filter(function(item) { return item && appointmentIds[String(item.id || '')]; })
+    };
+  });
+  return selected;
+}
+
+function gatewayDataForRole_(data, identity) {
+  const role = String(identity && identity.role || '');
+  const id = cleanCellId_(identity && identity.id);
+  if (role !== 'therapist') return data;
+  const appointments = {};
+  Object.keys(data.appointments || {}).forEach(function(key) {
+    if (cleanCellId_(data.appointments[key].therapistId) === id) appointments[key] = data.appointments[key];
+  });
+  const therapists = {};
+  if (data.therapists[id]) therapists[id] = data.therapists[id];
+  const schedules = {};
+  if (data.schedules[id]) schedules[id] = data.schedules[id];
+  const customers = filterCustomersForAppointments_(data.customers || {}, appointments, false);
+  const appointmentIds = {};
+  Object.keys(appointments).forEach(function(appointmentId) { appointmentIds[appointmentId] = true; });
+  Object.keys(data.customers || {}).forEach(function(key) {
+    const record = data.customers[key] || {};
+    if (key === THERAPIST_PROFILE_PREFIX + id) customers[key] = record;
+    if (key.indexOf(APPOINTMENT_META_PREFIX) === 0 && appointmentIds[key.slice(APPOINTMENT_META_PREFIX.length)]) {
+      customers[key] = record;
+    }
+    if (key.indexOf('SYS_APPROVAL_') === 0) {
+      try {
+        if (cleanCellId_(JSON.parse(String(record.notes || '{}')).therapistId) === id) customers[key] = record;
+      } catch (err) {}
+    }
+  });
+  return {
+    therapists: therapists,
+    schedules: schedules,
+    admins: {},
+    appointments: appointments,
+    customers: customers
+  };
+}
+
+function getGatewayFullData_(identity) {
+  const safe = sanitizeGatewayDb_(getAllData());
+  return {
+    success: true,
+    data: gatewayDataForRole_(safe, identity || {}),
+    meta: { partial: false, generatedAt: new Date().toISOString(), source: 'google-sheets' }
+  };
+}
+
+function getBootstrapCacheVersion_() {
+  return String(PropertiesService.getScriptProperties().getProperty(BOOTSTRAP_CACHE_VERSION_KEY) || '1');
+}
+
+function bumpBootstrapCacheVersion_() {
+  const properties = PropertiesService.getScriptProperties();
+  const next = Number(properties.getProperty(BOOTSTRAP_CACHE_VERSION_KEY) || 1) + 1;
+  properties.setProperty(BOOTSTRAP_CACHE_VERSION_KEY, String(next));
+}
+
+function getGatewayBootstrap_(identity) {
+  const role = String(identity && identity.role || '');
+  const id = cleanCellId_(identity && identity.id);
+  const date = normalizeDate_(identity && identity.date || new Date());
+  const version = getBootstrapCacheVersion_();
+  const cacheKey = ['bootstrap-v3', version, role, id, date].join(':');
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    const parsed = JSON.parse(cached);
+    parsed.meta.cache = 'hit';
+    return parsed;
+  }
+
+  const safe = gatewayDataForRole_(sanitizeGatewayDb_(getAllData()), identity || {});
+  const from = addDaysDateKey_(date, -30);
+  const to = addDaysDateKey_(date, 30);
+  const appointments = {};
+  Object.keys(safe.appointments || {}).forEach(function(key) {
+    const appointment = safe.appointments[key] || {};
+    if (appointment.date >= from && appointment.date <= to) appointments[key] = appointment;
+  });
+  const schedules = {};
+  Object.keys(safe.schedules || {}).forEach(function(therapistId) {
+    const schedule = safe.schedules[therapistId] || {};
+    const window = {};
+    Object.keys(schedule).forEach(function(day) {
+      if (day >= addDaysDateKey_(date, -7) && day <= addDaysDateKey_(date, 7)) window[day] = schedule[day];
+    });
+    schedules[therapistId] = window;
+  });
+  const customers = filterCustomersForAppointments_(safe.customers || {}, appointments, role === 'admin');
+  if (role === 'therapist') {
+    const profileKey = THERAPIST_PROFILE_PREFIX + id;
+    if (safe.customers && safe.customers[profileKey]) customers[profileKey] = safe.customers[profileKey];
+    Object.keys(safe.customers || {}).forEach(function(key) {
+      if (key.indexOf('SYS_APPROVAL_') === 0) customers[key] = safe.customers[key];
+      if (key.indexOf(APPOINTMENT_META_PREFIX) === 0 && appointments[key.slice(APPOINTMENT_META_PREFIX.length)]) {
+        customers[key] = safe.customers[key];
+      }
+    });
+  }
+  const data = {
+    therapists: safe.therapists || {},
+    schedules: schedules,
+    admins: role === 'admin' ? safe.admins || {} : {},
+    appointments: appointments,
+    customers: customers
+  };
+  const response = {
+    success: true,
+    data: data,
+    meta: { partial: true, cache: 'miss', generatedAt: new Date().toISOString(), from: from, to: to, source: 'google-sheets' }
+  };
+  const serialized = JSON.stringify(response);
+  if (serialized.length < 90000) cache.put(cacheKey, serialized, BOOTSTRAP_CACHE_TTL_SECONDS);
+  return response;
+}
+
+function saveAdmin_(data) {
+  if (!data || !data.id) throw new Error('Missing admin id');
+  const key = ADMIN_PREFIX + cleanCellId_(data.id);
+  const existing = findSheetRow_(SHEET_CUSTOMERS, key) || [];
+  let records = [];
+  try { records = JSON.parse(existing[3] || '[]'); } catch (err) { records = []; }
+  const email = String(data.email || records[0] && records[0].email || '');
+  const pin = cleanPin_(data.pin || '') || cleanPin_(existing[2] || '');
+  if (!pin) throw new Error('Admin PIN is required');
+  saveCustomer({
+    phone: key,
+    name: String(data.name || existing[1] || data.id),
+    notes: sheetText_(pin),
+    records: [{ email: email }]
+  });
+}
+
+function verifyGatewayAction_(item) {
+  const action = String(item && item.action || '');
+  const data = item && item.data || {};
+  if (action === 'saveCustomer') {
+    const row = findSheetRow_(SHEET_CUSTOMERS, data.phone);
+    if (!row) return false;
+    return String(row[1] || '') === String(data.name || '') && String(row[2] || '') === String(data.notes || '');
+  }
+  if (action === 'deleteCustomer') return !findSheetRow_(SHEET_CUSTOMERS, data.phone);
+  if (action === 'addAppointment') {
+    const row = findSheetRow_(SHEET_APPOINTMENTS, data.appId || data.id);
+    return !!row && normalizeDate_(row[1]) === normalizeDate_(data.date) && cleanCellId_(row[3]) === cleanCellId_(data.therapistId);
+  }
+  if (action === 'deleteAppointment') return !findSheetRow_(SHEET_APPOINTMENTS, data.appId || data.id);
+  if (action === 'saveSchedule') {
+    const row = findSheetRow_(SHEET_SCHEDULES, data.id);
+    if (!row) return false;
+    let actual = {};
+    try { actual = JSON.parse(row[1] || '{}'); } catch (err) {}
+    return Object.keys(data.schedule || {}).every(function(day) { return String(actual[day] || '') === String(data.schedule[day] || ''); });
+  }
+  if (action === 'addTherapist' || action === 'updatePin') {
+    const row = findSheetRow_(SHEET_THERAPISTS, data.id);
+    return !!row && (!data.pin || pinMatches_(row[2], data.pin));
+  }
+  if (action === 'deleteTherapist') return !findSheetRow_(SHEET_THERAPISTS, data.id);
+  if (action === 'saveAdmin') {
+    const row = findSheetRow_(SHEET_CUSTOMERS, ADMIN_PREFIX + cleanCellId_(data.id));
+    return !!row && (!data.pin || pinMatches_(row[2], data.pin));
+  }
+  return action === 'repairTherapists' || action === 'sendEmailNotification';
+}
+
+function verifyGatewayActions_(actions) {
+  return (actions || []).every(function(item) {
+    if (item && item.action === 'batch') return verifyGatewayActions_(item.data && item.data.actions || []);
+    return verifyGatewayAction_(item);
+  });
 }
 
 function getApiSecret_() {

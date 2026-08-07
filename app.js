@@ -1,7 +1,7 @@
 "use strict";
 
 const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiTI5Z8c76YNlcPMYWyR17HGaU4QvzHJm32nWeCHsnaknVx/exec";
-const APP_VERSION = "MSOT2.7";
+const APP_VERSION = "MSOT3.0-fast-session";
 const CLOUD_READ_TIMEOUT_MS = 45000;
 const CLOUD_WRITE_TIMEOUT_MS = 45000;
 const LOGIN_CLOUD_TIMEOUT_MS = 18000;
@@ -11,6 +11,8 @@ const SYNC_META_KEY = `${STORAGE_KEY}-sync-meta`;
 const LOCAL_BACKUP_PREFIX = `${STORAGE_KEY}-backup`;
 const MAX_LOCAL_BACKUPS = 12;
 const LOCAL_TEST_MODE = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+const FAST_API_ENABLED = !LOCAL_TEST_MODE || new URLSearchParams(window.location.search).get("fastApi") === "1";
+const FAST_API_TIMEOUT_MS = 15000;
 
 const COURSE_CATALOG = {
   A60: { name: "A課程 60分", duration: 60, price: 1800, therapistCut: 1000 },
@@ -280,6 +282,10 @@ let syncMeta = loadSyncMeta();
 let loadedLocalDbFromStorage = false;
 let offlineReadOnlyMode = false;
 let loginInFlight = false;
+let fastApiSessionActive = false;
+let partialCloudData = false;
+let fullDataHydrationPromise = null;
+let gatewayWritesVerified = true;
 let db = seedDatabase();
 if (LOCAL_TEST_MODE && new URLSearchParams(window.location.search).get("fixture") === "1") applyLocalTestFixture(db);
 
@@ -319,7 +325,7 @@ function toDateKey(date) {
 function seedDatabase() {
   const base = {
     therapists: {},
-    admins: { admin: { name: "系統總管理員", pin: "admin123", email: "" } },
+    admins: { admin: { name: "系統總管理員", pin: "", email: "" } },
     schedules: {},
     appointments: {},
     customers: { SYS_DOOR_PWD: { name: "設定", notes: "", records: [] } }
@@ -349,7 +355,7 @@ function normalizeDb(data) {
   data.therapists ||= {};
   data.schedules ||= {};
   data.admins = {
-    admin: { name: "系統總管理員", pin: "admin123", email: "" },
+    admin: { name: "系統總管理員", pin: "", email: "" },
     ...(data.admins || {})
   };
   delete data.admins[ADMIN_LOGIN_LOG_KEY.replace("SYS_ADMIN_", "")];
@@ -533,6 +539,7 @@ function safeLocalStorageSet(key, value, options = {}) {
 }
 
 function persist(reason = "") {
+  if (partialCloudData || fastApiSessionActive) return;
   const next = JSON.stringify(db);
   const previous = localStorage.getItem(STORAGE_KEY);
   if (!suppressPersistBackup && previous && previous !== next) {
@@ -662,11 +669,112 @@ function normalizeCloudPayload(payload) {
   return normalizeDb(payload);
 }
 
+function clientMetric(name, value, extra = {}) {
+  const duration = Math.max(0, Math.round(Number(value) || 0));
+  if (!FAST_API_ENABLED || !name || !Number.isFinite(duration)) return;
+  const payload = JSON.stringify({ name, value: duration, version: APP_VERSION, path: location.pathname, ...extra });
+  try {
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon("/api/performance", new Blob([payload], { type: "application/json" }));
+      return;
+    }
+    fetch("/api/performance", { method: "POST", headers: { "Content-Type": "application/json" }, body: payload, keepalive: true }).catch(() => {});
+  } catch {}
+}
+
+async function fetchApiJson(url, options = {}, timeoutMs = FAST_API_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      credentials: "same-origin",
+      cache: "no-store",
+      ...options,
+      signal: controller.signal
+    });
+    let payload = null;
+    try { payload = await response.json(); } catch {}
+    return { response, payload };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function applyFastCloudData(payload) {
+  db = normalizeCloudPayload(payload?.data);
+  partialCloudData = payload?.meta?.partial !== false;
+  fastApiSessionActive = true;
+  loadedLocalDbFromStorage = false;
+  setOfflineReadOnlyMode(false);
+  const generatedAt = String(payload?.meta?.generatedAt || new Date().toISOString());
+  syncMeta = { pending: false, source: "session", lastSync: generatedAt, reason: "fast-api", updatedAt: generatedAt };
+  $("sysStatus").textContent = payload?.meta?.cache === "hit" ? "已連線快速資料（快取）" : "已連線快速資料";
+}
+
+async function refreshFastBootstrap(date = selectedOpsDate || todayKey()) {
+  const startedAt = performance.now();
+  const { response, payload } = await fetchApiJson(`/api/bootstrap?date=${encodeURIComponent(date)}`, {}, FAST_API_TIMEOUT_MS);
+  if (!response.ok || !payload?.success || !payload.data) throw new Error(payload?.error || `HTTP ${response.status}`);
+  applyFastCloudData(payload);
+  clientMetric("bootstrap_to_data", performance.now() - startedAt, { cache: String(payload.meta?.cache || "") });
+  return true;
+}
+
+async function tryFastApiLogin(id, pin) {
+  if (!FAST_API_ENABLED) return { available: false };
+  const startedAt = performance.now();
+  try {
+    const { response, payload } = await fetchApiJson("/api/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: String(id), pin: String(pin) })
+    }, FAST_API_TIMEOUT_MS);
+    if (response.status === 401) {
+      clientMetric("login_invalid", performance.now() - startedAt);
+      return { available: true, authenticated: false };
+    }
+    if (!response.ok || !payload?.success || !payload.identity) return { available: false };
+    await refreshFastBootstrap(selectedOpsDate || todayKey());
+    clientMetric("login_to_bootstrap", performance.now() - startedAt);
+    return { available: true, authenticated: true, identity: payload.identity };
+  } catch {
+    clientMetric("fast_api_unavailable", performance.now() - startedAt);
+    return { available: false };
+  }
+}
+
+async function hydrateFullData(options = {}) {
+  if (!fastApiSessionActive) return false;
+  if (fullDataHydrationPromise && !options.force) return fullDataHydrationPromise;
+  fullDataHydrationPromise = (async () => {
+    const startedAt = performance.now();
+    const { response, payload } = await fetchApiJson("/api/full-data", {}, CLOUD_READ_TIMEOUT_MS);
+    if (!response.ok || !payload?.success || !payload.data) throw new Error(payload?.error || `HTTP ${response.status}`);
+    db = normalizeCloudPayload(payload.data);
+    partialCloudData = false;
+    const generatedAt = String(payload?.meta?.generatedAt || new Date().toISOString());
+    syncMeta = { pending: false, source: "session", lastSync: generatedAt, reason: "full-data", updatedAt: generatedAt };
+    clientMetric("full_data_hydration", performance.now() - startedAt);
+    return true;
+  })().finally(() => { fullDataHydrationPromise = null; });
+  return fullDataHydrationPromise;
+}
+
 async function postCloud(action, data) {
   persist();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CLOUD_WRITE_TIMEOUT_MS);
   try {
+    if (fastApiSessionActive) {
+      const { response, payload } = await fetchApiJson("/api/cloud", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, data })
+      }, CLOUD_WRITE_TIMEOUT_MS);
+      if (!response.ok || !payload?.success) throw new Error(payload?.error || `HTTP ${response.status}`);
+      gatewayWritesVerified = gatewayWritesVerified && payload.verified === true;
+      return payload.verified === true;
+    }
     const res = await fetch(API_URL, {
       method: "POST",
       mode: "no-cors",
@@ -689,6 +797,7 @@ async function postCloud(action, data) {
 let cloudBatchSupportPromise = null;
 
 async function cloudSupportsBatch() {
+  if (fastApiSessionActive) return true;
   if (!cloudBatchSupportPromise) {
     cloudBatchSupportPromise = fetch(`${API_URL}?mode=capabilities&t=${Date.now()}`, { cache: "no-store" })
       .then((res) => res.ok ? res.json() : null)
@@ -779,6 +888,7 @@ async function saveCloudActions(actions, successMessage = "已儲存到雲端", 
   }
   showSnackbar("正在寫入雲端...");
   pendingBackupReason = successMessage;
+  gatewayWritesVerified = true;
   const results = [];
   if (actions.length > 1 && await cloudSupportsBatch()) {
     options.onProgress?.(1, 1, { action: "batch" });
@@ -795,6 +905,21 @@ async function saveCloudActions(actions, successMessage = "已儲存到雲端", 
     persist("雲端寫入尚未確認");
     showSnackbar("雲端寫入失敗；本頁保留修改，請稍後重試");
     return false;
+  }
+  if (fastApiSessionActive) {
+    if (!gatewayWritesVerified) {
+      showSnackbar("雲端尚未確認寫入；請稍後重試");
+      return false;
+    }
+    try {
+      if (partialCloudData) await refreshFastBootstrap(selectedOpsDate || todayKey());
+      else await hydrateFullData({ force: true });
+      showSnackbar(successMessage);
+      return true;
+    } catch {
+      showSnackbar("寫入已完成，但重新讀取資料失敗；請稍後重新整理");
+      return false;
+    }
   }
   const cloudDb = await readBackVerifiedCloud(actions, options.verifyCloud);
   if (!cloudDb) {
@@ -1997,6 +2122,28 @@ function renderAll() {
   refreshIcons();
 }
 
+function renderCurrentView(tab = activeTab) {
+  generateMonthData();
+  renderAppShellNavigation();
+  if (tab === "overview") {
+    renderOverview();
+    enhanceOverviewWorkflow();
+  } else if (tab === "dispatch") {
+    renderDispatch();
+    enhanceDispatchWorkflow();
+  } else if (tab === "customer") renderCustomers();
+  else if (tab === "personnel") renderPersonnel();
+  else if (tab === "report") {
+    renderReport();
+    enhanceReportExceptions();
+  } else if (tab === "system") renderSystem();
+  else if (tab === "portal") renderPortal();
+  renderTopToolbar();
+  restoreViewStateFromUrl();
+  hydrateResponsiveTables();
+  refreshIcons();
+}
+
 function focusDispatchTarget() {
   const panel = {
     query: "query",
@@ -2049,13 +2196,24 @@ async function refreshDashboardData() {
   });
   showSnackbar("正在重新讀取雲端資料...");
   try {
-    const synced = await tryCloudSync({ force: true });
-    if (!synced) {
-      showSnackbar("雲端資料讀取失敗，畫面維持原資料");
-    } else {
-      await writeCloudSyncMeta("重新同步資料");
-      renderAll();
+    if (fastApiSessionActive) {
+      if (partialCloudData) {
+        await refreshFastBootstrap(selectedOpsDate || todayKey());
+        renderCurrentView(activeTab);
+      } else {
+        await hydrateFullData({ force: true });
+        renderAll();
+      }
       showSnackbar("資料已從雲端更新");
+    } else {
+      const synced = await tryCloudSync({ force: true });
+      if (!synced) {
+        showSnackbar("雲端資料讀取失敗，畫面維持原資料");
+      } else {
+        await writeCloudSyncMeta("重新同步資料");
+        renderAll();
+        showSnackbar("資料已從雲端更新");
+      }
     }
   } catch {
     showSnackbar("現在暫時讀不到雲端，請稍後再試");
@@ -2088,13 +2246,22 @@ window.addEventListener("resize", () => {
   if (window.innerWidth <= 640) syncMobileBottomNav();
 });
 
-function switchTab(tab, options = {}) {
+async function switchTab(tab, options = {}) {
   if (tab === "schedule") {
     activePersonnelPanel = "schedule";
     tab = "personnel";
   }
   if (tab === "filter" || tab === "appointment") tab = "dispatch";
   if (tab === "appointmentDetail") tab = "dispatch";
+  if (partialCloudData && tab !== "overview" && tab !== "portal" && !options.skipHydrate) {
+    showSnackbar("正在載入完整資料...");
+    try {
+      await hydrateFullData();
+    } catch {
+      showSnackbar("完整資料暫時無法載入，畫面維持今日工作");
+      return;
+    }
+  }
   if (tab === "dispatch" && options.clearAppointment) activeAppointmentId = null;
   if (tab === "dispatch" && options.focus) {
     pendingDispatchFocus = options.focus;
@@ -2120,7 +2287,8 @@ function switchTab(tab, options = {}) {
   $("pageTitle").textContent = tabTitle(tab);
   hideSidebar();
   if ($("mainContent")) $("mainContent").scrollTop = 0;
-  renderAll();
+  if (options.progressive || partialCloudData) renderCurrentView(tab);
+  else renderAll();
   if (tab === "dispatch") focusDispatchTarget();
 }
 
@@ -4128,7 +4296,7 @@ function renderPersonnel() {
             <td><div class="font-black">${esc(t.nickname || t.name || "未填寫")}</div><div class="text-xs font-bold text-slate-500">${esc(t.name || "未填真實姓名")}</div></td>
             <td class="max-w-[220px] text-sm font-bold text-slate-600">${esc(therapistDisplayMeta(t) || "未填寫")}</td>
             <td class="max-w-[240px] truncate text-sm font-bold text-slate-600">${esc(t.specialties || "未填寫")}</td>
-            <td><span class="badge bg-slate-100 text-slate-700">${esc(cleanPin(t.pin))}</span></td>
+            <td><span class="badge bg-slate-100 text-slate-700">${t.pinConfigured || cleanPin(t.pin) ? "已設定" : "未設定"}</span></td>
             <td class="space-x-2"><button data-edit-therapist="${esc(id)}" class="btn-light px-3 py-1 text-xs">編輯</button><button data-delete-therapist="${esc(id)}" class="rounded-lg bg-rose-50 px-3 py-1 text-xs font-black text-rose-700">刪除人員</button></td>
           </tr>`).join("")}</tbody>
         </table>
@@ -4152,7 +4320,7 @@ function renderPersonnel() {
       <div class="admin-mobile-grid hidden p-4">
         ${adminMobileCardsHtml()}
       </div>
-      <div class="admin-desktop-table table-wrap rounded-none border-0"><table><thead><tr><th>帳號</th><th>姓名</th><th>密碼</th><th>Email</th><th>操作</th></tr></thead><tbody>${Object.entries(db.admins).map(([id, a]) => `<tr><td class="font-black">${esc(id)}</td><td>${esc(a.name)}</td><td><span class="badge bg-slate-100 text-slate-700">${esc(cleanPin(a.pin))}</span></td><td>${esc(a.email || "無")}</td><td class="space-x-2"><button data-edit-admin="${esc(id)}" class="btn-light px-3 py-1 text-xs">編輯</button>${id === "admin" ? `<span class="text-xs font-bold text-slate-400">預設不可刪</span>` : `<button data-delete-admin="${esc(id)}" class="rounded-lg bg-rose-50 px-3 py-1 text-xs font-black text-rose-700">刪除</button>`}</td></tr>`).join("")}</tbody></table></div>
+      <div class="admin-desktop-table table-wrap rounded-none border-0"><table><thead><tr><th>帳號</th><th>姓名</th><th>密碼</th><th>Email</th><th>操作</th></tr></thead><tbody>${Object.entries(db.admins).map(([id, a]) => `<tr><td class="font-black">${esc(id)}</td><td>${esc(a.name)}</td><td><span class="badge bg-slate-100 text-slate-700">${a.pinConfigured || cleanPin(a.pin) ? "已設定" : "未設定"}</span></td><td>${esc(a.email || "無")}</td><td class="space-x-2"><button data-edit-admin="${esc(id)}" class="btn-light px-3 py-1 text-xs">編輯</button>${id === "admin" ? `<span class="text-xs font-bold text-slate-400">預設不可刪</span>` : `<button data-delete-admin="${esc(id)}" class="rounded-lg bg-rose-50 px-3 py-1 text-xs font-black text-rose-700">刪除</button>`}</td></tr>`).join("")}</tbody></table></div>
     </div>`;
   section.innerHTML = `
     <div class="page-workbench-header">
@@ -4248,7 +4416,7 @@ function openTherapistEditor(id) {
     <form id="therapistEditForm" class="space-y-5">
       <div class="grid gap-4 md:grid-cols-2">
         <div><label class="label">編號 (登入帳號)</label><input name="id" class="input bg-slate-100" readonly value="${esc(id)}"></div>
-        <div><label class="label">密碼 PIN</label><input name="pin" class="input" inputmode="numeric" autocomplete="off" value="${esc(cleanPin(therapist.pin))}"><p class="mt-2 text-xs font-bold text-slate-500">PIN 會以文字保存，開頭 0 不會被移除。</p></div>
+        <div><label class="label">密碼 PIN</label><input name="pin" class="input" inputmode="numeric" autocomplete="new-password" placeholder="留空表示維持原 PIN"><p class="mt-2 text-xs font-bold text-slate-500">為保護帳密，系統不回傳原 PIN；只有輸入新值時才會更新。</p></div>
         ${therapistProfileFields(therapist)}
       </div>
       <div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">儲存修改</button></div>
@@ -4257,7 +4425,7 @@ function openTherapistEditor(id) {
   $("therapistEditForm").onsubmit = async (event) => {
     event.preventDefault();
     const data = collectTherapistProfile(event.currentTarget);
-    if (!data.pin) return showSnackbar("密碼 PIN 必填");
+    if (!data.pin && !therapist.pinConfigured && !cleanPin(therapist.pin)) return showSnackbar("尚未設定 PIN，請輸入新 PIN");
     setFormBusy(event.currentTarget, true);
     const saved = await saveTherapistProfile(data);
     setFormBusy(event.currentTarget, false);
@@ -4274,14 +4442,15 @@ async function saveAdminForm(form, { closeAfter = false } = {}) {
   data.name = String(data.name || "").trim();
   data.email = String(data.email || "").trim();
   data.pin = cleanPin(data.pin);
-  if (!data.id || !data.name || !data.pin) {
+  const existingAdmin = db.admins[data.id] || {};
+  if (!data.id || !data.name || (!data.pin && !existingAdmin.pinConfigured && !cleanPin(existingAdmin.pin))) {
     showSnackbar("管理員資料必填");
     return false;
   }
   setFormBusy(form, true);
   const snapshot = snapshotDatabase();
-  db.admins[data.id] = { name: data.name, pin: data.pin, email: data.email };
-  const saved = await saveCloudActions([{ action: "saveCustomer", data: { phone: `SYS_ADMIN_${data.id}`, name: data.name, notes: sheetText(data.pin), records: [{ email: data.email }] } }], "管理員權限已寫入雲端");
+  db.admins[data.id] = { name: data.name, pin: "", pinConfigured: Boolean(data.pin || existingAdmin.pinConfigured || cleanPin(existingAdmin.pin)), email: data.email };
+  const saved = await saveCloudActions([{ action: "saveAdmin", data: { id: data.id, name: data.name, pin: data.pin, email: data.email } }], "管理員權限已寫入雲端");
   setFormBusy(form, false);
   if (!saved) {
     restoreDatabase(snapshot, "管理員資料未獲雲端確認，已還原");
@@ -4303,7 +4472,7 @@ function openAdminCreator() {
 function openAdminEditor(id) {
   const admin = db.admins[id];
   if (!admin) return;
-  showModal(`<div class="modal max-w-lg"><h3 class="mb-5 border-b pb-4 text-xl font-black">編輯管理員權限</h3><form id="adminEditForm" class="space-y-4"><div><label class="label">帳號</label><input name="id" class="input bg-slate-100" readonly value="${esc(id)}"></div><div><label class="label">姓名</label><input name="name" class="input" value="${esc(admin.name || "")}"></div><div><label class="label">Email</label><input name="email" class="input" value="${esc(admin.email || "")}"></div><div><label class="label">密碼 PIN</label><input name="pin" class="input" inputmode="numeric" autocomplete="off" value="${esc(cleanPin(admin.pin))}"><p class="mt-2 text-xs font-bold text-slate-500">PIN 會以文字保存，開頭 0 不會被移除。</p></div><div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">儲存修改</button></div></form></div>`);
+  showModal(`<div class="modal max-w-lg"><h3 class="mb-5 border-b pb-4 text-xl font-black">編輯管理員權限</h3><form id="adminEditForm" class="space-y-4"><div><label class="label">帳號</label><input name="id" class="input bg-slate-100" readonly value="${esc(id)}"></div><div><label class="label">姓名</label><input name="name" class="input" value="${esc(admin.name || "")}"></div><div><label class="label">Email</label><input name="email" class="input" value="${esc(admin.email || "")}"></div><div><label class="label">密碼 PIN</label><input name="pin" class="input" inputmode="numeric" autocomplete="new-password" placeholder="留空表示維持原 PIN"><p class="mt-2 text-xs font-bold text-slate-500">為保護帳密，系統不回傳原 PIN；只有輸入新值時才會更新。</p></div><div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">儲存修改</button></div></form></div>`);
   $("adminEditForm").onsubmit = async (event) => {
     event.preventDefault();
     await saveAdminForm(event.currentTarget, { closeAfter: true });
@@ -4318,7 +4487,7 @@ function adminMobileCardsHtml() {
         <h4 class="mt-1 truncate text-lg font-black text-slate-900">${esc(a.name || "未填寫")}</h4>
         <p class="mt-0.5 truncate text-xs font-bold text-slate-500">${esc(a.email || "無 Email")}</p>
       </div>
-      <span class="badge bg-slate-100 text-slate-700">PIN ${esc(cleanPin(a.pin))}</span>
+      <span class="badge bg-slate-100 text-slate-700">PIN ${a.pinConfigured || cleanPin(a.pin) ? "已設定" : "未設定"}</span>
     </div>
     <div class="mt-4 grid ${id === "admin" ? "grid-cols-1" : "grid-cols-2"} gap-2">
       <button data-edit-admin="${esc(id)}" class="btn-light px-3 py-2 text-xs">編輯</button>
@@ -4335,7 +4504,7 @@ function staffMobileCardsHtml() {
         <h4 class="mt-1 truncate text-lg font-black text-slate-900">${esc(t.nickname || t.name || "未填寫")}</h4>
         <p class="mt-0.5 truncate text-xs font-bold text-slate-500">${esc(t.name || "未填真實姓名")}</p>
       </div>
-      <span class="badge bg-slate-100 text-slate-700">PIN ${esc(cleanPin(t.pin))}</span>
+      <span class="badge bg-slate-100 text-slate-700">PIN ${t.pinConfigured || cleanPin(t.pin) ? "已設定" : "未設定"}</span>
     </div>
     <div class="mt-4 grid gap-3 text-sm">
       <div>
@@ -4811,6 +4980,7 @@ function setOfflineReadOnlyMode(enabled) {
 
 async function handleLogin() {
   if (loginInFlight) return;
+  const loginStartedAt = performance.now();
   const id = $("adminId").value.trim();
   const pin = $("adminPin").value.trim();
   const err = $("loginErrorMsg");
@@ -4847,13 +5017,31 @@ async function handleLogin() {
   $("loginBtnText").textContent = "連線中...";
   $("loginLoader").classList.remove("hidden");
   try {
-    if (LOCAL_TEST_MODE) {
+    if (LOCAL_TEST_MODE && !FAST_API_ENABLED) {
       if (!finishLogin()) {
         err.textContent = "本地測試帳號或密碼錯誤。";
         err.classList.remove("hidden");
       } else {
         showSnackbar("本地測試模式：不會寫入正式雲端");
       }
+      return;
+    }
+    const fastLogin = await tryFastApiLogin(id, pin);
+    if (fastLogin.available) {
+      if (!fastLogin.authenticated) {
+        err.textContent = "帳號或密碼錯誤。";
+        err.classList.remove("hidden");
+        return;
+      }
+      const identity = fastLogin.identity || {};
+      currentUser = { id: String(identity.sub || id), name: String(identity.name || id), role: identity.role === "admin" ? "admin" : "therapist" };
+      const isAdmin = currentUser.role === "admin";
+      $("adminNav").classList.toggle("hidden", !isAdmin);
+      $("therapistNav").classList.toggle("hidden", isAdmin);
+      $("roleLabel").textContent = isAdmin ? "管理員" : "按摩師";
+      enterDashboard(isAdmin ? "overview" : "portal", { progressive: true });
+      requestAnimationFrame(() => clientMetric("login_to_first_view", performance.now() - loginStartedAt));
+      if (isAdmin) setTimeout(() => recordAdminLogin(currentUser.id), 0);
       return;
     }
     let synced = await tryCloudSync({ timeoutMs: LOGIN_CLOUD_TIMEOUT_MS });
@@ -4888,17 +5076,20 @@ async function handleLogin() {
   }
 }
 
-function enterDashboard(tab) {
+function enterDashboard(tab, options = {}) {
   $("loginView").classList.add("hidden");
   $("adminDashboard").classList.remove("hidden");
-  renderAll();
-  switchTab(tab);
+  switchTab(tab, { skipHydrate: true, progressive: Boolean(options.progressive) });
   clearInterval(liveTimer);
   liveTimer = setInterval(renderLiveStatus, 60000);
 }
 
 function logout() {
   currentUser = null;
+  if (fastApiSessionActive) fetch("/api/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
+  fastApiSessionActive = false;
+  partialCloudData = false;
+  fullDataHydrationPromise = null;
   setOfflineReadOnlyMode(false);
   syncMobileBottomNav();
   clearInterval(liveTimer);
@@ -4914,13 +5105,22 @@ function changeMonth(offset) {
   renderAll();
 }
 
-function selectOpsDate(dateKey) {
+async function selectOpsDate(dateKey) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey || "")) return;
   selectedOpsDate = dateKey;
   const date = new Date(`${dateKey}T00:00:00`);
   currentYear = date.getFullYear();
   currentMonth = date.getMonth();
   writeViewStateToUrl({ date: dateKey });
+  if (fastApiSessionActive && partialCloudData) {
+    try {
+      await refreshFastBootstrap(dateKey);
+      renderCurrentView("overview");
+    } catch {
+      showSnackbar("該日期資料暫時無法載入");
+    }
+    return;
+  }
   renderAll();
 }
 
@@ -5257,4 +5457,7 @@ window.switchTab = switchTab;
 window.logout = logout;
 
 bindEvents();
-renderAll();
+window.addEventListener("load", () => {
+  const navigation = performance.getEntriesByType?.("navigation")?.[0];
+  clientMetric("page_load", navigation?.loadEventEnd || performance.now());
+}, { once: true });
