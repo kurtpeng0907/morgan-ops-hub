@@ -20,6 +20,10 @@ const KNOWN_PRODUCTION_HOSTS = new Set([
 const VERCEL_PREVIEW_MODE = window.location.hostname.endsWith(".vercel.app") && !KNOWN_PRODUCTION_HOSTS.has(window.location.hostname);
 const FAST_API_ENABLED = URL_OPTIONS.get("fastApi") === "1" || (!LOCAL_TEST_MODE && !VERCEL_PREVIEW_MODE);
 const FAST_API_TIMEOUT_MS = 6000;
+// The server retries one cold Apps Script bootstrap after the warm-cache
+// attempt. This timeout must cover that retry; otherwise the client aborts
+// early and falls back to the legacy full-data download.
+const FAST_BOOTSTRAP_TIMEOUT_MS = 18000;
 
 const COURSE_CATALOG = {
   A60: { name: "A課程 60分", duration: 60, price: 1800, therapistCut: 1000 },
@@ -749,7 +753,7 @@ function applyFastCloudData(payload) {
 
 async function refreshFastBootstrap(date = selectedOpsDate || todayKey()) {
   const startedAt = performance.now();
-  const { response, payload } = await fetchApiJson(`/api/bootstrap?date=${encodeURIComponent(date)}`, {}, FAST_API_TIMEOUT_MS);
+  const { response, payload } = await fetchApiJson(`/api/bootstrap?date=${encodeURIComponent(date)}`, {}, FAST_BOOTSTRAP_TIMEOUT_MS);
   if (!response.ok || !payload?.success || !payload.data) throw new Error(payload?.error || `HTTP ${response.status}`);
   applyFastCloudData(payload);
   clientMetric("bootstrap_to_data", performance.now() - startedAt, { cache: String(payload.meta?.cache || "") });
