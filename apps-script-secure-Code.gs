@@ -34,6 +34,14 @@ const BOOTSTRAP_CACHE_TTL_SECONDS = 180;
 const LEGACY_RECORDS_MAX_CHARS = 45000;
 const SERVICE_RECORD_SCHEMA = 'service-record-v2';
 let ACTIVE_ROW_INDEXES_ = {};
+const DATA_CONTRACT_VERSION = 'morgan-v2.0';
+
+// LINE staff reminder configuration (store values in Script Properties).
+// Required: LINE_CHANNEL_ACCESS_TOKEN, LINE_STAFF_RECIPIENTS (comma-separated user/group/room IDs).
+// Optional: LINE_REMINDER_HOUR (default 09), LINE_REMINDER_LEAD_MINUTES (default 60).
+const LINE_PUSH_ENDPOINT = 'https://api.line.me/v2/bot/message/push';
+const LINE_REPLY_ENDPOINT = 'https://api.line.me/v2/bot/message/reply';
+const LINE_REMINDER_TIMEZONE = 'Asia/Taipei';
 
 function setup() {
   MailApp.getRemainingDailyQuota();
@@ -44,7 +52,7 @@ function doGet(e) {
   try {
     const mode = String(e && e.parameter && e.parameter.mode || '');
     if (mode === 'capabilities') {
-      return jsonOutput({ success: true, capabilities: { batch: true, clientSelection: true }, version: 'MSOT1.0' });
+      return jsonOutput({ success: true, capabilities: { batch: true, clientSelection: true }, version: DATA_CONTRACT_VERSION });
     }
     if (mode === 'clientSelection') {
       return jsonOutput(getClientSelectionData(e.parameter || {}));
@@ -66,6 +74,8 @@ function doPost(e) {
   let lockHeld = false;
   try {
     const params = JSON.parse((e.postData && e.postData.contents) || '{}');
+    // LINE webhook events do not use the app's normal action envelope.
+    if (Array.isArray(params.events)) return jsonOutput(handleLineWebhook_(params, e && e.parameter || {}));
     const action = String(params.action || '');
     const data = params.data || {};
     const actor = params.actor || {};
@@ -197,7 +207,9 @@ function executeAction_(action, data) {
 
 function getAllData() {
   initSheets();
-  const db = { therapists: {}, schedules: {}, admins: {}, appointments: {}, customers: {} };
+  // Legacy-admin payload. Keep this shape during migration so existing admin
+  // and frontdesk clients can read it without interruption.
+  const db = { schemaVersion: 'legacy-v1', therapists: {}, schedules: {}, admins: {}, appointments: {}, customers: {} };
 
   getSheetData(SHEET_THERAPISTS).forEach(row => {
     const id = cleanCellId_(row[0]);
@@ -340,20 +352,14 @@ function getClientSelectionData(params) {
     : String(params.therapists || '').split(',').map(s => s.trim()).filter(Boolean);
 
   const safe = {
+    schemaVersion: DATA_CONTRACT_VERSION,
+    dataScope: 'public-client-selection',
     therapists: {},
     schedules: {},
     appointments: {},
     customers: {},
     clientSelections: {}
   };
-
-  if (selection) {
-    safe.customers[CLIENT_SELECTION_PREFIX + selection.id] = {
-      name: '客選連結',
-      notes: JSON.stringify(selection),
-      records: []
-    };
-  }
 
   const allowed = new Set(therapistIds);
   const targetIds = allowed.size ? therapistIds : Object.keys(full.therapists);
@@ -798,6 +804,177 @@ function sendEmailNotification(data) {
       htmlBody: String(data.body || '')
     });
   });
+}
+
+/**
+ * Install the two staff-reminder schedules. Run this once manually from the
+ * Apps Script editor after adding the LINE_* Script Properties described above.
+ * The 15-minute check sends an upcoming reminder once per appointment; the
+ * morning trigger sends one concise overview of the current business day.
+ */
+function installLineReminderTriggers() {
+  const properties = PropertiesService.getScriptProperties();
+  if (!properties.getProperty('LINE_CHANNEL_ACCESS_TOKEN') || !getLineRecipients_().length) {
+    throw new Error('請先設定 LINE_CHANNEL_ACCESS_TOKEN 與 LINE_STAFF_RECIPIENTS Script Properties');
+  }
+  removeLineReminderTriggers_();
+  const hour = clampNumber_(properties.getProperty('LINE_REMINDER_HOUR'), 0, 23, 9);
+  ScriptApp.newTrigger('sendDailyLineStaffBrief_')
+    .timeBased()
+    .atHour(hour)
+    .nearMinute(0)
+    .everyDays(1)
+    .inTimezone(LINE_REMINDER_TIMEZONE)
+    .create();
+  ScriptApp.newTrigger('sendUpcomingLineAppointmentAlerts_')
+    .timeBased()
+    .everyMinutes(15)
+    .create();
+}
+
+function removeLineReminderTriggers_() {
+  ['sendDailyLineStaffBrief_', 'sendUpcomingLineAppointmentAlerts_'].forEach(handler => {
+    ScriptApp.getProjectTriggers().forEach(trigger => {
+      if (trigger.getHandlerFunction() === handler) ScriptApp.deleteTrigger(trigger);
+    });
+  });
+}
+
+// Safe manual test: sends the same summary that staff receive, without adding a trigger.
+function sendLineReminderNow() {
+  sendDailyLineStaffBrief_();
+}
+
+function sendDailyLineStaffBrief_() {
+  const now = new Date();
+  const date = Utilities.formatDate(now, LINE_REMINDER_TIMEZONE, 'yyyy-MM-dd');
+  const db = getAllData();
+  const appointments = appointmentsForDate_(db, date);
+  const text = buildDailyLineStaffBrief_(db, appointments, now);
+  pushLineToStaff_(text);
+}
+
+function sendUpcomingLineAppointmentAlerts_() {
+  const now = new Date();
+  const date = Utilities.formatDate(now, LINE_REMINDER_TIMEZONE, 'yyyy-MM-dd');
+  const leadMinutes = clampNumber_(PropertiesService.getScriptProperties().getProperty('LINE_REMINDER_LEAD_MINUTES'), 15, 180, 60);
+  const db = getAllData();
+  const appointments = appointmentsForDate_(db, date);
+  const sent = PropertiesService.getScriptProperties();
+  appointments.forEach(appt => {
+    if (appt.isCompleted || !appt.time) return;
+    const start = taipeiDateTime_(date, appt.time);
+    const minutesAway = Math.round((start.getTime() - now.getTime()) / 60000);
+    if (minutesAway < 0 || minutesAway > leadMinutes) return;
+    const dedupeKey = 'LINE_APPT_ALERT_' + date + '_' + appt.id;
+    if (sent.getProperty(dedupeKey)) return;
+    const therapist = getTherapistDisplayName_(db, appt.therapistId);
+    const message = '⏰ 即將開始\n' + appt.time + '（約 ' + minutesAway + ' 分鐘後）\n' +
+      (appt.customerName || '未填姓名') + '／' + therapist + '／' + (appt.service || '未填服務') + '／' + (appt.room || '未排房');
+    pushLineToStaff_(message);
+    sent.setProperty(dedupeKey, Utilities.formatDate(now, LINE_REMINDER_TIMEZONE, 'yyyy-MM-dd HH:mm'));
+  });
+}
+
+function appointmentsForDate_(db, date) {
+  return Object.keys(db.appointments || {})
+    .map(id => db.appointments[id])
+    .filter(appt => appt.date === date)
+    .sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')));
+}
+
+function buildDailyLineStaffBrief_(db, appointments, now) {
+  const today = Utilities.formatDate(now, LINE_REMINDER_TIMEZONE, 'M/d（E）');
+  const active = appointments.filter(appt => !appt.isCompleted);
+  const completed = appointments.length - active.length;
+  const next = active.filter(appt => taipeiDateTime_(appt.date, appt.time).getTime() >= now.getTime()).slice(0, 3);
+  const attention = active.filter(appt => !appt.customerName || !appt.therapistId || !appt.time || !appt.room);
+  const lines = ['☀️ 今日營運重點｜' + today, '預約 ' + appointments.length + ' 筆｜待服務 ' + active.length + ' 筆｜已完成 ' + completed + ' 筆'];
+  if (next.length) {
+    lines.push('', '接下來行程：');
+    next.forEach(appt => lines.push('• ' + appt.time + ' ' + (appt.customerName || '未填姓名') + '｜' + getTherapistDisplayName_(db, appt.therapistId) + '｜' + (appt.service || '未填服務') + '｜' + (appt.room || '未排房')));
+  } else {
+    lines.push('', '接下來行程：今日已無待服務預約');
+  }
+  if (attention.length) lines.push('', '⚠️ 待確認 ' + attention.length + ' 筆：缺少' + Array.from(new Set(attention.flatMap(appt => [!appt.customerName && '顧客', !appt.therapistId && '師傅', !appt.time && '時間', !appt.room && '房間'].filter(Boolean)))).join('、'));
+  return lines.join('\n');
+}
+
+function getTherapistDisplayName_(db, therapistId) {
+  const therapist = db.therapists && db.therapists[therapistId];
+  return therapist && therapist.name ? therapist.name : (therapistId || '未排師傅');
+}
+
+function taipeiDateTime_(date, time) {
+  const parts = String(time || '00:00').match(/^(\d{1,2}):(\d{2})$/);
+  if (!parts) return new Date('invalid');
+  // Convert a Taiwan wall-clock date/time into an absolute moment without
+  // relying on the Apps Script project's default timezone.
+  return new Date(date + 'T' + String(parts[1]).padStart(2, '0') + ':' + parts[2] + ':00+08:00');
+}
+
+function getLineRecipients_() {
+  return String(PropertiesService.getScriptProperties().getProperty('LINE_STAFF_RECIPIENTS') || '')
+    .split(',').map(value => value.trim()).filter(Boolean);
+}
+
+// Optional self-service recipient linking. Set a long random
+// LINE_STAFF_LINK_CODE Script Property, then have a staff member message that
+// exact code to the official account. Their user/group ID is appended safely.
+function handleLineWebhook_(payload, query) {
+  const properties = PropertiesService.getScriptProperties();
+  const expectedProxySecret = String(properties.getProperty('LINE_WEBHOOK_PROXY_SECRET') || '').trim();
+  if (!expectedProxySecret || String(query && query.proxySecret || '') !== expectedProxySecret) {
+    return { success: false, error: 'unauthorized webhook proxy' };
+  }
+  const expectedCode = String(properties.getProperty('LINE_STAFF_LINK_CODE') || '').trim();
+  if (!expectedCode) return { success: true, ignored: true };
+  (payload.events || []).forEach(event => {
+    const message = event && event.message;
+    const source = event && event.source || {};
+    const recipientId = String(source.groupId || source.roomId || source.userId || '').trim();
+    if (!message || message.type !== 'text' || String(message.text || '').trim() !== expectedCode || !recipientId) return;
+    const current = getLineRecipients_();
+    if (!current.includes(recipientId)) {
+      current.push(recipientId);
+      properties.setProperty('LINE_STAFF_RECIPIENTS', current.join(','));
+    }
+    if (event.replyToken) replyLine_(event.replyToken, '✅ 已加入 Morgan 小編營運提醒。');
+  });
+  return { success: true };
+}
+
+function pushLineToStaff_(text) {
+  const token = String(PropertiesService.getScriptProperties().getProperty('LINE_CHANNEL_ACCESS_TOKEN') || '').trim();
+  const recipients = getLineRecipients_();
+  if (!token || !recipients.length) throw new Error('LINE 尚未完成設定：缺少 token 或收件者 ID');
+  recipients.forEach(to => {
+    const response = UrlFetchApp.fetch(LINE_PUSH_ENDPOINT, {
+      method: 'post', contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + token },
+      payload: JSON.stringify({ to: to, messages: [{ type: 'text', text: String(text).slice(0, 5000) }] }),
+      muteHttpExceptions: true
+    });
+    if (response.getResponseCode() < 200 || response.getResponseCode() >= 300) {
+      throw new Error('LINE 推播失敗 (' + response.getResponseCode() + '): ' + response.getContentText());
+    }
+  });
+}
+
+function replyLine_(replyToken, text) {
+  const token = String(PropertiesService.getScriptProperties().getProperty('LINE_CHANNEL_ACCESS_TOKEN') || '').trim();
+  if (!token) return;
+  UrlFetchApp.fetch(LINE_REPLY_ENDPOINT, {
+    method: 'post', contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + token },
+    payload: JSON.stringify({ replyToken: replyToken, messages: [{ type: 'text', text: text }] }),
+    muteHttpExceptions: true
+  });
+}
+
+function clampNumber_(value, min, max, fallback) {
+  const number = Number(value);
+  return isFinite(number) ? Math.max(min, Math.min(max, Math.round(number))) : fallback;
 }
 
 function jsonOutput(payload) {
