@@ -1,6 +1,7 @@
 "use strict";
 
 (function patchFinanceAccounting() {
+  if (typeof renderReport !== "function" || typeof exportReportCSV !== "function") return;
   let activeInactiveBand = "all";
   const grossAmount = (appt) => Number(appt.price || 0);
   const remittanceDueAmount = (appt) => remittanceDueFor(appt);
