@@ -7,10 +7,10 @@ const { verifySession } = require("./_lib/session");
 const ALLOWED_ACTIONS = new Set([
   "batch", "saveSchedule", "addTherapist", "updatePin", "deleteTherapist",
   "addAppointment", "deleteAppointment", "saveCustomer", "deleteCustomer",
-  "repairTherapists", "sendEmailNotification", "saveAdmin"
+  "repairTherapists", "sendEmailNotification", "saveAdmin", "saveServiceRecord", "backfillServiceRecords"
 ]);
 
-const THERAPIST_ACTIONS = new Set(["batch", "saveSchedule", "addAppointment", "saveCustomer"]);
+const THERAPIST_ACTIONS = new Set(["batch", "saveSchedule", "addAppointment", "saveCustomer", "saveServiceRecord"]);
 const APPROVAL_PREFIX = "SYS_APPROVAL_";
 const APPOINTMENT_META_PREFIX = "SYS_APPT_META_";
 
@@ -31,6 +31,7 @@ function therapistOwnsWrite(session, action, data) {
     const itemData = item.data || {};
     if (item.action === "saveSchedule") return String(itemData.id || "") === actorId;
     if (item.action === "addAppointment") return String(itemData.therapistId || "") === actorId;
+    if (item.action === "saveServiceRecord") return String(itemData.therapistId || itemData.therapist_id || "") === actorId;
     if (item.action !== "saveCustomer") return false;
     const key = String(itemData.phone || "");
     if (key.startsWith(APPROVAL_PREFIX)) {
@@ -53,21 +54,25 @@ module.exports = async function handler(req, res) {
   try {
     const body = readJson(req);
     const action = String(body.action || "");
+    const mutationId = String(body.mutationId || "").trim();
     if (!ALLOWED_ACTIONS.has(action)) return sendJson(res, 400, { success: false, error: "unsupported_action", requestId: id });
     if (session.role !== "admin" && !therapistOwnsWrite(session, action, body.data || {})) {
       return sendJson(res, 403, { success: false, error: "forbidden", requestId: id });
     }
     const { payload, upstreamMs } = await callAppsScript(action, body.data || {}, {
-      timeoutMs: 45000,
-      actor: { id: session.sub, role: session.role }
+      timeoutMs: 15000,
+      actor: { id: session.sub, role: session.role },
+      mutationId
     });
-    const response = { success: true, verified: payload.verified === true, result: payload.result || null, requestId: id };
+    const response = { success: true, verified: payload.verified === true, mutationId: payload.mutationId || mutationId, changedEntities: payload.changedEntities || [], cacheVersion: payload.cacheVersion || null, result: payload.result || null, requestId: id };
     const bytes = Buffer.byteLength(JSON.stringify(response));
     logRequest({ id, route: "/api/cloud", status: 200, startedAt, upstreamMs, bytes });
     return sendJson(res, 200, response, { "Server-Timing": `apps-script;dur=${upstreamMs}` });
   } catch (error) {
-    logRequest({ id, route: "/api/cloud", status: 502, startedAt, error: error.message });
-    return sendJson(res, 502, { success: false, error: "cloud_write_failed", requestId: id });
+    const busy = error.code === "busy" || /busy|資料庫忙碌/.test(error.message);
+    const status = busy ? 409 : 502;
+    logRequest({ id, route: "/api/cloud", status, startedAt, error: error.message });
+    return sendJson(res, status, { success: false, error: busy ? "busy" : "cloud_write_failed", retryable: busy, mutationId, requestId: id });
   }
 };
 

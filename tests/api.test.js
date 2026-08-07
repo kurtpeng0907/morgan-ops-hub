@@ -10,6 +10,7 @@ process.env.MORGAN_APPS_SCRIPT_URL = "https://example.test/apps-script";
 const sessionHandler = require("../api/session");
 const bootstrapHandler = require("../api/bootstrap");
 const cloudHandler = require("../api/cloud");
+const customerRecordsHandler = require("../api/customer-records");
 const { therapistOwnsWrite } = cloudHandler;
 const { createSession, verifySession } = require("../api/_lib/session");
 
@@ -117,4 +118,47 @@ test("therapist report batch permits only its own appointment and related record
   assert.equal(therapistOwnsWrite(session, "batch", allowed), true);
   allowed.actions[1].data.therapistId = "003";
   assert.equal(therapistOwnsWrite(session, "batch", allowed), false);
+});
+
+test("therapist service records must belong to the signed therapist", () => {
+  const session = { sub: "002", role: "therapist" };
+  assert.equal(therapistOwnsWrite(session, "saveServiceRecord", { record_id: "A1", customer_key_legacy: "0912", therapistId: "002" }), true);
+  assert.equal(therapistOwnsWrite(session, "saveServiceRecord", { record_id: "A1", customer_key_legacy: "0912", therapistId: "003" }), false);
+});
+
+test("cloud writes forward mutation IDs and return targeted verification", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (_url, options) => {
+    const request = JSON.parse(options.body);
+    assert.equal(request.mutationId, "MUT-001");
+    assert.deepEqual(request.actor, { id: "admin", role: "admin" });
+    return new Response(JSON.stringify({ success: true, verified: true, mutationId: "MUT-001", changedEntities: [{ action: "saveCustomer", id: "0912" }], cacheVersion: "8" }), { status: 200 });
+  };
+  try {
+    const session = createSession({ id: "admin", name: "管理員", role: "admin" });
+    const req = { method: "POST", headers: { cookie: `morgan_session=${encodeURIComponent(session.token)}` }, body: { action: "saveCustomer", data: { phone: "0912" }, mutationId: "MUT-001" } };
+    const res = responseMock();
+    await cloudHandler(req, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.verified, true);
+    assert.equal(res.body.mutationId, "MUT-001");
+    assert.equal(res.body.changedEntities.length, 1);
+  } finally { global.fetch = originalFetch; }
+});
+
+test("customer record pagination requires a signed session and preserves leading-zero identity", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (_url, options) => {
+    const request = JSON.parse(options.body);
+    assert.deepEqual(request.data, { customerKey: "0912", cursor: 0, limit: 50, id: "002", role: "therapist" });
+    return new Response(JSON.stringify({ success: true, records: [{ id: "A1", therapistId: "002" }], nextCursor: null, total: 1 }), { status: 200 });
+  };
+  try {
+    const session = createSession({ id: "002", name: "測試師傅", role: "therapist" });
+    const req = { method: "GET", headers: { cookie: `morgan_session=${encodeURIComponent(session.token)}` }, query: { customerKey: "0912", cursor: "0", limit: "50" } };
+    const res = responseMock();
+    await customerRecordsHandler(req, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.records[0].therapistId, "002");
+  } finally { global.fetch = originalFetch; }
 });

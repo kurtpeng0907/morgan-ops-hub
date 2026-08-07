@@ -1,10 +1,10 @@
 "use strict";
 
 const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiTI5Z8c76YNlcPMYWyR17HGaU4QvzHJm32nWeCHsnaknVx/exec";
-const APP_VERSION = "MSOT3.0.1-preview-login";
-const CLOUD_READ_TIMEOUT_MS = 45000;
-const CLOUD_WRITE_TIMEOUT_MS = 45000;
-const LOGIN_CLOUD_TIMEOUT_MS = 18000;
+const APP_VERSION = "MSOT3.1-service-records";
+const CLOUD_READ_TIMEOUT_MS = 20000;
+const CLOUD_WRITE_TIMEOUT_MS = 15000;
+const LOGIN_CLOUD_TIMEOUT_MS = 12000;
 const TRUSTED_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const STORAGE_KEY = "morgan-ops-hub-v2";
 const SYNC_META_KEY = `${STORAGE_KEY}-sync-meta`;
@@ -19,7 +19,7 @@ const KNOWN_PRODUCTION_HOSTS = new Set([
 ]);
 const VERCEL_PREVIEW_MODE = window.location.hostname.endsWith(".vercel.app") && !KNOWN_PRODUCTION_HOSTS.has(window.location.hostname);
 const FAST_API_ENABLED = URL_OPTIONS.get("fastApi") === "1" || (!LOCAL_TEST_MODE && !VERCEL_PREVIEW_MODE);
-const FAST_API_TIMEOUT_MS = 5000;
+const FAST_API_TIMEOUT_MS = 6000;
 
 const COURSE_CATALOG = {
   A60: { name: "A課程 60分", duration: 60, price: 1800, therapistCut: 1000 },
@@ -689,6 +689,35 @@ function clientMetric(name, value, extra = {}) {
   } catch {}
 }
 
+function cryptoRandomId() {
+  try { return crypto.randomUUID().replace(/-/g, "").slice(0, 12); } catch { return Math.random().toString(36).slice(2, 14); }
+}
+
+async function confirmMutationStatus(mutationId) {
+  for (const delay of [1000, 3000]) {
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    try {
+      const { response, payload } = await fetchApiJson(`/api/mutation-status?mutationId=${encodeURIComponent(mutationId)}`, {}, 6000);
+      if (response.ok && payload?.found && payload.status === "verified") return true;
+    } catch {}
+  }
+  return false;
+}
+
+async function loadCustomerRecords(customerKey, options = {}) {
+  if (!fastApiSessionActive || !customerKey) return db.customers[customerKey]?.records || [];
+  const records = [];
+  let cursor = 0;
+  do {
+    const { response, payload } = await fetchApiJson(`/api/customer-records?customerKey=${encodeURIComponent(customerKey)}&cursor=${cursor}&limit=50`, {}, 12000);
+    if (!response.ok || !payload?.success) throw new Error(payload?.error || "customer_records_unavailable");
+    records.push(...(payload.records || []));
+    cursor = payload.nextCursor;
+  } while (options.all && cursor !== null && records.length < 5000);
+  if (db.customers[customerKey]) db.customers[customerKey].records = records;
+  return records;
+}
+
 async function fetchApiJson(url, options = {}, timeoutMs = FAST_API_TIMEOUT_MS) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -773,12 +802,17 @@ async function postCloud(action, data) {
   const timeout = setTimeout(() => controller.abort(), CLOUD_WRITE_TIMEOUT_MS);
   try {
     if (fastApiSessionActive) {
+      const mutationId = `MUT-${Date.now().toString(36)}-${cryptoRandomId()}`;
       const { response, payload } = await fetchApiJson("/api/cloud", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, data })
+        body: JSON.stringify({ action, data, mutationId })
       }, CLOUD_WRITE_TIMEOUT_MS);
-      if (!response.ok || !payload?.success) throw new Error(payload?.error || `HTTP ${response.status}`);
+      if (!response.ok || !payload?.success) {
+        const confirmed = await confirmMutationStatus(mutationId);
+        if (confirmed) return true;
+        throw new Error(payload?.error || `HTTP ${response.status}`);
+      }
       gatewayWritesVerified = gatewayWritesVerified && payload.verified === true;
       return payload.verified === true;
     }
@@ -867,7 +901,7 @@ function cloudActionVerified(item, cloudDb) {
 }
 
 async function readBackVerifiedCloud(actions, customVerifier) {
-  const delays = [350, 700, 1200, 2000, 3000];
+  const delays = [1000, 3000];
   let latest = null;
   for (const delay of delays) {
     await new Promise((resolve) => setTimeout(resolve, delay));
@@ -918,15 +952,9 @@ async function saveCloudActions(actions, successMessage = "已儲存到雲端", 
       showSnackbar("雲端尚未確認寫入；請稍後重試");
       return false;
     }
-    try {
-      if (partialCloudData) await refreshFastBootstrap(selectedOpsDate || todayKey());
-      else await hydrateFullData({ force: true });
-      showSnackbar(successMessage);
-      return true;
-    } catch {
-      showSnackbar("寫入已完成，但重新讀取資料失敗；請稍後重新整理");
-      return false;
-    }
+    markSyncPending(false);
+    showSnackbar(successMessage);
+    return true;
   }
   const cloudDb = await readBackVerifiedCloud(actions, options.verifyCloud);
   if (!cloudDb) {
@@ -3853,6 +3881,12 @@ function openCustomerModal(phone = "", recordsOpen = false) {
     closeModal();
     openAppointmentDetailPage(btn.dataset.openAppt);
   });
+  if (recordsOpen && phone && fastApiSessionActive) {
+    loadCustomerRecords(phone, { all: true }).then(() => {
+      if ($("recordList")) $("recordList").innerHTML = renderRecordList(phone);
+      if ($("recordCountBadge")) $("recordCountBadge").textContent = customerConsumptionHistory(phone).length;
+    }).catch(() => showSnackbar("服務紀錄暫時無法載入"));
+  }
 }
 
 function customerConsumptionHistory(phone) {
@@ -3912,7 +3946,10 @@ async function addCustomerRecord(phone) {
   const record = { id: `REC-${Date.now().toString(36)}`, date: $("recordDate").value, therapistId, therapistName: therapistName(therapistId), service, collectedPrice: $("recordCollectedPrice").value.trim(), notes: $("recordNotes").value.trim() };
   db.customers[phone].records ||= [];
   db.customers[phone].records.push(record);
-  const saved = await saveCloudActions([{ action: "saveCustomer", data: { phone, ...db.customers[phone] } }], "服務紀錄已寫入雲端");
+  const saved = await saveCloudActions([
+    { action: "saveServiceRecord", data: { ...record, customer_key_legacy: phone } },
+    { action: "saveCustomer", data: { phone, ...db.customers[phone] } }
+  ], "服務紀錄已寫入雲端");
   if (!saved) {
     restoreDatabase(snapshot, "服務紀錄未獲雲端確認，已還原");
     return;
@@ -5056,11 +5093,6 @@ async function handleLogin() {
       $("sysStatus").textContent = "Preview 使用目前正式資料通道驗證";
     }
     let synced = await tryCloudSync({ timeoutMs: LOGIN_CLOUD_TIMEOUT_MS });
-    if (!synced && !loadedLocalDbFromStorage && !VERCEL_PREVIEW_MODE) {
-      $("loginBtnText").textContent = "重新連線中...";
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      synced = await tryCloudSync({ force: true, timeoutMs: LOGIN_CLOUD_TIMEOUT_MS });
-    }
     if (synced) {
       await ensureCloudSyncMeta("登入後讀取雲端資料");
       if (!finishLogin()) {

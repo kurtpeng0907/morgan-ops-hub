@@ -55,7 +55,10 @@ global.fetch = async function mockAwareFetch(url, options = {}) {
     return new Response(JSON.stringify({ success: true, data, meta: { partial: true, cache: "hit", generatedAt: new Date().toISOString() } }), { status: 200 });
   }
   if (request.action === "fullData") return new Response(JSON.stringify({ success: true, data: mockDb, meta: { partial: false, generatedAt: new Date().toISOString() } }), { status: 200 });
-  return new Response(JSON.stringify({ success: true, verified: true }), { status: 200 });
+  if (request.action === "customerRecords") return new Response(JSON.stringify({ success: true, records: mockDb.customers["TEST-001"].records || [], nextCursor: null, total: 0 }), { status: 200 });
+  if (request.action === "mutationStatus") return new Response(JSON.stringify({ success: true, found: true, status: "verified", result: { verified: true } }), { status: 200 });
+  if (request.action === "serviceRecordsAudit") return new Response(JSON.stringify({ success: true, legacyRecords: 0, modernRecords: 0, mismatchCount: 0 }), { status: 200 });
+  return new Response(JSON.stringify({ success: true, verified: true, mutationId: request.mutationId || "", changedEntities: [] }), { status: 200 });
 };
 
 const handlers = {
@@ -63,6 +66,9 @@ const handlers = {
   "/api/bootstrap": require("../api/bootstrap"),
   "/api/full-data": require("../api/full-data"),
   "/api/cloud": require("../api/cloud"),
+  "/api/customer-records": require("../api/customer-records"),
+  "/api/mutation-status": require("../api/mutation-status"),
+  "/api/service-records-audit": require("../api/service-records-audit"),
   "/api/logout": require("../api/logout"),
   "/api/performance": require("../api/performance")
 };

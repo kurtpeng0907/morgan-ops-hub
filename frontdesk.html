@@ -793,6 +793,15 @@
             } catch (e) { console.error("API 連線異常"); throw e; }
         }
 
+        async function loadFastCustomerRecords(customerKey) {
+            if (!fastFrontdeskSession || !customerKey) return;
+            const response = await fetch(`/api/customer-records?customerKey=${encodeURIComponent(customerKey)}&cursor=0&limit=100`, { credentials: 'same-origin', cache: 'no-store' });
+            const payload = await response.json();
+            if (!response.ok || !payload.success) throw new Error(payload.error || 'customer_records_unavailable');
+            if (!globalDB.customers[customerKey]) globalDB.customers[customerKey] = { name: '', notes: '', records: [] };
+            globalDB.customers[customerKey].records = payload.records || [];
+        }
+
         async function postToDatabase(payload) {
             if (fastFrontdeskSession) {
                 const res = await fetch('/api/cloud', {
@@ -1522,6 +1531,9 @@
             const serviceName = COURSE_CATALOG[appt.service] ? COURSE_CATALOG[appt.service].name : (appt.service || '一般預約');
             document.getElementById('trModalServiceInfo').innerText = `${appt.date} / ${appt.time} - ${serviceName}`;
             
+            if (fastFrontdeskSession) {
+                try { await loadFastCustomerRecords(appt.phone); } catch(e) {}
+            }
             const cust = globalDB.customers[appt.phone];
             const existingRecord = cust && cust.records ? cust.records.find(r => r.id === appId) : null;
             document.getElementById('trModalNotes').value = existingRecord ? existingRecord.notes : '';
@@ -1605,6 +1617,7 @@
                 const metaKey = appointmentMetaKey(appt.id);
                 const metaStore = { name: `預約狀態-${appt.id}`, notes: JSON.stringify(meta), records: [] };
                 await postActionsAndVerify([
+                    { action: 'saveServiceRecord', data: { ...cust.records[existingIdx > -1 ? existingIdx : cust.records.length - 1], customer_key_legacy: currentReportingPhone } },
                     { action: 'saveCustomer', data: { phone: currentReportingPhone, name: cust.name, notes: cust.notes, records: cust.records } },
                     { action: 'addAppointment', data: appointmentData },
                     { action: 'saveCustomer', data: { phone: metaKey, ...metaStore } }

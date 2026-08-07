@@ -15,7 +15,7 @@ function gatewaySecret() {
 async function callAppsScript(action, data, options = {}) {
   const startedAt = Date.now();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Number(options.timeoutMs || 45000));
+  const timeout = setTimeout(() => controller.abort(), Number(options.timeoutMs || 15000));
   try {
     const response = await fetch(appsScriptUrl(), {
       method: "POST",
@@ -25,7 +25,8 @@ async function callAppsScript(action, data, options = {}) {
         action,
         data,
         gatewayToken: gatewaySecret(),
-        actor: options.actor || undefined
+        actor: options.actor || undefined,
+        mutationId: options.mutationId || undefined
       }),
       signal: controller.signal,
       cache: "no-store"

@@ -1,11 +1,11 @@
 {
   "name": "morgan-ops-hub",
   "private": true,
-  "version": "3.0.0",
+  "version": "3.1.0",
   "scripts": {
     "build:css": "tailwindcss -i ./src/tailwind.css -o ./tailwind.generated.css --minify",
     "dev:mock": "node tests/mock-server.js",
-    "check": "node --check app.js && node --check api/session.js && node --check api/bootstrap.js && node --check api/full-data.js && node --check api/cloud.js && node --check api/logout.js && node --check api/performance.js",
+    "check": "node --check app.js && node --check api/session.js && node --check api/bootstrap.js && node --check api/full-data.js && node --check api/cloud.js && node --check api/customer-records.js && node --check api/mutation-status.js && node --check api/service-records-audit.js && node --check api/logout.js && node --check api/performance.js",
     "test": "node --test tests/*.test.js"
   },
   "devDependencies": {

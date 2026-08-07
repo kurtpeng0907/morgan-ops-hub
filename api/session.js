@@ -16,7 +16,7 @@ module.exports = async function handler(req, res) {
       logRequest({ id, route: "/api/session", status: 400, startedAt });
       return sendJson(res, 400, { success: false, error: "invalid_credentials_input", requestId: id });
     }
-    const { payload, upstreamMs } = await callAppsScript("authenticate", { id: accountId, pin }, { timeoutMs: 12000 });
+    const { payload, upstreamMs } = await callAppsScript("authenticate", { id: accountId, pin }, { timeoutMs: 6000 });
     if (!payload.authenticated || !payload.identity) {
       logRequest({ id, route: "/api/session", status: 401, startedAt, upstreamMs });
       return sendJson(res, 401, { success: false, error: "invalid_credentials", requestId: id });

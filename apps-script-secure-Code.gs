@@ -20,6 +20,8 @@ const SHEET_SCHEDULES = 'Schedules';
 const SHEET_ADMINS = 'Admins';
 const SHEET_APPOINTMENTS = 'Appointments';
 const SHEET_CUSTOMERS = 'Customers';
+const SHEET_SERVICE_RECORDS = 'ServiceRecords';
+const SHEET_MUTATIONS = 'Mutations';
 
 const CLIENT_SELECTION_PREFIX = 'SYS_CLIENT_SELECTION_';
 const THERAPIST_PROFILE_PREFIX = 'SYS_THERAPIST_PROFILE_';
@@ -28,7 +30,10 @@ const ADMIN_PREFIX = 'SYS_ADMIN_';
 const ADMIN_LOGIN_LOG_KEY = 'SYS_ADMIN_LOGIN_LOG';
 const FRONTDESK_LOGIN_LOG_KEY = 'SYS_FRONTDESK_LOGIN_LOG';
 const BOOTSTRAP_CACHE_VERSION_KEY = 'BOOTSTRAP_CACHE_VERSION';
-const BOOTSTRAP_CACHE_TTL_SECONDS = 45;
+const BOOTSTRAP_CACHE_TTL_SECONDS = 180;
+const LEGACY_RECORDS_MAX_CHARS = 45000;
+const SERVICE_RECORD_SCHEMA = 'service-record-v2';
+let ACTIVE_ROW_INDEXES_ = {};
 
 function setup() {
   MailApp.getRemainingDailyQuota();
@@ -65,10 +70,16 @@ function doPost(e) {
     const data = params.data || {};
     const actor = params.actor || {};
 
-    if (action === 'authenticate' || action === 'bootstrap' || action === 'fullData') {
+    if (action === 'authenticate' || action === 'bootstrap' || action === 'fullData' || action === 'customerRecords' || action === 'mutationStatus' || action === 'serviceRecordsAudit') {
       if (!isGatewayAuthorized_(params)) return jsonOutput({ success: false, error: 'unauthorized_gateway' });
       if (action === 'authenticate') return jsonOutput(authenticateGatewayUser_(data));
       if (action === 'bootstrap') return jsonOutput(getGatewayBootstrap_(data));
+      if (action === 'customerRecords') return jsonOutput(getGatewayCustomerRecords_(data));
+      if (action === 'mutationStatus') return jsonOutput(getMutationStatus_(data.mutationId));
+      if (action === 'serviceRecordsAudit') {
+        if (String(data.role || '') !== 'admin') return jsonOutput({ success: false, error: 'forbidden' });
+        return jsonOutput(auditServiceRecords_());
+      }
       return jsonOutput(getGatewayFullData_(data));
     }
 
@@ -83,23 +94,35 @@ function doPost(e) {
 
     if (action !== 'sendEmailNotification') {
       lock = LockService.getScriptLock();
-      if (!lock.tryLock(20000)) throw new Error('資料庫忙碌中，請稍後再試');
+      if (!lock.tryLock(5000)) return jsonOutput({ success: false, error: 'busy', retryable: true });
       lockHeld = true;
     }
 
+    const mutationId = cleanCellId_(params.mutationId || data.mutationId || '');
+    if (mutationId) {
+      const prior = getMutationStatus_(mutationId);
+      if (prior.found && prior.status === 'verified') return jsonOutput(prior.result);
+    }
+    ACTIVE_ROW_INDEXES_ = {};
+
     let actions = [];
+    let actionResult = null;
     if (action === 'batch') {
       actions = Array.isArray(data.actions) ? data.actions : [];
       if (!actions.length) throw new Error('Empty batch');
-      actions.forEach(item => executeAction_(String(item.action || ''), item.data || {}));
+      actionResult = actions.map(item => executeAction_(String(item.action || ''), item.data || {}));
     } else {
       actions = [{ action: action, data: data }];
-      executeAction_(action, data);
+      actionResult = executeAction_(action, data);
     }
 
     bumpBootstrapCacheVersion_();
     const gatewayRequest = isGatewayAuthorized_(params);
-    return jsonOutput({ success: true, verified: gatewayRequest ? verifyGatewayActions_(actions) : false });
+    const cacheVersion = getBootstrapCacheVersion_();
+    const changedEntities = actions.map(function(item) { return { action: item.action, id: actionEntityId_(item) }; });
+    const result = { success: true, verified: gatewayRequest ? verifyGatewayActions_(actions) : false, mutationId: mutationId, changedEntities: changedEntities, cacheVersion: cacheVersion, result: actionResult };
+    if (mutationId) saveMutationResult_(mutationId, result);
+    return jsonOutput(result);
   } catch (err) {
     return jsonOutput({ success: false, error: String(err) });
   } finally {
@@ -163,6 +186,10 @@ function executeAction_(action, data) {
     sendEmailNotification(data);
   } else if (action === 'saveAdmin') {
     saveAdmin_(data);
+  } else if (action === 'saveServiceRecord') {
+    return saveServiceRecord_(data);
+  } else if (action === 'backfillServiceRecords') {
+    return backfillServiceRecords_(data);
   } else {
     throw new Error('Unknown action: ' + action);
   }
@@ -233,6 +260,57 @@ function getAllData() {
     };
   });
 
+  mergeServiceRecordsIntoCustomers_(db.customers, getSheetData(SHEET_SERVICE_RECORDS));
+
+  return db;
+}
+
+function getCoreDataWithoutRecords_(includeSystemRecords) {
+  initSheets();
+  const db = { therapists: {}, schedules: {}, admins: {}, appointments: {}, customers: {} };
+  getSheetData(SHEET_THERAPISTS).forEach(function(row) {
+    const id = cleanCellId_(row[0]);
+    if (!id || id === '編號' || db.therapists[id]) return;
+    db.therapists[id] = { name: String(row[1] || ''), pin: cleanPin_(row[2]) };
+  });
+  getSheetData(SHEET_SCHEDULES).forEach(function(row) {
+    const id = cleanCellId_(row[0]);
+    if (!id) return;
+    try { db.schedules[id] = JSON.parse(row[1] || '{}'); } catch (err) { db.schedules[id] = {}; }
+  });
+  getSheetData(SHEET_APPOINTMENTS).forEach(function(row) {
+    const id = cleanCellId_(row[0]);
+    if (!id || id === '預約ID') return;
+    db.appointments[id] = {
+      id: id, date: normalizeDate_(row[1]), time: normalizeTime_(row[2]), therapistId: cleanCellId_(row[3]),
+      customerName: String(row[4] || ''), phone: cleanCellId_(row[5]), service: String(row[6] || ''),
+      duration: Number(row[7]) || 60, room: String(row[8] || 'R'), price: String(row[9] || ''),
+      collectedPrice: String(row[10] || ''), isCompleted: String(row[11]) === 'true', notes: String(row[12] || ''),
+      bookingStage: String(row[13] || ''), remittanceDue: String(row[14] || ''), remittancePaid: String(row[15]) === 'true', remittanceMethod: String(row[16] || '')
+    };
+  });
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_CUSTOMERS);
+  if (sheet && sheet.getLastRow()) {
+    const systemRecordRanges = [];
+    const systemKeysByRow = {};
+    sheet.getRange(1, 1, sheet.getLastRow(), 3).getValues().forEach(function(row, rowIndex) {
+      const key = cleanCellId_(row[0]);
+      if (key) {
+        db.customers[key] = { name: String(row[1] || ''), notes: String(row[2] || ''), records: [] };
+        if (includeSystemRecords && key.indexOf('SYS_') === 0) {
+          systemRecordRanges.push('D' + (rowIndex + 1));
+          systemKeysByRow[rowIndex + 1] = key;
+        }
+      }
+    });
+    if (systemRecordRanges.length) {
+      sheet.getRangeList(systemRecordRanges).getRanges().forEach(function(range) {
+        const rowIndex = range.getRow();
+        const key = systemKeysByRow[rowIndex];
+        try { db.customers[key].records = JSON.parse(range.getValue() || '[]'); } catch (err) {}
+      });
+    }
+  }
   return db;
 }
 
@@ -390,7 +468,11 @@ function saveAppointment(data) {
 
 function saveCustomer(data) {
   if (!data || !data.phone) throw new Error('Missing customer key');
-  const records = data.records ? JSON.stringify(data.records) : '[]';
+  const key = cleanCellId_(data.phone);
+  const incomingRecords = Array.isArray(data.records) ? data.records : [];
+  if (key.indexOf('SYS_') !== 0) incomingRecords.forEach(function(record) { saveServiceRecord_(Object.assign({}, record, { customer_key_legacy: key })); });
+  const serialized = JSON.stringify(incomingRecords);
+  const records = key.indexOf('SYS_') !== 0 && serialized.length > LEGACY_RECORDS_MAX_CHARS ? '[]' : serialized;
   updateRow(SHEET_CUSTOMERS, data.phone, [
     sheetText_(data.phone),
     String(data.name || ''),
@@ -469,15 +551,14 @@ function updateScheduleMerge(id, newScheduleObj) {
 function updateRow(sheetName, id, rowData) {
   initSheets();
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
-  const data = sheet.getDataRange().getValues();
   const normalizedId = cleanCellId_(id);
-  for (let i = 0; i < data.length; i++) {
-    if (cleanCellId_(data[i][0]) === normalizedId) {
-      sheet.getRange(i + 1, 1, 1, rowData.length).setValues([rowData]);
-      return;
-    }
+  const index = getRowIndex_(sheetName);
+  if (index[normalizedId]) {
+    sheet.getRange(index[normalizedId], 1, 1, rowData.length).setValues([rowData]);
+    return;
   }
   sheet.appendRow(rowData);
+  index[normalizedId] = sheet.getLastRow();
 }
 
 function deleteRow(sheetName, id) {
@@ -498,11 +579,202 @@ function getSheetData(sheetName) {
   return sheet ? sheet.getDataRange().getValues() : [];
 }
 
+function ensureSheetHeader_(sheetName, headers) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+  if (!sheet || sheet.getLastRow()) return;
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+}
+
+function getRowIndex_(sheetName) {
+  if (ACTIVE_ROW_INDEXES_[sheetName]) return ACTIVE_ROW_INDEXES_[sheetName];
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+  const index = {};
+  if (sheet && sheet.getLastRow()) {
+    sheet.getRange(1, 1, sheet.getLastRow(), 1).getValues().forEach(function(row, i) {
+      const key = cleanCellId_(row[0]);
+      if (key && !index[key]) index[key] = i + 1;
+    });
+  }
+  ACTIVE_ROW_INDEXES_[sheetName] = index;
+  return index;
+}
+
+function serviceRecordId_(data) {
+  return cleanCellId_(data && (data.record_id || data.recordId || data.id || data.appointment_id || data.appointmentId)) || Utilities.getUuid();
+}
+
+function serviceRecordRow_(data) {
+  const now = new Date().toISOString();
+  const recordId = serviceRecordId_(data);
+  return [
+    sheetText_(recordId),
+    sheetText_(data.appointment_id || data.appointmentId || data.id || recordId),
+    sheetText_(data.customer_key_legacy || data.customerKey || data.phone || ''),
+    sheetText_(data.customer_id || data.customerId || ''),
+    normalizeDate_(data.date || ''),
+    sheetText_(data.therapist_id || data.therapistId || ''),
+    String(data.therapist_name || data.therapistName || ''),
+    String(data.service || ''),
+    String(data.collected_price || data.collectedPrice || ''),
+    String(data.notes || ''),
+    String(data.created_at || data.createdAt || now),
+    now,
+    SERVICE_RECORD_SCHEMA
+  ];
+}
+
+function saveServiceRecord_(data) {
+  const key = cleanCellId_(data && (data.customer_key_legacy || data.customerKey || data.phone || ''));
+  if (!key || key.indexOf('SYS_') === 0) throw new Error('Invalid service record customer');
+  const normalized = Object.assign({}, data || {});
+  normalized.record_id = serviceRecordId_(normalized);
+  const existingRow = getRowIndex_(SHEET_SERVICE_RECORDS)[normalized.record_id];
+  if (existingRow && !normalized.created_at && !normalized.createdAt) {
+    normalized.created_at = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_SERVICE_RECORDS).getRange(existingRow, 11).getValue();
+  }
+  const row = serviceRecordRow_(normalized);
+  updateRow(SHEET_SERVICE_RECORDS, row[0], row);
+  return row[0];
+}
+
+function serviceRecordObject_(row) {
+  return {
+    id: cleanCellId_(row[0]), record_id: cleanCellId_(row[0]), appointment_id: cleanCellId_(row[1]),
+    customer_key_legacy: cleanCellId_(row[2]), customer_id: cleanCellId_(row[3]), date: normalizeDate_(row[4]),
+    therapistId: cleanCellId_(row[5]), therapistName: String(row[6] || ''), service: String(row[7] || ''),
+    collectedPrice: String(row[8] || ''), notes: String(row[9] || ''), created_at: String(row[10] || ''),
+    updated_at: String(row[11] || ''), schema_version: String(row[12] || SERVICE_RECORD_SCHEMA)
+  };
+}
+
+function mergeServiceRecordsIntoCustomers_(customers, rows) {
+  const latest = {};
+  (rows || []).forEach(function(row) {
+    const record = serviceRecordObject_(row);
+    if (!record.id || record.id === 'record_id' || !record.customer_key_legacy) return;
+    const key = record.customer_key_legacy + '\n' + record.id;
+    if (!latest[key] || String(latest[key].updated_at) <= String(record.updated_at)) latest[key] = record;
+  });
+  Object.keys(latest).forEach(function(composite) {
+    const record = latest[composite];
+    const customer = customers[record.customer_key_legacy] || (customers[record.customer_key_legacy] = { name: '', notes: '', records: [] });
+    customer.records = Array.isArray(customer.records) ? customer.records : [];
+    const index = customer.records.findIndex(function(item) { return cleanCellId_(item && item.id) === record.id; });
+    if (index >= 0) customer.records[index] = Object.assign({}, customer.records[index], record);
+    else customer.records.push(record);
+  });
+}
+
+function getGatewayCustomerRecords_(data) {
+  const customerKey = cleanCellId_(data && data.customerKey);
+  const role = String(data && data.role || '');
+  const actorId = cleanCellId_(data && data.id);
+  const limit = Math.max(1, Math.min(100, Number(data && data.limit || 50)));
+  const cursor = Math.max(0, Number(data && data.cursor || 0));
+  let records = getSheetData(SHEET_SERVICE_RECORDS).map(serviceRecordObject_).filter(function(record) {
+    if (!record.id || record.id === 'record_id') return false;
+    if (customerKey && record.customer_key_legacy !== customerKey) return false;
+    return role !== 'therapist' || record.therapistId === actorId;
+  });
+  records.sort(function(a, b) { return String(b.date || b.updated_at).localeCompare(String(a.date || a.updated_at)); });
+  return { success: true, records: records.slice(cursor, cursor + limit), nextCursor: cursor + limit < records.length ? cursor + limit : null, total: records.length };
+}
+
+function saveMutationResult_(mutationId, result) {
+  updateRow(SHEET_MUTATIONS, mutationId, [sheetText_(mutationId), result.verified ? 'verified' : 'failed', JSON.stringify(result), new Date().toISOString()]);
+}
+
+function getMutationStatus_(mutationId) {
+  const id = cleanCellId_(mutationId);
+  if (!id) return { success: true, found: false };
+  const row = findSheetRow_(SHEET_MUTATIONS, id);
+  if (!row) return { success: true, found: false, mutationId: id };
+  let result = null;
+  try { result = JSON.parse(row[2] || '{}'); } catch (err) {}
+  return { success: true, found: true, mutationId: id, status: String(row[1] || ''), result: result };
+}
+
+function actionEntityId_(item) {
+  const data = item && item.data || {};
+  return cleanCellId_(data.record_id || data.recordId || data.appId || data.id || data.phone || '');
+}
+
+function backfillServiceRecords_(data) {
+  const cursor = Math.max(0, Number(data && data.cursor || 0));
+  const limit = Math.max(1, Math.min(100, Number(data && data.limit || 100)));
+  const candidates = [];
+  getSheetData(SHEET_CUSTOMERS).forEach(function(row) {
+    const customerKey = cleanCellId_(row[0]);
+    if (!customerKey || customerKey.indexOf('SYS_') === 0) return;
+    let records = [];
+    try { records = JSON.parse(row[3] || '[]'); } catch (err) {}
+    (records || []).forEach(function(record) {
+      candidates.push(Object.assign({}, record, { customer_key_legacy: customerKey }));
+    });
+  });
+  const slice = candidates.slice(cursor, cursor + limit);
+  const customerKeys = {};
+  slice.forEach(function(record) {
+    saveServiceRecord_(record);
+    customerKeys[cleanCellId_(record.customer_key_legacy)] = true;
+  });
+  return {
+    processedCustomers: Object.keys(customerKeys).length,
+    processedRecords: slice.length,
+    totalRecords: candidates.length,
+    nextCursor: cursor + limit < candidates.length ? cursor + limit : null
+  };
+}
+
+function auditServiceRecords_() {
+  const legacy = {};
+  getSheetData(SHEET_CUSTOMERS).forEach(function(row) {
+    const key = cleanCellId_(row[0]);
+    if (!key || key.indexOf('SYS_') === 0) return;
+    let records = [];
+    try { records = JSON.parse(row[3] || '[]'); } catch (err) {}
+    legacy[key] = {};
+    (records || []).forEach(function(record) { if (record && record.id) legacy[key][cleanCellId_(record.id)] = comparableServiceRecord_(record); });
+  });
+  const modern = {};
+  getSheetData(SHEET_SERVICE_RECORDS).forEach(function(row) {
+    const record = serviceRecordObject_(row);
+    if (!record.id || record.id === 'record_id') return;
+    modern[record.customer_key_legacy] = modern[record.customer_key_legacy] || {};
+    modern[record.customer_key_legacy][record.id] = comparableServiceRecord_(record);
+  });
+  const keys = Array.from(new Set(Object.keys(legacy).concat(Object.keys(modern))));
+  const mismatches = [];
+  let legacyRecords = 0;
+  let modernRecords = 0;
+  keys.forEach(function(key) {
+    const oldMap = legacy[key] || {};
+    const newMap = modern[key] || {};
+    legacyRecords += Object.keys(oldMap).length;
+    modernRecords += Object.keys(newMap).length;
+    const ids = Array.from(new Set(Object.keys(oldMap).concat(Object.keys(newMap))));
+    ids.forEach(function(id) {
+      if (JSON.stringify(oldMap[id] || null) !== JSON.stringify(newMap[id] || null)) mismatches.push({ customerKey: key, recordId: id });
+    });
+  });
+  return { success: true, customers: keys.length, legacyRecords: legacyRecords, modernRecords: modernRecords, mismatchCount: mismatches.length, mismatches: mismatches.slice(0, 100), generatedAt: new Date().toISOString() };
+}
+
+function comparableServiceRecord_(record) {
+  return {
+    id: cleanCellId_(record && (record.id || record.record_id)), date: normalizeDate_(record && record.date || ''),
+    therapistId: cleanCellId_(record && (record.therapistId || record.therapist_id)), therapistName: String(record && (record.therapistName || record.therapist_name) || ''),
+    service: String(record && record.service || ''), collectedPrice: String(record && (record.collectedPrice || record.collected_price) || ''), notes: String(record && record.notes || '')
+  };
+}
+
 function initSheets() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  [SHEET_THERAPISTS, SHEET_SCHEDULES, SHEET_ADMINS, SHEET_APPOINTMENTS, SHEET_CUSTOMERS].forEach(name => {
+  [SHEET_THERAPISTS, SHEET_SCHEDULES, SHEET_ADMINS, SHEET_APPOINTMENTS, SHEET_CUSTOMERS, SHEET_SERVICE_RECORDS, SHEET_MUTATIONS].forEach(name => {
     if (!ss.getSheetByName(name)) ss.insertSheet(name);
   });
+  ensureSheetHeader_(SHEET_SERVICE_RECORDS, ['record_id','appointment_id','customer_key_legacy','customer_id','date','therapist_id','therapist_name','service','collected_price','notes','created_at','updated_at','schema_version']);
+  ensureSheetHeader_(SHEET_MUTATIONS, ['mutation_id','status','result_json','updated_at']);
 }
 
 function sendEmailNotification(data) {
@@ -716,7 +988,7 @@ function sanitizeGatewayDb_(full) {
       safe.customers[key] = {
         name: String(record.name || ''),
         notes: String(record.notes || ''),
-        records: Array.isArray(record.records) ? record.records : []
+        records: []
       };
     }
   });
@@ -787,7 +1059,7 @@ function gatewayDataForRole_(data, identity) {
 }
 
 function getGatewayFullData_(identity) {
-  const safe = sanitizeGatewayDb_(getAllData());
+  const safe = sanitizeGatewayDb_(getCoreDataWithoutRecords_(String(identity && identity.role || '') === 'admin'));
   return {
     success: true,
     data: gatewayDataForRole_(safe, identity || {}),
@@ -819,7 +1091,7 @@ function getGatewayBootstrap_(identity) {
     return parsed;
   }
 
-  const safe = gatewayDataForRole_(sanitizeGatewayDb_(getAllData()), identity || {});
+  const safe = gatewayDataForRole_(sanitizeGatewayDb_(getCoreDataWithoutRecords_()), identity || {});
   const from = addDaysDateKey_(date, -30);
   const to = addDaysDateKey_(date, 30);
   const appointments = {};
@@ -911,7 +1183,11 @@ function verifyGatewayAction_(item) {
     const row = findSheetRow_(SHEET_CUSTOMERS, ADMIN_PREFIX + cleanCellId_(data.id));
     return !!row && (!data.pin || pinMatches_(row[2], data.pin));
   }
-  return action === 'repairTherapists' || action === 'sendEmailNotification';
+  if (action === 'saveServiceRecord') {
+    const row = findSheetRow_(SHEET_SERVICE_RECORDS, serviceRecordId_(data));
+    return !!row && cleanCellId_(row[2]) === cleanCellId_(data.customer_key_legacy || data.customerKey || data.phone);
+  }
+  return action === 'repairTherapists' || action === 'sendEmailNotification' || action === 'backfillServiceRecords';
 }
 
 function verifyGatewayActions_(actions) {

@@ -15,7 +15,14 @@ module.exports = async function handler(req, res) {
   }
   const date = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query?.date || "")) ? String(req.query.date) : new Date().toISOString().slice(0, 10);
   try {
-    const { payload, upstreamMs } = await callAppsScript("bootstrap", { id: session.sub, role: session.role, date });
+    let upstream;
+    try {
+      upstream = await callAppsScript("bootstrap", { id: session.sub, role: session.role, date }, { timeoutMs: 4000 });
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 800 + Math.floor(Math.random() * 701)));
+      upstream = await callAppsScript("bootstrap", { id: session.sub, role: session.role, date }, { timeoutMs: 12000 });
+    }
+    const { payload, upstreamMs } = upstream;
     const response = { success: true, data: payload.data, meta: payload.meta || {}, requestId: id };
     const bytes = Buffer.byteLength(JSON.stringify(response));
     logRequest({ id, route: "/api/bootstrap", status: 200, startedAt, upstreamMs, bytes });
