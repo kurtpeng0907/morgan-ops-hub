@@ -297,6 +297,7 @@ let fastApiSessionActive = false;
 let sqlApiSessionActive = false;
 let partialCloudData = false;
 let fullDataHydrationPromise = null;
+let sqlReportAggregate = null;
 let gatewayWritesVerified = true;
 let db = seedDatabase();
 if (LOCAL_TEST_MODE && new URLSearchParams(window.location.search).get("fixture") === "1") applyLocalTestFixture(db);
@@ -841,6 +842,15 @@ async function loadSqlCustomers() {
     }
     cursor = String(payload.nextCursor || "");
   } while (cursor && loaded < 5000);
+  return true;
+}
+
+async function loadSqlReportAggregate(from, to) {
+  if (!sqlApiSessionActive) return false;
+  const params = new URLSearchParams({ from, to });
+  const { response, payload } = await fetchApiJson(`/api/reports?${params}`, {}, 12000);
+  if (!response.ok || !payload?.success) throw new Error(payload?.error || "reports_unavailable");
+  sqlReportAggregate = payload;
   return true;
 }
 
@@ -2364,7 +2374,8 @@ async function switchTab(tab, options = {}) {
         await Promise.all([
           loadSqlAppointmentRange(first, last),
           tab === "personnel" || tab === "dispatch" ? loadSqlScheduleRange(first, last) : Promise.resolve(false),
-          tab === "customer" ? loadSqlCustomers() : Promise.resolve(false)
+          tab === "customer" ? loadSqlCustomers() : Promise.resolve(false),
+          tab === "report" ? loadSqlReportAggregate(first, last) : Promise.resolve(false)
         ]);
       } else {
         await hydrateFullData();
@@ -4654,9 +4665,11 @@ function renderReport() {
   const start = reportFilterStart;
   const end = reportFilterEnd;
   const rows = Object.values(db.appointments).filter((a) => a.date >= start && a.date <= end).sort((a, b) => a.date === b.date ? sortByTime(a, b) : a.date.localeCompare(b.date));
-  const total = rows.reduce((s, a) => s + Number(a.price || 0), 0);
+  const aggregate = sqlReportAggregate?.from === start && sqlReportAggregate?.to === end ? sqlReportAggregate.overall : null;
+  const serviceCount = aggregate ? Number(aggregate.appointments || 0) : rows.length;
+  const total = aggregate ? Number(aggregate.booked_revenue || 0) : rows.reduce((s, a) => s + Number(a.price || 0), 0);
   const therapistCut = rows.reduce((s, a) => s + Number(COURSE_CATALOG[a.service]?.therapistCut || 0), 0);
-  const collected = rows.reduce((s, a) => s + Number(a.collectedPrice || 0), 0);
+  const collected = aggregate ? Number(aggregate.collected_revenue || 0) : rows.reduce((s, a) => s + Number(a.collectedPrice || 0), 0);
   const outstanding = Math.max(0, total - collected);
   const reportTabs = {
     revenue: { label: "營收明細", icon: "receipt-text" },
@@ -4724,7 +4737,7 @@ function renderReport() {
       <div class="workbench-actions"><div class="date-range-chip">${iconHtml("calendar-range")}<span>${esc(start)} 至 ${esc(end)}</span></div><button id="exportReportBtn" class="btn-teal">${iconHtml("download")}輸出</button></div>
     </div>
     <div class="report-summary-grid">
-      <div class="report-summary-card tone-slate"><span>${iconHtml("users")}</span><div><p>服務筆數</p><strong>${rows.length}</strong><small>${start === end ? "當日" : "所選區間"}</small></div></div>
+      <div class="report-summary-card tone-slate"><span>${iconHtml("users")}</span><div><p>服務筆數</p><strong>${serviceCount}</strong><small>${start === end ? "當日" : "所選區間"}</small></div></div>
       <div class="report-summary-card tone-rose"><span>${iconHtml("circle-dollar-sign")}</span><div><p>應收總額</p><strong>${money(total)}</strong><small>顧客支付總額</small></div></div>
       <div class="report-summary-card tone-teal"><span>${iconHtml("badge-check")}</span><div><p>已回帳</p><strong>${money(collected)}</strong><small>目前已登記</small></div></div>
       <div class="report-summary-card tone-amber"><span>${iconHtml("clock-3")}</span><div><p>未回帳</p><strong>${money(outstanding)}</strong><small>尚待追蹤</small></div></div>
@@ -4755,7 +4768,7 @@ function openReportFilterModal() {
     reportFilterEnd = data.end || todayKey();
     closeModal();
     if (sqlApiSessionActive) {
-      try { await loadSqlAppointmentRange(reportFilterStart, reportFilterEnd); }
+      try { await Promise.all([loadSqlAppointmentRange(reportFilterStart, reportFilterEnd), loadSqlReportAggregate(reportFilterStart, reportFilterEnd)]); }
       catch { return showSnackbar("該區間報表暫時無法載入"); }
     }
     renderReport();
@@ -5222,6 +5235,7 @@ function logout() {
   if (fastApiSessionActive) fetch("/api/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
   fastApiSessionActive = false;
   sqlApiSessionActive = false;
+  sqlReportAggregate = null;
   partialCloudData = false;
   fullDataHydrationPromise = null;
   setOfflineReadOnlyMode(false);
@@ -5335,7 +5349,7 @@ async function applyReportContext(start, end) {
   reportFilterEnd = end;
   syncReportUrl();
   if (sqlApiSessionActive) {
-    try { await loadSqlAppointmentRange(start, end); }
+    try { await Promise.all([loadSqlAppointmentRange(start, end), loadSqlReportAggregate(start, end)]); }
     catch { return showSnackbar("該區間報表暫時無法載入"); }
   }
   renderReport();

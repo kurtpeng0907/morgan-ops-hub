@@ -252,18 +252,33 @@ async function report(identity, fromValue, toValue) {
   const to = dateKey(toValue || fromValue);
   const role = identity.role === "admin" ? "admin" : "therapist";
   const actorId = String(identity.sub || identity.id || "");
-  const rows = await sql`
-    SELECT therapist_id, count(*)::int AS appointments,
-           count(*) FILTER (WHERE is_completed)::int AS completed,
-           coalesce(sum(price), 0)::text AS booked_revenue,
-           coalesce(sum(collected_price), 0)::text AS collected_revenue,
-           coalesce(sum(remittance_due), 0)::text AS remittance_due
-    FROM appointments
-    WHERE date BETWEEN ${from}::date AND ${to}::date
-      AND (${role} = 'admin' OR therapist_id = ${actorId})
-    GROUP BY therapist_id ORDER BY therapist_id
-  `;
-  return { from, to, rows: rows.map((row) => ({ ...row, therapistId: String(row.therapist_id), therapist_id: undefined })) };
+  const [overallRows, rows] = await sql.transaction([
+    sql`SELECT count(*)::int AS appointments,
+               count(*) FILTER (WHERE is_completed)::int AS completed,
+               count(DISTINCT NULLIF(customer_key_legacy, ''))::int AS unique_customers,
+               coalesce(sum(price), 0)::text AS booked_revenue,
+               coalesce(sum(collected_price), 0)::text AS collected_revenue,
+               coalesce(sum(remittance_due), 0)::text AS remittance_due
+        FROM appointments
+        WHERE date BETWEEN ${from}::date AND ${to}::date
+          AND (${role} = 'admin' OR therapist_id = ${actorId})`,
+    sql`SELECT therapist_id, count(*)::int AS appointments,
+               count(*) FILTER (WHERE is_completed)::int AS completed,
+               count(DISTINCT NULLIF(customer_key_legacy, ''))::int AS unique_customers,
+               coalesce(sum(price), 0)::text AS booked_revenue,
+               coalesce(sum(collected_price), 0)::text AS collected_revenue,
+               coalesce(sum(remittance_due), 0)::text AS remittance_due
+        FROM appointments
+        WHERE date BETWEEN ${from}::date AND ${to}::date
+          AND (${role} = 'admin' OR therapist_id = ${actorId})
+        GROUP BY therapist_id ORDER BY therapist_id`
+  ], { readOnly: true });
+  return {
+    from,
+    to,
+    overall: overallRows[0] || { appointments: 0, completed: 0, unique_customers: 0, booked_revenue: "0", collected_revenue: "0", remittance_due: "0" },
+    rows: rows.map((row) => ({ ...row, therapistId: String(row.therapist_id), therapist_id: undefined }))
+  };
 }
 
 async function mutationStatus(identity, mutationId) {
