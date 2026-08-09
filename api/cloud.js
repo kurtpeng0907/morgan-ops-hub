@@ -1,8 +1,10 @@
 "use strict";
 
 const { callAppsScript } = require("./_lib/apps-script");
+const { dataSourceMode } = require("./_lib/database");
 const { requestId, readJson, sendJson, logRequest, methodNotAllowed } = require("./_lib/http");
 const { verifySession } = require("./_lib/session");
+const sqlRepository = require("./_lib/sql-repository");
 
 const ALLOWED_ACTIONS = new Set([
   "batch", "saveSchedule", "addTherapist", "updatePin", "deleteTherapist",
@@ -49,15 +51,26 @@ module.exports = async function handler(req, res) {
   if (req.method !== "POST") return methodNotAllowed(res, ["POST"]);
   const id = requestId(req);
   const startedAt = Date.now();
+  let mutationId = "";
   const session = verifySession(req);
   if (!session) return sendJson(res, 401, { success: false, error: "unauthorized", requestId: id });
   try {
     const body = readJson(req);
     const action = String(body.action || "");
-    const mutationId = String(body.mutationId || "").trim();
+    mutationId = String(body.mutationId || "").trim();
     if (!ALLOWED_ACTIONS.has(action)) return sendJson(res, 400, { success: false, error: "unsupported_action", requestId: id });
     if (session.role !== "admin" && !therapistOwnsWrite(session, action, body.data || {})) {
       return sendJson(res, 403, { success: false, error: "forbidden", requestId: id });
+    }
+    if (mutationId.length < 6 || mutationId.length > 120) return sendJson(res, 400, { success: false, error: "invalid_mutation_id", requestId: id });
+    if (dataSourceMode() === "sql") {
+      const sqlStartedAt = Date.now();
+      const result = await sqlRepository.applyMutation(session, mutationId, action, body.data || {});
+      const sqlMs = Date.now() - sqlStartedAt;
+      const response = { ...result, requestId: id };
+      const bytes = Buffer.byteLength(JSON.stringify(response));
+      logRequest({ id, route: "/api/cloud", status: 200, startedAt, sqlMs, bytes });
+      return sendJson(res, 200, response, { "Server-Timing": `sql;dur=${sqlMs}` });
     }
     const { payload, upstreamMs } = await callAppsScript(action, body.data || {}, {
       timeoutMs: 15000,
@@ -70,9 +83,10 @@ module.exports = async function handler(req, res) {
     return sendJson(res, 200, response, { "Server-Timing": `apps-script;dur=${upstreamMs}` });
   } catch (error) {
     const busy = error.code === "busy" || /busy|資料庫忙碌/.test(error.message);
-    const status = busy ? 409 : 502;
+    const forbidden = error.code === "forbidden" || /forbidden/.test(error.message);
+    const status = forbidden ? 403 : (busy ? 409 : 502);
     logRequest({ id, route: "/api/cloud", status, startedAt, error: error.message });
-    return sendJson(res, status, { success: false, error: busy ? "busy" : "cloud_write_failed", retryable: busy, mutationId, requestId: id });
+    return sendJson(res, status, { success: false, error: forbidden ? "forbidden" : (busy ? "busy" : "cloud_write_failed"), retryable: busy, mutationId, requestId: id });
   }
 };
 

@@ -1,8 +1,10 @@
 "use strict";
 
 const { callAppsScript } = require("./_lib/apps-script");
+const { dataSourceMode } = require("./_lib/database");
 const { requestId, sendJson, logRequest, methodNotAllowed } = require("./_lib/http");
 const { verifySession } = require("./_lib/session");
+const sqlRepository = require("./_lib/sql-repository");
 
 module.exports = async function handler(req, res) {
   if (req.method !== "GET") return methodNotAllowed(res, ["GET"]);
@@ -15,6 +17,15 @@ module.exports = async function handler(req, res) {
   }
   const date = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query?.date || "")) ? String(req.query.date) : new Date().toISOString().slice(0, 10);
   try {
+    if (dataSourceMode() === "sql") {
+      const sqlStartedAt = Date.now();
+      const result = await sqlRepository.bootstrap(session, date);
+      const sqlMs = Date.now() - sqlStartedAt;
+      const response = { success: true, data: result.data, meta: result.meta, requestId: id };
+      const bytes = Buffer.byteLength(JSON.stringify(response));
+      logRequest({ id, route: "/api/bootstrap", status: 200, startedAt, sqlMs, bytes });
+      return sendJson(res, 200, response, { "Server-Timing": `sql;dur=${sqlMs}` });
+    }
     let upstream;
     try {
       upstream = await callAppsScript("bootstrap", { id: session.sub, role: session.role, date }, { timeoutMs: 4000 });

@@ -22,7 +22,7 @@ function sendJson(res, status, payload, headers = {}) {
   return res.status(status).json(payload);
 }
 
-function logRequest({ id, route, status, startedAt, upstreamMs = 0, bytes = 0, error = "" }) {
+function logRequest({ id, route, status, startedAt, upstreamMs = 0, sqlMs = 0, bytes = 0, error = "" }) {
   const event = {
     event: "morgan_api_request",
     requestId: id,
@@ -30,7 +30,9 @@ function logRequest({ id, route, status, startedAt, upstreamMs = 0, bytes = 0, e
     status,
     durationMs: Date.now() - startedAt,
     upstreamMs,
-    responseBytes: bytes
+    sqlMs,
+    responseBytes: bytes,
+    deployment: String(process.env.VERCEL_URL || process.env.VERCEL_GIT_COMMIT_SHA || "local").slice(0, 120)
   };
   if (error) event.error = String(error).slice(0, 200);
   console.log(JSON.stringify(event));

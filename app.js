@@ -1,7 +1,7 @@
 "use strict";
 
 const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiTI5Z8c76YNlcPMYWyR17HGaU4QvzHJm32nWeCHsnaknVx/exec";
-const APP_VERSION = "MSOT3.1-service-records";
+const APP_VERSION = "MSOT4.0-neon-sql";
 const CLOUD_READ_TIMEOUT_MS = 20000;
 const CLOUD_WRITE_TIMEOUT_MS = 15000;
 const LOGIN_CLOUD_TIMEOUT_MS = 12000;
@@ -18,7 +18,7 @@ const KNOWN_PRODUCTION_HOSTS = new Set([
   "morgan-ops-hub-git-main-kurtpeng0907s-projects.vercel.app"
 ]);
 const VERCEL_PREVIEW_MODE = window.location.hostname.endsWith(".vercel.app") && !KNOWN_PRODUCTION_HOSTS.has(window.location.hostname);
-const FAST_API_ENABLED = URL_OPTIONS.get("fastApi") === "1" || (!LOCAL_TEST_MODE && !VERCEL_PREVIEW_MODE);
+const FAST_API_ENABLED = URL_OPTIONS.get("fastApi") === "1" || !LOCAL_TEST_MODE;
 const FAST_API_TIMEOUT_MS = 6000;
 // The server retries one cold Apps Script bootstrap after the warm-cache
 // attempt. This timeout must cover that retry; otherwise the client aborts
@@ -294,6 +294,7 @@ let loadedLocalDbFromStorage = false;
 let offlineReadOnlyMode = false;
 let loginInFlight = false;
 let fastApiSessionActive = false;
+let sqlApiSessionActive = false;
 let partialCloudData = false;
 let fullDataHydrationPromise = null;
 let gatewayWritesVerified = true;
@@ -744,6 +745,7 @@ function applyFastCloudData(payload) {
   db = normalizeCloudPayload(payload?.data);
   partialCloudData = payload?.meta?.partial !== false;
   fastApiSessionActive = true;
+  sqlApiSessionActive = payload?.meta?.source === "neon-postgres";
   loadedLocalDbFromStorage = false;
   setOfflineReadOnlyMode(false);
   const generatedAt = String(payload?.meta?.generatedAt || new Date().toISOString());
@@ -767,20 +769,79 @@ async function tryFastApiLogin(id, pin) {
     const { response, payload } = await fetchApiJson("/api/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: String(id), pin: String(pin) })
+      body: JSON.stringify({ id: String(id), pin: String(pin), date: selectedOpsDate || todayKey() })
     }, FAST_API_TIMEOUT_MS);
     if (response.status === 401) {
       clientMetric("login_invalid", performance.now() - startedAt);
       return { available: true, authenticated: false };
     }
+    if (!response.ok && payload?.dataSource === "sql") {
+      return { available: true, authenticated: false, serviceError: true };
+    }
     if (!response.ok || !payload?.success || !payload.identity) return { available: false };
-    await refreshFastBootstrap(selectedOpsDate || todayKey());
+    if (payload.bootstrap) {
+      applyFastCloudData({ data: payload.bootstrap, meta: payload.meta || {} });
+    } else {
+      await refreshFastBootstrap(selectedOpsDate || todayKey());
+    }
     clientMetric("login_to_bootstrap", performance.now() - startedAt);
     return { available: true, authenticated: true, identity: payload.identity };
   } catch {
     clientMetric("fast_api_unavailable", performance.now() - startedAt);
     return { available: false };
   }
+}
+
+async function loadSqlAppointmentRange(from, to) {
+  if (!sqlApiSessionActive) return false;
+  const appointments = [];
+  let cursor = "";
+  do {
+    const params = new URLSearchParams({ from, to, limit: "200" });
+    if (cursor) params.set("cursor", cursor);
+    const { response, payload } = await fetchApiJson(`/api/appointments?${params}`, {}, 12000);
+    if (!response.ok || !payload?.success) throw new Error(payload?.error || "appointments_unavailable");
+    appointments.push(...(payload.appointments || []));
+    cursor = String(payload.nextCursor || "");
+  } while (cursor && appointments.length < 10000);
+  for (const appointment of appointments) {
+    db.appointments[String(appointment.id)] = appointment;
+    const phone = String(appointment.phone || "");
+    if (phone && !db.customers[phone]) db.customers[phone] = { name: String(appointment.customerName || ""), notes: "", records: [] };
+  }
+  return true;
+}
+
+async function loadSqlScheduleRange(from, to) {
+  if (!sqlApiSessionActive) return false;
+  const params = new URLSearchParams({ from, to });
+  const { response, payload } = await fetchApiJson(`/api/schedules?${params}`, {}, 12000);
+  if (!response.ok || !payload?.success) throw new Error(payload?.error || "schedules_unavailable");
+  for (const [therapistId, schedule] of Object.entries(payload.schedules || {})) {
+    db.schedules[therapistId] = { ...(db.schedules[therapistId] || {}), ...(schedule || {}) };
+  }
+  return true;
+}
+
+async function loadSqlCustomers() {
+  if (!sqlApiSessionActive) return false;
+  let cursor = "";
+  let loaded = 0;
+  do {
+    const params = new URLSearchParams({ limit: "100" });
+    if (cursor) params.set("cursor", cursor);
+    const { response, payload } = await fetchApiJson(`/api/customers?${params}`, {}, 12000);
+    if (!response.ok || !payload?.success) throw new Error(payload?.error || "customers_unavailable");
+    for (const customer of payload.customers || []) {
+      db.customers[String(customer.customerKey)] = {
+        ...(db.customers[String(customer.customerKey)] || { records: [] }),
+        name: String(customer.name || ""), notes: String(customer.notes || "")
+      };
+      loaded += 1;
+    }
+    cursor = String(payload.nextCursor || "");
+  } while (cursor && loaded < 5000);
+  return true;
 }
 
 async function hydrateFullData(options = {}) {
@@ -2293,11 +2354,23 @@ async function switchTab(tab, options = {}) {
   if (tab === "filter" || tab === "appointment") tab = "dispatch";
   if (tab === "appointmentDetail") tab = "dispatch";
   if (partialCloudData && tab !== "overview" && tab !== "portal" && !options.skipHydrate) {
-    showSnackbar("正在載入完整資料...");
+    showSnackbar("正在載入所選日期資料...");
     try {
-      await hydrateFullData();
+      if (sqlApiSessionActive) {
+        const monthFirst = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-01`;
+        const monthLast = toDateKey(new Date(currentYear, currentMonth + 1, 0));
+        const first = tab === "report" && reportFilterStart ? reportFilterStart : (tab === "personnel" && scheduleFilterStart ? scheduleFilterStart : monthFirst);
+        const last = tab === "report" && reportFilterEnd ? reportFilterEnd : (tab === "personnel" && scheduleFilterEnd ? scheduleFilterEnd : monthLast);
+        await Promise.all([
+          loadSqlAppointmentRange(first, last),
+          tab === "personnel" || tab === "dispatch" ? loadSqlScheduleRange(first, last) : Promise.resolve(false),
+          tab === "customer" ? loadSqlCustomers() : Promise.resolve(false)
+        ]);
+      } else {
+        await hydrateFullData();
+      }
     } catch {
-      showSnackbar("完整資料暫時無法載入，畫面維持今日工作");
+      showSnackbar("所選日期資料暫時無法載入，畫面維持今日工作");
       return;
     }
   }
@@ -4042,7 +4115,7 @@ function showScheduleChangeConfirmation(id, changes) {
 
 function openScheduleFilterModal() {
   showModal(`<div class="modal max-w-lg"><h3 class="mb-5 border-b pb-4 text-xl font-black">設定班表查詢區間</h3><form id="scheduleFilterForm" class="space-y-4"><div><label class="label">開始日期</label><input name="start" type="date" class="input" value="${esc(scheduleFilterStart)}"></div><div><label class="label">結束日期</label><input name="end" type="date" class="input" value="${esc(scheduleFilterEnd)}"></div><div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">套用區間</button></div></form></div>`);
-  $("scheduleFilterForm").onsubmit = (event) => {
+  $("scheduleFilterForm").onsubmit = async (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
     scheduleFilterStart = data.start || monthDates[0]?.key || todayKey();
@@ -4054,6 +4127,10 @@ function openScheduleFilterModal() {
     scheduleViewMode = "custom";
     syncScheduleUrl();
     closeModal();
+    if (sqlApiSessionActive) {
+      try { await Promise.all([loadSqlScheduleRange(scheduleFilterStart, scheduleFilterEnd), loadSqlAppointmentRange(scheduleFilterStart, scheduleFilterEnd)]); }
+      catch { return showSnackbar("該區間班表暫時無法載入"); }
+    }
     renderPersonnel();
     renderTopToolbar();
   };
@@ -4671,12 +4748,16 @@ function renderReport() {
 
 function openReportFilterModal() {
   showModal(`<div class="modal max-w-lg"><h3 class="mb-5 border-b pb-4 text-xl font-black">設定財務查詢區間</h3><form id="reportFilterForm" class="space-y-4"><div><label class="label">開始日期</label><input name="start" type="date" class="input" value="${esc(reportFilterStart || todayKey())}"></div><div><label class="label">結束日期</label><input name="end" type="date" class="input" value="${esc(reportFilterEnd || todayKey())}"></div><div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">套用查詢</button></div></form></div>`);
-  $("reportFilterForm").onsubmit = (event) => {
+  $("reportFilterForm").onsubmit = async (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
     reportFilterStart = data.start || todayKey();
     reportFilterEnd = data.end || todayKey();
     closeModal();
+    if (sqlApiSessionActive) {
+      try { await loadSqlAppointmentRange(reportFilterStart, reportFilterEnd); }
+      catch { return showSnackbar("該區間報表暫時無法載入"); }
+    }
     renderReport();
   };
 }
@@ -5076,6 +5157,11 @@ async function handleLogin() {
     }
     const fastLogin = await tryFastApiLogin(id, pin);
     if (fastLogin.available) {
+      if (fastLogin.serviceError) {
+        err.textContent = "SQL 服務暫時無回應，為避免讀到舊資料，本次不切回舊版資料源。";
+        err.classList.remove("hidden");
+        return;
+      }
       if (!fastLogin.authenticated) {
         err.textContent = "帳號或密碼錯誤。";
         err.classList.remove("hidden");
@@ -5135,6 +5221,7 @@ function logout() {
   currentUser = null;
   if (fastApiSessionActive) fetch("/api/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
   fastApiSessionActive = false;
+  sqlApiSessionActive = false;
   partialCloudData = false;
   fullDataHydrationPromise = null;
   setOfflineReadOnlyMode(false);
@@ -5145,10 +5232,16 @@ function logout() {
   $("adminPin").value = "";
 }
 
-function changeMonth(offset) {
+async function changeMonth(offset) {
   currentMonth += offset;
   if (currentMonth > 11) { currentMonth = 0; currentYear += 1; }
   if (currentMonth < 0) { currentMonth = 11; currentYear -= 1; }
+  if (sqlApiSessionActive) {
+    const first = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-01`;
+    const last = toDateKey(new Date(currentYear, currentMonth + 1, 0));
+    try { await Promise.all([loadSqlAppointmentRange(first, last), loadSqlScheduleRange(first, last)]); }
+    catch { showSnackbar("該月份資料暫時無法載入"); }
+  }
   renderAll();
 }
 
@@ -5200,14 +5293,18 @@ function shiftSinglePageDate(offset) {
   setSinglePageDate(addDaysKey(base, offset));
 }
 
-function updateScheduleContext(mode, anchor) {
+async function updateScheduleContext(mode, anchor) {
   setScheduleRangeForMode(mode, anchor || scheduleFilterStart || selectedOpsDate || todayKey());
   syncScheduleUrl();
+  if (sqlApiSessionActive) {
+    try { await Promise.all([loadSqlScheduleRange(scheduleFilterStart, scheduleFilterEnd), loadSqlAppointmentRange(scheduleFilterStart, scheduleFilterEnd)]); }
+    catch { return showSnackbar("該區間班表暫時無法載入"); }
+  }
   renderPersonnel();
   renderTopToolbar();
 }
 
-function shiftScheduleContext(offset) {
+async function shiftScheduleContext(offset) {
   const anchor = new Date(`${scheduleFilterStart || todayKey()}T00:00:00`);
   if (scheduleViewMode === "month") anchor.setMonth(anchor.getMonth() + offset);
   else anchor.setDate(anchor.getDate() + (scheduleViewMode === "week" ? offset * 7 : offset * Math.max(1, Math.round((new Date(`${scheduleFilterEnd}T00:00:00`) - new Date(`${scheduleFilterStart}T00:00:00`)) / 86400000) + 1)));
@@ -5216,6 +5313,10 @@ function shiftScheduleContext(offset) {
     scheduleFilterStart = toDateKey(anchor);
     scheduleFilterEnd = addDaysKey(scheduleFilterStart, span);
     syncScheduleUrl();
+    if (sqlApiSessionActive) {
+      try { await Promise.all([loadSqlScheduleRange(scheduleFilterStart, scheduleFilterEnd), loadSqlAppointmentRange(scheduleFilterStart, scheduleFilterEnd)]); }
+      catch { return showSnackbar("該區間班表暫時無法載入"); }
+    }
     renderPersonnel();
     renderTopToolbar();
     return;
@@ -5223,7 +5324,7 @@ function shiftScheduleContext(offset) {
   updateScheduleContext(scheduleViewMode, toDateKey(anchor));
 }
 
-function applyReportContext(start, end) {
+async function applyReportContext(start, end) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(start || "") || !/^\d{4}-\d{2}-\d{2}$/.test(end || "")) return false;
   if (start > end) {
     showSnackbar("開始日期不可晚於結束日期");
@@ -5233,6 +5334,10 @@ function applyReportContext(start, end) {
   reportFilterStart = start;
   reportFilterEnd = end;
   syncReportUrl();
+  if (sqlApiSessionActive) {
+    try { await loadSqlAppointmentRange(start, end); }
+    catch { return showSnackbar("該區間報表暫時無法載入"); }
+  }
   renderReport();
   renderTopToolbar();
   return true;

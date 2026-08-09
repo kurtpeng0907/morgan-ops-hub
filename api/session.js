@@ -1,8 +1,11 @@
 "use strict";
 
 const { callAppsScript } = require("./_lib/apps-script");
+const { dataSourceMode } = require("./_lib/database");
 const { requestId, readJson, sendJson, logRequest, methodNotAllowed } = require("./_lib/http");
 const { createSession, sessionCookie } = require("./_lib/session");
+const sqlRepository = require("./_lib/sql-repository");
+const { logShadow, projectSelectedDay } = require("./_lib/shadow");
 
 module.exports = async function handler(req, res) {
   if (req.method !== "POST") return methodNotAllowed(res, ["POST"]);
@@ -12,17 +15,53 @@ module.exports = async function handler(req, res) {
     const body = readJson(req);
     const accountId = String(body.id || "").trim();
     const pin = String(body.pin || "").trim();
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(body.date || "")) ? String(body.date) : new Date().toISOString().slice(0, 10);
     if (!accountId || !pin || accountId.length > 80 || pin.length > 80) {
       logRequest({ id, route: "/api/session", status: 400, startedAt });
       return sendJson(res, 400, { success: false, error: "invalid_credentials_input", requestId: id });
     }
+    const mode = dataSourceMode();
+    if (mode === "sql") {
+      const result = await sqlRepository.authenticateAndBootstrap(accountId, pin, date);
+      if (!result.authenticated || !result.identity) {
+        logRequest({ id, route: "/api/session", status: 401, startedAt, sqlMs: result.sqlMs });
+        return sendJson(res, 401, { success: false, error: "invalid_credentials", requestId: id });
+      }
+      const session = createSession(result.identity);
+      const response = {
+        success: true,
+        identity: session.payload,
+        bootstrap: result.bootstrap,
+        meta: result.meta,
+        expiresIn: session.payload.exp - session.payload.iat,
+        requestId: id
+      };
+      const bytes = Buffer.byteLength(JSON.stringify(response));
+      logRequest({ id, route: "/api/session", status: 200, startedAt, sqlMs: result.sqlMs, bytes });
+      return sendJson(res, 200, response, {
+        "Set-Cookie": sessionCookie(session.token, String(req.headers?.["x-forwarded-proto"] || "https") !== "http"),
+        "Server-Timing": `sql;dur=${result.sqlMs}`
+      });
+    }
+
     const { payload, upstreamMs } = await callAppsScript("authenticate", { id: accountId, pin }, { timeoutMs: 6000 });
     if (!payload.authenticated || !payload.identity) {
       logRequest({ id, route: "/api/session", status: 401, startedAt, upstreamMs });
       return sendJson(res, 401, { success: false, error: "invalid_credentials", requestId: id });
     }
     const session = createSession(payload.identity);
-    const response = { success: true, identity: session.payload, expiresIn: session.payload.exp - session.payload.iat, requestId: id };
+    let legacyBootstrap = null;
+    let meta = null;
+    if (mode === "shadow") {
+      const [sheetsResult, sqlResult] = await Promise.all([
+        callAppsScript("bootstrap", { id: accountId, role: payload.identity.role, date }, { timeoutMs: 15000 }),
+        sqlRepository.authenticateAndBootstrap(accountId, pin, date)
+      ]);
+      legacyBootstrap = projectSelectedDay(sheetsResult.payload.data, date, payload.identity);
+      meta = { ...(sheetsResult.payload.meta || {}), shadow: true };
+      if (sqlResult.authenticated) logShadow("/api/session", id, sqlResult.bootstrap, legacyBootstrap);
+    }
+    const response = { success: true, identity: session.payload, bootstrap: legacyBootstrap, meta, expiresIn: session.payload.exp - session.payload.iat, requestId: id };
     const bytes = Buffer.byteLength(JSON.stringify(response));
     logRequest({ id, route: "/api/session", status: 200, startedAt, upstreamMs, bytes });
     return sendJson(res, 200, response, {
@@ -30,8 +69,8 @@ module.exports = async function handler(req, res) {
       "Server-Timing": `apps-script;dur=${upstreamMs}`
     });
   } catch (error) {
-    const status = error.code === "unauthorized_gateway" ? 503 : 502;
+    const status = error.code === "unauthorized_gateway" || error.code === "database_not_configured" ? 503 : 502;
     logRequest({ id, route: "/api/session", status, startedAt, error: error.message });
-    return sendJson(res, status, { success: false, error: "authentication_service_unavailable", requestId: id });
+    return sendJson(res, status, { success: false, error: "authentication_service_unavailable", dataSource: dataSourceMode(), requestId: id });
   }
 };
