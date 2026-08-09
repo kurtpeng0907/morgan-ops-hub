@@ -11,6 +11,7 @@ const sessionHandler = require("../api/session");
 const bootstrapHandler = require("../api/bootstrap");
 const cloudHandler = require("../api/cloud");
 const customerRecordsHandler = require("../api/customer-records");
+const sqlReadHandler = require("../api/sql-read");
 const { therapistOwnsWrite } = cloudHandler;
 const { createSession, verifySession } = require("../api/_lib/session");
 const sqlRepository = require("../api/_lib/sql-repository");
@@ -302,4 +303,13 @@ test("shadow comparison projects legacy 30-day data to the selected-day SQL cont
   assert.equal(projected.customers.SYS_APPT_META_A2, undefined);
   assert.equal(projected.customers.SYS_THERAPIST_PROFILE_003, undefined);
   assert.equal(digest({ b: 1, a: 2 }), digest({ a: 2, b: 1 }));
+});
+
+test("consolidated SQL read router keeps paginated endpoints behind one Vercel function", async () => {
+  const res = responseMock();
+  await sqlReadHandler({ method: "GET", headers: {}, query: { route: "appointments" } }, res);
+  assert.equal(res.statusCode, 401);
+  const config = JSON.parse(readFileSync(resolve(__dirname, "../vercel.json"), "utf8"));
+  assert.equal(config.rewrites.length, 4);
+  assert.equal(config.rewrites.find((item) => item.source === "/api/appointments").destination, "/api/sql-read?route=appointments");
 });

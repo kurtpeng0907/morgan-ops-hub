@@ -1,5 +1,11 @@
 {
   "regions": ["hkg1"],
+  "rewrites": [
+    { "source": "/api/appointments", "destination": "/api/sql-read?route=appointments" },
+    { "source": "/api/customers", "destination": "/api/sql-read?route=customers" },
+    { "source": "/api/schedules", "destination": "/api/sql-read?route=schedules" },
+    { "source": "/api/reports", "destination": "/api/sql-read?route=reports" }
+  ],
   "headers": [
     {
       "source": "/(app|report-accounting-patch|remittance-fields-patch).js",
