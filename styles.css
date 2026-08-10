@@ -2085,6 +2085,23 @@ tr:hover td { background:#f8fafc; }
 
 /* Appointment detail: one-column workspace with a shared floating tool dock. */
 .appointment-detail-layout { width:100%; max-width:1120px; margin:0 auto; }
+.appointment-detail-view { display:grid; gap:16px; max-width:756px; }
+.appointment-detail-header,.appointment-card { border:1px solid var(--border-soft,#e2e8e5); border-radius:12px; background:#fff; padding:20px; }
+.appointment-header-actions { float:right; display:flex; gap:8px; }
+.appointment-delete-btn { border:1px solid #fecdd3; border-radius:8px; background:#fff; padding:8px 10px; color:#be123c; font-size:12px; font-weight:700; }
+.appointment-secondary-id { margin:5px 0 14px; color:#84918c; font-size:11px; font-weight:700; }
+.appointment-header-line { margin:8px 0 0; color:#40504a; font-size:14px; font-weight:700; }
+.appointment-card-heading { display:flex; justify-content:space-between; gap:12px; margin-bottom:16px; }
+.appointment-card-heading h4 { margin:3px 0 0; font-size:17px; font-weight:800; }
+.appointment-info-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; }
+.appointment-info-item { display:grid; gap:4px; min-width:0; }
+.appointment-info-item span { color:#77847f; font-size:11px; font-weight:700; }
+.appointment-info-item strong { color:#2a3833; font-size:14px; line-height:1.5; word-break:break-word; }
+.appointment-card hr { margin:20px 0; border:0; border-top:1px solid #edf2f0; }
+.appointment-notes-grid { display:grid; grid-template-columns:1fr 1fr; gap:22px; }
+.appointment-notes-grid p { margin:8px 0 0; color:#40504a; white-space:pre-wrap; font-size:14px; line-height:1.6; }
+.appointment-financial-check { margin:14px 0 0; color:#0f766e; font-size:12px; font-weight:700; }
+@media (max-width:640px) { .appointment-detail-header,.appointment-card { padding:16px; } .appointment-info-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .appointment-info-grid .appointment-info-item:first-child { grid-column:1/-1; } .appointment-notes-grid { grid-template-columns:1fr; gap:16px; } }
 .appointment-accounting-strip {
   display:grid;
   grid-template-columns:repeat(3,minmax(0,1fr));
