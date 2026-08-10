@@ -13,6 +13,7 @@ function arg(name) {
 }
 
 const input = arg("--input");
+const sync = process.argv.includes("--sync");
 const databaseUrl = String(process.env.DATABASE_URL || "").trim();
 if (!input) throw new Error("--input /secure/path/snapshot.json is required");
 if (!databaseUrl) throw new Error("DATABASE_URL is required");
@@ -33,7 +34,7 @@ async function main() {
            (SELECT count(*) FROM appointments)::int AS appointments,
            (SELECT count(*) FROM customers)::int AS customers
   `;
-  if (Object.values(occupancy[0]).some((count) => Number(count) > 0)) {
+  if (!sync && Object.values(occupancy[0]).some((count) => Number(count) > 0)) {
     throw new Error("Target database is not empty; refusing to overwrite existing SQL data");
   }
 
@@ -72,6 +73,8 @@ async function main() {
     await runBatch(sql, preparedUsers.map((item) => sql`
       INSERT INTO users(account_id, display_name, role, pin_hash, active)
       VALUES (${item.accountId}, ${item.displayName}, ${item.role}, ${item.pinHash}, ${item.active !== false})
+      ON CONFLICT (account_id) DO UPDATE SET display_name = EXCLUDED.display_name, role = EXCLUDED.role,
+        pin_hash = EXCLUDED.pin_hash, active = EXCLUDED.active, updated_at = now()
     `));
     await runBatch(sql, data.therapists.map((item) => sql`
       INSERT INTO therapists(therapist_id, display_name, active)
@@ -105,6 +108,14 @@ async function main() {
         ${item.price}::numeric, ${item.collectedPrice}::numeric, ${item.isCompleted}, ${item.notes},
         ${item.bookingStage}, ${item.remittanceDue}::numeric, ${item.remittancePaid}, ${item.remittanceMethod}
       )
+      ON CONFLICT (id) DO UPDATE SET
+        date = EXCLUDED.date, time = EXCLUDED.time, therapist_id = EXCLUDED.therapist_id,
+        customer_id = EXCLUDED.customer_id, customer_key_legacy = EXCLUDED.customer_key_legacy,
+        customer_name = EXCLUDED.customer_name, service = EXCLUDED.service, duration = EXCLUDED.duration,
+        room = EXCLUDED.room, price = EXCLUDED.price, collected_price = EXCLUDED.collected_price,
+        is_completed = EXCLUDED.is_completed, notes = EXCLUDED.notes, booking_stage = EXCLUDED.booking_stage,
+        remittance_due = EXCLUDED.remittance_due, remittance_paid = EXCLUDED.remittance_paid,
+        remittance_method = EXCLUDED.remittance_method, updated_at = now()
     `));
     await runBatch(sql, data.serviceRecords.map((item) => sql`
       INSERT INTO service_records(

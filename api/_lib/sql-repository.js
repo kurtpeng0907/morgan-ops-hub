@@ -7,6 +7,16 @@ function dateKey(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || "")) ? String(value) : new Date().toISOString().slice(0, 10);
 }
 
+function sqlDate(value) {
+  if (value instanceof Date) {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+  return String(value || "").slice(0, 10);
+}
+
 function numericString(value) {
   return value === null || value === undefined ? "" : String(value).replace(/\.00$/, "");
 }
@@ -14,7 +24,7 @@ function numericString(value) {
 function appointmentShape(row) {
   return {
     id: String(row.id),
-    date: String(row.date),
+    date: sqlDate(row.date),
     time: String(row.time || "").slice(0, 5),
     therapistId: String(row.therapist_id || ""),
     customerName: String(row.customer_name || ""),
@@ -38,7 +48,7 @@ function serviceRecordShape(row) {
     id: String(row.appointment_id || row.record_id),
     record_id: String(row.record_id),
     appointment_id: row.appointment_id ? String(row.appointment_id) : "",
-    date: String(row.date),
+    date: sqlDate(row.date),
     therapistId: String(row.therapist_id || ""),
     therapistName: String(row.therapist_name || ""),
     service: String(row.service || ""),
@@ -126,7 +136,7 @@ async function bootstrap(identity, requestedDate) {
   for (const row of scheduleRows) {
     const id = String(row.therapist_id);
     if (!schedules[id]) schedules[id] = {};
-    schedules[id][String(row.date)] = String(row.shift || "");
+    schedules[id][sqlDate(row.date)] = String(row.shift || "");
   }
   const appointments = Object.fromEntries(appointmentRows.map((row) => [String(row.id), appointmentShape(row)]));
   const customers = Object.fromEntries(customerRows.map((row) => [String(row.customer_key_legacy), { name: String(row.name || ""), notes: String(row.notes || ""), records: [] }]));
@@ -210,7 +220,7 @@ async function listSchedules(identity, fromValue, toValue) {
     ORDER BY therapist_id, date
   `;
   const schedules = {};
-  for (const row of rows) (schedules[String(row.therapist_id)] ||= {})[String(row.date)] = String(row.shift || "");
+  for (const row of rows) (schedules[String(row.therapist_id)] ||= {})[sqlDate(row.date)] = String(row.shift || "");
   return { schedules, from, to };
 }
 
@@ -336,7 +346,7 @@ async function fullData(identity) {
   ], { readOnly: true });
   const therapists = Object.fromEntries(therapistRows.map((row) => [String(row.therapist_id), { name: String(row.display_name), pin: "", pinConfigured: true }]));
   const schedules = {};
-  for (const row of scheduleRows) (schedules[String(row.therapist_id)] ||= {})[String(row.date)] = String(row.shift || "");
+  for (const row of scheduleRows) (schedules[String(row.therapist_id)] ||= {})[sqlDate(row.date)] = String(row.shift || "");
   const appointments = Object.fromEntries(appointmentRows.map((row) => [String(row.id), appointmentShape(row)]));
   const customers = Object.fromEntries(customerRows.map((row) => [String(row.customer_key_legacy), { name: String(row.name || ""), notes: String(row.notes || ""), records: [] }]));
   for (const row of systemRows) customers[String(row.key)] = safeSystemRecord(row);

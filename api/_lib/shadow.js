@@ -21,9 +21,18 @@ function projectSelectedDay(data = {}, date, identity = {}) {
   const therapists = role === "admin"
     ? (data.therapists || {})
     : Object.fromEntries(Object.entries(data.therapists || {}).filter(([key]) => key === actorId));
-  const schedules = role === "admin"
+  const center = new Date(`${date}T12:00:00Z`);
+  const from = new Date(center); from.setUTCDate(from.getUTCDate() - 7);
+  const to = new Date(center); to.setUTCDate(to.getUTCDate() + 7);
+  const fromKey = from.toISOString().slice(0, 10);
+  const toKey = to.toISOString().slice(0, 10);
+  const scheduleSource = role === "admin"
     ? (data.schedules || {})
     : Object.fromEntries(Object.entries(data.schedules || {}).filter(([key]) => key === actorId));
+  const schedules = Object.fromEntries(Object.entries(scheduleSource).flatMap(([id, days]) => {
+    const selected = Object.fromEntries(Object.entries(days || {}).filter(([day]) => day >= fromKey && day <= toKey));
+    return Object.keys(selected).length ? [[id, selected]] : [];
+  }));
   const customers = {};
   for (const [key, item] of Object.entries(data.customers || {})) {
     if (!key.startsWith("SYS_") && phones.has(key)) customers[key] = { ...item, records: [] };
