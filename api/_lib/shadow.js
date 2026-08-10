@@ -44,12 +44,15 @@ function projectSelectedDay(data = {}, date, identity = {}) {
 }
 
 function summarize(data = {}) {
+  const identityDirectory = (directory) => Object.fromEntries(Object.entries(directory || {}).map(([id, item]) => [id, {
+    name: String(item?.name || item?.nickname || "")
+  }]));
   const clean = {
-    therapists: data.therapists || {},
+    therapists: identityDirectory(data.therapists),
     schedules: data.schedules || {},
     appointments: data.appointments || {},
     customers: data.customers || {},
-    admins: data.admins || {}
+    admins: identityDirectory(data.admins)
   };
   return {
     counts: Object.fromEntries(Object.entries(clean).map(([key, value]) => [key, Object.keys(value).length])),
