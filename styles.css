@@ -2651,3 +2651,33 @@ tr:hover td { background:#f8fafc; }
   .appointment-header-time { font-size:22px; }
   .appointment-header-therapist { font-size:24px; }
 }
+
+/* Scoped appointment edits are ordinary form content, never a mobile action bar.
+   Keeping this at the end prevents older responsive sticky rules from covering
+   the next field or visually separating the actions from the form. */
+.appointment-detail-form.appointment-scoped-editor .appointment-detail-actions {
+  position:static;
+  z-index:auto;
+  margin:20px 0 0;
+  padding:16px 0 0;
+  border-top:1px solid var(--line);
+  background:transparent;
+  box-shadow:none;
+  backdrop-filter:none;
+}
+
+@media (max-width:640px) {
+  .appointment-detail-form.appointment-scoped-editor {
+    padding-bottom:calc(var(--mobile-bottom-nav-height, 84px) + 24px) !important;
+  }
+  .appointment-detail-form.appointment-scoped-editor .appointment-detail-actions {
+    display:grid;
+    grid-template-columns:repeat(2, minmax(0, 1fr));
+    gap:12px;
+    padding-bottom:0;
+  }
+  .appointment-detail-form.appointment-scoped-editor .appointment-detail-actions .btn-light,
+  .appointment-detail-form.appointment-scoped-editor .appointment-detail-actions .btn-teal {
+    width:100%;
+  }
+}
