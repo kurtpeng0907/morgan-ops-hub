@@ -2445,6 +2445,48 @@ function hideSidebar() {
   }
 }
 
+function setupSidebarResize() {
+  const sidebar = $("adminSidebar");
+  const handle = $("sidebarResizeHandle");
+  if (!sidebar || !handle || handle.dataset.ready === "true") return;
+  const key = "morgan-ops-sidebar-width";
+  const minWidth = 208;
+  const maxWidth = 344;
+  const applyWidth = (width) => {
+    const next = Math.max(minWidth, Math.min(maxWidth, Math.round(width)));
+    document.documentElement.style.setProperty("--admin-sidebar-width", `${next}px`);
+    handle.setAttribute("aria-valuenow", String(next));
+    return next;
+  };
+  const savedWidth = Number(localStorage.getItem(key));
+  if (Number.isFinite(savedWidth) && savedWidth >= minWidth && savedWidth <= maxWidth) applyWidth(savedWidth);
+  let startX = 0;
+  let startWidth = 0;
+  const finish = () => {
+    document.documentElement.classList.remove("is-resizing-sidebar");
+    document.removeEventListener("pointermove", move);
+    document.removeEventListener("pointerup", finish);
+    localStorage.setItem(key, String(applyWidth(Number.parseFloat(getComputedStyle(sidebar).width))));
+  };
+  const move = (event) => applyWidth(startWidth + event.clientX - startX);
+  handle.addEventListener("pointerdown", (event) => {
+    if (window.innerWidth < 1024) return;
+    startX = event.clientX;
+    startWidth = sidebar.getBoundingClientRect().width;
+    document.documentElement.classList.add("is-resizing-sidebar");
+    handle.setPointerCapture?.(event.pointerId);
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", finish, { once:true });
+  });
+  handle.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const next = applyWidth(sidebar.getBoundingClientRect().width + (event.key === "ArrowLeft" ? -16 : 16));
+    localStorage.setItem(key, String(next));
+  });
+  handle.dataset.ready = "true";
+}
+
 function renderOverview() {
   const today = selectedOpsDate;
   const actualToday = todayKey();
@@ -3739,6 +3781,7 @@ function renderAppointmentDetailView(appt, allAppts) {
   const editButton = (section, label) => `<button type="button" class="appointment-section-edit" data-edit-appointment data-edit-section="${section}" aria-label="編輯${label}" title="編輯${label}">${appointmentEditIconHtml()}<span class="sr-only">編輯${label}</span></button>`;
   return `<div class="appointment-detail-layout"><section class="appointment-detail-view">
     <header class="appointment-detail-header appointment-detail-hero">
+      <button id="backToAppointmentListBtn" type="button" class="appointment-back appointment-back-icon" aria-label="返回預約列表" title="返回預約列表">${iconHtml("arrow-left")}<span class="sr-only">返回預約列表</span></button>
       <details class="appointment-more">
         <summary aria-label="更多預約操作" title="更多預約操作"><svg aria-hidden="true" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m0 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16m-4.5 6.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3m4.5 0a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3m4.5 0a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3"/></svg><span class="sr-only">更多預約操作</span></summary>
         <div class="appointment-more-menu" role="menu" aria-label="預約操作">
@@ -3748,7 +3791,7 @@ function renderAppointmentDetailView(appt, allAppts) {
       </details>
       <div class="appointment-hero-main">
         <section class="appointment-identity-card"><span class="ops-section-kicker">預約詳情</span><h3>${esc(customerCode)}</h3><p class="appointment-secondary-id" title="${esc(appt.id)}">${esc(appt.id)}</p></section>
-        <section class="appointment-hero-summary"><button id="backToAppointmentListBtn" type="button" class="appointment-back">← 返回預約列表</button><p class="appointment-header-line appointment-header-time">${esc(appt.date)} · ${esc(appt.time)} → ${esc(end)}</p><p class="appointment-header-line appointment-header-therapist">${esc(therapistName(appt.therapistId))} · ${esc(room)}</p><p class="appointment-header-line appointment-header-service">${esc(courseName(appt.service))} · ${esc(String(appt.duration || 60))} 分鐘 · ${money(appt.price)}</p></section>
+        <section class="appointment-hero-summary"><p class="appointment-header-line appointment-header-date">${esc(appt.date)}</p><p class="appointment-header-line appointment-header-time">${esc(appt.time)} → ${esc(end)}</p><p class="appointment-header-line appointment-header-therapist">${esc(therapistName(appt.therapistId))} · ${esc(room)}</p><p class="appointment-header-line appointment-header-service">${esc(courseName(appt.service))} · ${esc(String(appt.duration || 60))} 分鐘 · ${money(appt.price)}</p></section>
       </div>
       ${bookingStageRailHtml(appt.bookingStage || "confirmed")}
     </header>
@@ -5632,6 +5675,7 @@ function enhanceReportExceptions() {
 
 function bindEvents() {
   renderAppShellNavigation();
+  setupSidebarResize();
   $("loginBtn").addEventListener("click", handleLogin);
   $("adminPin").addEventListener("keydown", (e) => { if (e.key === "Enter") handleLogin(); });
   $("logoutBtn").addEventListener("click", logout);
