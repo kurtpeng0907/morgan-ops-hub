@@ -334,7 +334,7 @@ async function applyMutation(identity, mutationId, action, data) {
 async function fullData(identity) {
   if (identity.role !== "admin") throw Object.assign(new Error("forbidden"), { code: "forbidden" });
   const sql = sqlClient();
-  const [therapistRows, scheduleRows, appointmentRows, customerRows, systemRows, adminRows] = await sql.transaction([
+  const [therapistRows, scheduleRows, appointmentRows, customerRows, systemRows, adminRows, serviceRecordRows] = await sql.transaction([
     sql`SELECT therapist_id, display_name FROM therapists WHERE active = true ORDER BY therapist_id`,
     sql`SELECT therapist_id, date, shift FROM schedules ORDER BY therapist_id, date`,
     sql`SELECT id, date, time, therapist_id, customer_name, customer_key_legacy, service, duration, room, price,
@@ -342,13 +342,21 @@ async function fullData(identity) {
         FROM appointments ORDER BY date, time, id`,
     sql`SELECT customer_key_legacy, name, notes FROM customers ORDER BY customer_key_legacy`,
     sql`SELECT key, name, notes, records FROM system_records WHERE key NOT LIKE 'SYS_ADMIN_%' ORDER BY key`,
-    sql`SELECT account_id, display_name FROM users WHERE role = 'admin' AND active = true ORDER BY account_id`
+    sql`SELECT account_id, display_name FROM users WHERE role = 'admin' AND active = true ORDER BY account_id`,
+    sql`SELECT record_id, appointment_id, customer_key_legacy, date, therapist_id, therapist_name, service,
+               collected_price, notes, created_at, updated_at
+        FROM service_records ORDER BY customer_key_legacy, date DESC, record_id`
   ], { readOnly: true });
   const therapists = Object.fromEntries(therapistRows.map((row) => [String(row.therapist_id), { name: String(row.display_name), pin: "", pinConfigured: true }]));
   const schedules = {};
   for (const row of scheduleRows) (schedules[String(row.therapist_id)] ||= {})[sqlDate(row.date)] = String(row.shift || "");
   const appointments = Object.fromEntries(appointmentRows.map((row) => [String(row.id), appointmentShape(row)]));
   const customers = Object.fromEntries(customerRows.map((row) => [String(row.customer_key_legacy), { name: String(row.name || ""), notes: String(row.notes || ""), records: [] }]));
+  for (const row of serviceRecordRows) {
+    const customerKey = String(row.customer_key_legacy || "");
+    if (!customers[customerKey]) customers[customerKey] = { name: "", notes: "", records: [] };
+    customers[customerKey].records.push(serviceRecordShape(row));
+  }
   for (const row of systemRows) customers[String(row.key)] = safeSystemRecord(row);
   const admins = Object.fromEntries(adminRows.map((row) => [String(row.account_id), { name: String(row.display_name), pin: "", pinConfigured: true }]));
   return { data: { therapists, schedules, admins, appointments, customers }, meta: { partial: false, source: "neon-postgres", generatedAt: new Date().toISOString() } };

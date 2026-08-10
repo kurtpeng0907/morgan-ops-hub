@@ -871,6 +871,17 @@ async function hydrateFullData(options = {}) {
   return fullDataHydrationPromise;
 }
 
+function preloadAdminWorkspaceData() {
+  if (!sqlApiSessionActive || !partialCloudData || currentUser?.role !== "admin") return;
+  const start = () => {
+    hydrateFullData().catch(() => {
+      // The selected-day bootstrap remains usable; a later tab click retries the same SQL read.
+    });
+  };
+  if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(start, { timeout: 250 });
+  else setTimeout(start, 0);
+}
+
 async function postCloud(action, data) {
   persist();
   const controller = new AbortController();
@@ -2366,7 +2377,12 @@ async function switchTab(tab, options = {}) {
   if (partialCloudData && tab !== "overview" && tab !== "portal" && !options.skipHydrate) {
     showSnackbar("正在載入所選日期資料...");
     try {
-      if (sqlApiSessionActive) {
+      if (sqlApiSessionActive && currentUser?.role === "admin") {
+        // Admins prefetch one complete, SQL-authorized workspace after first paint.  If the
+        // user switches pages before that completes, share the in-flight request instead
+        // of making a second tab-specific read.
+        await hydrateFullData();
+      } else if (sqlApiSessionActive) {
         const monthFirst = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-01`;
         const monthLast = toDateKey(new Date(currentYear, currentMonth + 1, 0));
         const first = tab === "report" && reportFilterStart ? reportFilterStart : (tab === "personnel" && scheduleFilterStart ? scheduleFilterStart : monthFirst);
@@ -5187,6 +5203,7 @@ async function handleLogin() {
       $("therapistNav").classList.toggle("hidden", isAdmin);
       $("roleLabel").textContent = isAdmin ? "管理員" : "按摩師";
       enterDashboard(isAdmin ? "overview" : "portal", { progressive: true });
+      if (isAdmin) preloadAdminWorkspaceData();
       requestAnimationFrame(() => clientMetric("login_to_first_view", performance.now() - loginStartedAt));
       if (isAdmin) setTimeout(() => recordAdminLogin(currentUser.id), 0);
       return;
