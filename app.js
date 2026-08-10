@@ -3727,7 +3727,13 @@ function renderAppointmentDetailView(appt, allAppts) {
   const room = appt.room === "OUT" ? "外出" : `${appt.room || "R"}房`;
   return `<div class="appointment-detail-layout"><section class="appointment-detail-view">
     <header class="appointment-detail-header appointment-detail-hero">
-      <div class="appointment-header-actions"><button type="button" class="btn-light" data-edit-appointment>編輯預約</button><button data-delete-appt="${esc(appt.id)}" type="button" class="appointment-delete-btn">刪除資料</button></div>
+      <details class="appointment-more">
+        <summary aria-label="更多預約操作" title="更多預約操作"><svg aria-hidden="true" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m0 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16m-4.5 6.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3m4.5 0a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3m4.5 0a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3"/></svg><span class="sr-only">更多預約操作</span></summary>
+        <div class="appointment-more-menu" role="menu" aria-label="預約操作">
+          <button type="button" role="menuitem" data-edit-appointment>編輯預約</button>
+          <button data-delete-appt="${esc(appt.id)}" type="button" role="menuitem" class="appointment-delete-btn">刪除資料</button>
+        </div>
+      </details>
       <div class="appointment-hero-main">
         <section class="appointment-identity-card"><span class="ops-section-kicker">預約詳情</span><h3>${esc(customerCode)}</h3><p class="appointment-secondary-id" title="${esc(appt.id)}">${esc(appt.id)}</p></section>
         <section class="appointment-hero-summary"><button id="backToAppointmentListBtn" type="button" class="appointment-back">← 返回預約列表</button><p class="appointment-header-line">${esc(appt.date)} · ${esc(appt.time)} → ${esc(end)}</p><p class="appointment-header-line">${esc(therapistName(appt.therapistId))} · ${esc(room)}</p><p class="appointment-header-line appointment-header-service">${esc(courseName(appt.service))} · ${esc(String(appt.duration || 60))} 分鐘 · ${money(appt.price)}</p></section>

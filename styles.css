@@ -2106,8 +2106,17 @@ tr:hover td { background:#f8fafc; }
 .appointment-identity-card h3 { margin:14px 0 0; color:#1f302b; font-size:42px; line-height:1; font-weight:900; }
 .appointment-identity-card .appointment-secondary-id { margin:16px 0 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .appointment-hero-summary { display:grid; align-content:center; gap:12px; }
-.appointment-header-actions { position:absolute; top:24px; right:24px; display:flex; gap:8px; }
-.appointment-delete-btn { border:1px solid #fecdd3; border-radius:8px; background:#fff; padding:8px 10px; color:#be123c; font-size:12px; font-weight:700; }
+.appointment-more { position:absolute; z-index:4; top:24px; right:24px; }
+.appointment-more > summary { display:grid; width:48px; height:48px; place-items:center; cursor:pointer; list-style:none; border:1px solid #d8e4e0; border-radius:999px; background:#fff; color:#09244b; box-shadow:0 1px 2px rgb(15 23 42 / 4%); }
+.appointment-more > summary::-webkit-details-marker { display:none; }
+.appointment-more > summary:hover { border-color:#9ebcb4; background:#f8fbfa; }
+.appointment-more > summary:focus-visible { outline:3px solid rgb(13 148 136 / 28%); outline-offset:2px; }
+.appointment-more > summary svg { width:24px; height:24px; }
+.appointment-more-menu { position:absolute; top:calc(100% + 8px); right:0; display:grid; min-width:132px; overflow:hidden; border:1px solid #d8e4e0; border-radius:10px; background:#fff; box-shadow:0 10px 26px rgb(15 23 42 / 12%); }
+.appointment-more-menu button { width:100%; padding:10px 12px; border:0; background:#fff; color:#31413b; text-align:left; font-size:13px; font-weight:700; }
+.appointment-more-menu button:hover { background:#f3f7f5; }
+.appointment-more-menu .appointment-delete-btn { border-top:1px solid #f1e1e4; color:#be123c; }
+.appointment-more-menu .appointment-delete-btn:hover { background:#fff6f7; }
 .appointment-secondary-id { margin:5px 0 14px; color:#84918c; font-size:12px; font-weight:700; }
 .appointment-header-line { margin:0; color:#40504a; font-size:20px; font-weight:800; line-height:1.35; }
 .appointment-header-service { color:#273632; }
@@ -2123,7 +2132,7 @@ tr:hover td { background:#f8fafc; }
 .appointment-notes-grid { display:grid; grid-template-columns:1fr 1fr; gap:22px; }
 .appointment-notes-grid p { margin:8px 0 0; color:#40504a; white-space:pre-wrap; font-size:14px; line-height:1.6; }
 .appointment-financial-check { margin:14px 0 0; color:#0f766e; font-size:12px; font-weight:700; }
-@media (max-width:760px) { .appointment-detail-view { gap:14px; } .appointment-detail-header,.appointment-card { padding:16px; } .appointment-hero-main { grid-template-columns:174px minmax(0,1fr); align-items:start; gap:18px; min-height:0; padding-top:52px; padding-right:0; } .appointment-identity-card { min-height:164px; border-radius:18px; padding:18px; } .appointment-identity-card h3 { font-size:34px; } .appointment-header-actions { top:16px; right:16px; } .appointment-header-actions .appointment-delete-btn { width:38px; overflow:hidden; padding-inline:8px; color:transparent; } .appointment-header-actions .appointment-delete-btn::after { content:"⋯"; color:#52615c; font-size:19px; } .appointment-header-line { font-size:15px; } .appointment-detail-hero .appointment-workflow-rail { margin-top:22px; padding-top:20px; } .appointment-workflow-rail { padding:16px 12px; } .appointment-workflow-steps { gap:4px; } .appointment-workflow-step strong { font-size:11px; } .appointment-workflow-step small { font-size:10px; } .appointment-info-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .appointment-info-grid .appointment-info-item:first-child { grid-column:1/-1; } .appointment-notes-grid { grid-template-columns:1fr; gap:16px; } }
+@media (max-width:760px) { .appointment-detail-view { gap:14px; } .appointment-detail-header,.appointment-card { padding:16px; } .appointment-hero-main { grid-template-columns:174px minmax(0,1fr); align-items:start; gap:18px; min-height:0; padding-top:52px; padding-right:0; } .appointment-identity-card { min-height:164px; border-radius:18px; padding:18px; } .appointment-identity-card h3 { font-size:34px; } .appointment-more { top:16px; right:16px; } .appointment-more > summary { width:42px; height:42px; } .appointment-header-line { font-size:15px; } .appointment-detail-hero .appointment-workflow-rail { margin-top:22px; padding-top:20px; } .appointment-workflow-rail { padding:16px 12px; } .appointment-workflow-steps { gap:4px; } .appointment-workflow-step strong { font-size:11px; } .appointment-workflow-step small { font-size:10px; } .appointment-info-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .appointment-info-grid .appointment-info-item:first-child { grid-column:1/-1; } .appointment-notes-grid { grid-template-columns:1fr; gap:16px; } }
 @media (max-width:480px) { .appointment-hero-main { grid-template-columns:1fr; gap:16px; } .appointment-identity-card { width:min(194px,100%); min-height:146px; } .appointment-hero-summary { padding-inline:2px; } }
 .appointment-accounting-strip {
   display:grid;
