@@ -83,6 +83,7 @@ let currentScheduleViewDates = [];
 let editingAppointmentId = null;
 let activeAppointmentId = null;
 let appointmentDetailEditMode = false;
+let appointmentDetailEditSection = "";
 let dispatchFloatingCleanup = null;
 let pendingClientSelectionId = null;
 let liveTimer = null;
@@ -3413,11 +3414,17 @@ function renderAppointmentDetail() {
     target.select();
     await copyText(target.value, `${label}通知已複製`);
   });
-  section.querySelectorAll("[data-edit-appointment]").forEach((btn) => btn.onclick = () => { appointmentDetailEditMode = true; renderAppointmentDetail(); });
+  section.querySelectorAll("[data-edit-appointment]").forEach((btn) => btn.onclick = () => {
+    appointmentDetailEditSection = btn.dataset.editSection || "";
+    appointmentDetailEditMode = true;
+    renderAppointmentDetail();
+    const editField = { basic: "date", customer: "phone", financial: "price" }[appointmentDetailEditSection];
+    if (editField) requestAnimationFrame(() => section.querySelector(`[name="${editField}"]`)?.focus());
+  });
   const backBtn = $("backToAppointmentListBtn");
-  if (backBtn) backBtn.onclick = () => { appointmentDetailEditMode = false; activeAppointmentId = null; renderAppointmentDetail(); };
+  if (backBtn) backBtn.onclick = () => { appointmentDetailEditMode = false; appointmentDetailEditSection = ""; activeAppointmentId = null; renderAppointmentDetail(); };
   const cancelBtn = $("cancelAppointmentDetailBtn");
-  if (cancelBtn) cancelBtn.onclick = () => { appointmentDetailEditMode = false; renderAppointmentDetail(); };
+  if (cancelBtn) cancelBtn.onclick = () => { appointmentDetailEditMode = false; appointmentDetailEditSection = ""; renderAppointmentDetail(); };
   section.querySelectorAll("[data-toggle-appointment-scope]").forEach((btn) => btn.onclick = () => {
     appointmentRecordScope = appointmentRecordScope === "month" ? "today" : "month";
     renderAppointmentDetail();
@@ -3541,6 +3548,10 @@ function bookingStageRailHtml(currentStage = "confirmed") {
       }).join("")}
     </div>
   </section>`;
+}
+
+function appointmentEditIconHtml() {
+  return `<svg aria-hidden="true" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M13.896 3.03a2 2 0 0 1 2.701-.117l.127.117 4.243 4.243a2 2 0 0 1 .117 2.7l-.117.128-10.314 10.314a2 2 0 0 1-1.238.578L9.239 21H4.006a1.01 1.01 0 0 1-1.004-.9l-.006-.11v-5.233a2 2 0 0 1 .467-1.284l.12-.13L13.895 3.03ZM12.17 7.584l-7.174 7.174V19H9.24l7.174-7.174-4.243-4.243Zm3.14-3.14L13.584 6.17l4.243 4.243 1.726-1.726z"/></svg>`;
 }
 
 function bookingPrimaryActionHtml(appt) {
@@ -3725,6 +3736,7 @@ function renderAppointmentDetailView(appt, allAppts) {
   const item = (label, value) => `<div class="appointment-info-item"><span>${label}</span><strong>${value}</strong></div>`;
   const end = minsToTime(timeToMinutes(appt.time) + Number(appt.duration || 60));
   const room = appt.room === "OUT" ? "外出" : `${appt.room || "R"}房`;
+  const editButton = (section, label) => `<button type="button" class="appointment-section-edit" data-edit-appointment data-edit-section="${section}" aria-label="編輯${label}" title="編輯${label}">${appointmentEditIconHtml()}<span class="sr-only">編輯${label}</span></button>`;
   return `<div class="appointment-detail-layout"><section class="appointment-detail-view">
     <header class="appointment-detail-header appointment-detail-hero">
       <details class="appointment-more">
@@ -3740,8 +3752,8 @@ function renderAppointmentDetailView(appt, allAppts) {
       </div>
       ${bookingStageRailHtml(appt.bookingStage || "confirmed")}
     </header>
-    <section class="appointment-card appointment-information-card"><div class="appointment-card-heading"><div><span class="ops-section-kicker">預約資訊</span><h4>基本安排</h4></div><button type="button" class="btn-light" data-edit-appointment>編輯預約</button></div><div class="appointment-info-grid">${item("預約時間", `${esc(appt.date)}<br>${esc(appt.time)} → ${esc(end)}`)}${item("按摩師", esc(therapistName(appt.therapistId)))}${item("工作室", esc(room))}${item("服務", esc(courseName(appt.service)))}${item("時長", `${esc(String(appt.duration || 60))} 分鐘`)}${item("應收金額", money(appt.price))}</div><hr><span class="ops-section-kicker">顧客資訊</span><div class="appointment-info-grid">${item("顧客", esc(customerCode))}${item("顧客稱呼", esc(appt.customerName || "尚未設定"))}${item("聯絡方式", esc(appt.phone || "尚未設定"))}</div><hr><div class="appointment-notes-grid"><div><span class="ops-section-kicker">本次備註</span><p>${esc(appt.notes || "尚無備註")}</p></div><div><span class="ops-section-kicker">服務紀錄／顧客反饋</span><p>${esc(record.notes || "尚無服務紀錄")}</p></div></div></section>
-    <section class="appointment-card appointment-financial-card"><span class="ops-section-kicker">財務</span><div class="appointment-info-grid">${item("服務金額", money(appt.price))}${item("店家應回帳", money(storeAmount))}${item(esc(therapistName(appt.therapistId)), money(cut))}${item("實際回款", appt.collectedPrice ? money(appt.collectedPrice) : "尚未填寫")}</div><p class="appointment-financial-check">${storeAmount + cut === Number(appt.price || 0) ? "✓ 金額驗算正確" : "⚠ 分潤金額與服務金額不一致"}</p></section>
+    <section class="appointment-card appointment-information-card"><div class="appointment-card-heading"><div><span class="ops-section-kicker">預約資訊</span><h4>基本安排</h4></div>${editButton("basic", "基本資訊")}</div><div class="appointment-info-grid">${item("預約時間", `${esc(appt.date)}<br>${esc(appt.time)} → ${esc(end)}`)}${item("按摩師", esc(therapistName(appt.therapistId)))}${item("工作室", esc(room))}${item("服務", esc(courseName(appt.service)))}${item("時長", `${esc(String(appt.duration || 60))} 分鐘`)}${item("應收金額", money(appt.price))}</div><hr><div class="appointment-section-heading"><span class="ops-section-kicker">顧客資訊</span>${editButton("customer", "顧客資訊")}</div><div class="appointment-info-grid">${item("顧客", esc(customerCode))}${item("顧客稱呼", esc(appt.customerName || "尚未設定"))}${item("聯絡方式", esc(appt.phone || "尚未設定"))}</div><hr><div class="appointment-notes-grid"><div><span class="ops-section-kicker">本次備註</span><p>${esc(appt.notes || "尚無備註")}</p></div><div><span class="ops-section-kicker">服務紀錄／顧客反饋</span><p>${esc(record.notes || "尚無服務紀錄")}</p></div></div></section>
+    <section class="appointment-card appointment-financial-card"><div class="appointment-section-heading"><span class="ops-section-kicker">財務</span>${editButton("financial", "帳務資訊")}</div><div class="appointment-info-grid">${item("服務金額", money(appt.price))}${item("店家應回帳", money(storeAmount))}${item(esc(therapistName(appt.therapistId)), money(cut))}${item("實際回款", appt.collectedPrice ? money(appt.collectedPrice) : "尚未填寫")}</div><p class="appointment-financial-check">${storeAmount + cut === Number(appt.price || 0) ? "✓ 金額驗算正確" : "⚠ 分潤金額與服務金額不一致"}</p></section>
   </section></div>`;
 }
 
@@ -3850,6 +3862,7 @@ async function saveAppointmentDetailForm(form) {
     renderAll();
     activeAppointmentId = next.id;
     appointmentDetailEditMode = false;
+    appointmentDetailEditSection = "";
     switchTab("dispatch");
   };
   const conflict = findAppointmentConflict(next);

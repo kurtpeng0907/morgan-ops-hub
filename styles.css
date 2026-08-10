@@ -2124,6 +2124,11 @@ tr:hover td { background:#f8fafc; }
 .appointment-detail-hero .appointment-workflow-title { margin-bottom:18px; }
 .appointment-card-heading { display:flex; justify-content:space-between; gap:12px; margin-bottom:16px; }
 .appointment-card-heading h4 { margin:3px 0 0; font-size:17px; font-weight:800; }
+.appointment-section-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 14px; }
+.appointment-section-edit { display:grid; width:42px; height:42px; flex:0 0 auto; place-items:center; border:1px solid #d7e1ed; border-radius:10px; background:#fff; color:#09244b; }
+.appointment-section-edit:hover { border-color:#9ebcb4; background:#f8fbfa; }
+.appointment-section-edit:focus-visible { outline:3px solid rgb(13 148 136 / 28%); outline-offset:2px; }
+.appointment-section-edit svg { width:20px; height:20px; }
 .appointment-info-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; }
 .appointment-info-item { display:grid; gap:4px; min-width:0; }
 .appointment-info-item span { color:#77847f; font-size:11px; font-weight:700; }
