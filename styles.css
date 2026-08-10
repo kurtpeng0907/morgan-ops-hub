@@ -2578,3 +2578,76 @@ tr:hover td { background:#f8fafc; }
   }
   #view-dispatch .dispatch-floating-tools + .appointment-detail-layout { margin-top:0; }
 }
+
+/* Booking detail refinement: compact desktop canvas and a deliberately ordered hero. */
+@media (min-width:1024px) {
+  .appointment-detail-layout,
+  .appointment-detail-view {
+    width:min(100%, 1019px);
+    max-width:1019px;
+  }
+  #view-dispatch .dispatch-floating-tools {
+    top:-80px;
+    right:max(0px, calc((100% - 1019px) / 2));
+  }
+  #view-dispatch .dispatch-floating-tools + .appointment-detail-layout { margin-top:4px; }
+}
+
+.appointment-detail-hero { padding:28px 32px 24px; }
+.appointment-hero-main {
+  grid-template-columns:218px minmax(0, 1fr);
+  min-height:180px;
+  gap:28px;
+}
+.appointment-identity-card { min-height:146px; padding:18px 20px; border-radius:16px; }
+.appointment-identity-card h3 { margin-top:12px; font-size:38px; }
+.appointment-identity-card .appointment-secondary-id { margin-top:13px; }
+.appointment-hero-summary { min-height:146px; gap:10px; }
+.appointment-hero-schedule,
+.appointment-hero-assignment { display:flex; align-items:baseline; gap:14px; min-width:0; }
+.appointment-header-date { flex:0 0 auto; font-size:15px; }
+.appointment-header-time { flex:0 0 auto; font-size:20px; letter-spacing:-.01em; }
+.appointment-header-therapist { color:#1f302b; font-size:28px; font-weight:850; line-height:1.15; }
+.appointment-header-room { color:#52615c; font-size:18px; font-weight:700; }
+.appointment-header-service { max-width:none; font-size:16px; font-weight:750; }
+.appointment-back { top:24px; right:80px; width:44px; height:44px; box-shadow:none; }
+.appointment-more { top:24px; right:24px; }
+.appointment-more > summary { width:44px; height:44px; box-shadow:none; }
+.appointment-detail-hero .appointment-workflow-rail { margin-top:16px; padding-top:16px; }
+
+/* A three-column baseline is shared by booking, customer and notes data. */
+.appointment-information-card .appointment-info-grid,
+.appointment-information-card .appointment-info-grid + hr + .appointment-section-heading + .appointment-info-grid {
+  grid-template-columns:repeat(3, minmax(0, 1fr));
+  align-items:start;
+}
+.appointment-information-card .appointment-info-grid > :nth-child(2),
+.appointment-information-card .appointment-info-grid > :nth-child(5) { justify-self:center; }
+.appointment-information-card .appointment-info-grid > :nth-child(3),
+.appointment-information-card .appointment-info-grid > :nth-child(6) { justify-self:end; text-align:right; }
+.appointment-notes-grid > :last-child { justify-self:end; width:100%; }
+.appointment-financial-grid { grid-template-columns:repeat(4, minmax(0, 1fr)); align-items:start; }
+.appointment-financial-grid > :nth-child(2),
+.appointment-financial-grid > :nth-child(3) { justify-self:center; }
+.appointment-financial-grid > :nth-child(4) { justify-self:end; text-align:right; }
+.appointment-scoped-editor { max-width:760px; margin:0 auto; }
+
+@media (max-width:760px) {
+  .appointment-detail-hero { padding:20px; }
+  .appointment-hero-main { grid-template-columns:174px minmax(0, 1fr); min-height:0; }
+  .appointment-hero-schedule,
+  .appointment-hero-assignment { display:grid; gap:5px; }
+  .appointment-header-time { font-size:24px; }
+  .appointment-header-therapist { font-size:22px; }
+  .appointment-header-room { font-size:16px; }
+  .appointment-information-card .appointment-info-grid > :nth-child(n),
+  .appointment-financial-grid > :nth-child(n),
+  .appointment-notes-grid > :last-child { justify-self:stretch; text-align:left; }
+}
+
+@media (max-width:480px) {
+  .appointment-hero-schedule,
+  .appointment-hero-assignment { display:flex; flex-wrap:wrap; }
+  .appointment-header-time { font-size:22px; }
+  .appointment-header-therapist { font-size:24px; }
+}

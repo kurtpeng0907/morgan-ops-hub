@@ -3791,55 +3791,40 @@ function renderAppointmentDetailView(appt, allAppts) {
       </details>
       <div class="appointment-hero-main">
         <section class="appointment-identity-card"><span class="ops-section-kicker">預約詳情</span><h3>${esc(customerCode)}</h3><p class="appointment-secondary-id" title="${esc(appt.id)}">${esc(appt.id)}</p></section>
-        <section class="appointment-hero-summary"><p class="appointment-header-line appointment-header-date">${esc(appt.date)}</p><p class="appointment-header-line appointment-header-time">${esc(appt.time)} → ${esc(end)}</p><p class="appointment-header-line appointment-header-therapist">${esc(therapistName(appt.therapistId))} · ${esc(room)}</p><p class="appointment-header-line appointment-header-service">${esc(courseName(appt.service))} · ${esc(String(appt.duration || 60))} 分鐘 · ${money(appt.price)}</p></section>
+        <section class="appointment-hero-summary"><div class="appointment-hero-schedule"><p class="appointment-header-line appointment-header-date">${esc(appt.date)}</p><p class="appointment-header-line appointment-header-time">${esc(appt.time)} ➡︎ ${esc(end)}</p></div><div class="appointment-hero-assignment"><p class="appointment-header-line appointment-header-therapist">${esc(therapistName(appt.therapistId))}</p><p class="appointment-header-line appointment-header-room">${esc(room)}</p></div><p class="appointment-header-line appointment-header-service">${esc(courseName(appt.service))} · ${esc(String(appt.duration || 60))} 分鐘 · ${money(appt.price)}</p></section>
       </div>
       ${bookingStageRailHtml(appt.bookingStage || "confirmed")}
     </header>
     <section class="appointment-card appointment-information-card"><div class="appointment-card-heading"><div><span class="ops-section-kicker">預約資訊</span><h4>基本安排</h4></div>${editButton("basic", "基本資訊")}</div><div class="appointment-info-grid">${item("預約時間", `${esc(appt.date)}<br>${esc(appt.time)} → ${esc(end)}`)}${item("按摩師", esc(therapistName(appt.therapistId)))}${item("工作室", esc(room))}${item("服務", esc(courseName(appt.service)))}${item("時長", `${esc(String(appt.duration || 60))} 分鐘`)}${item("應收金額", money(appt.price))}</div><hr><div class="appointment-section-heading"><span class="ops-section-kicker">顧客資訊</span>${editButton("customer", "顧客資訊")}</div><div class="appointment-info-grid">${item("顧客", esc(customerCode))}${item("顧客稱呼", esc(appt.customerName || "尚未設定"))}${item("聯絡方式", esc(appt.phone || "尚未設定"))}</div><hr><div class="appointment-notes-grid"><section class="appointment-detail-subsection"><span class="ops-section-kicker">本次備註</span><p>${esc(appt.notes || "尚無備註")}</p></section><section class="appointment-detail-subsection"><span class="ops-section-kicker">服務紀錄／顧客反饋</span><p>${esc(record.notes || "尚無服務紀錄")}</p></section></div></section>
-    <section class="appointment-card appointment-financial-card"><div class="appointment-section-heading"><span class="ops-section-kicker">財務</span>${editButton("financial", "帳務資訊")}</div><div class="appointment-financial-grid">${item("服務金額", money(appt.price))}${item("店家應回帳", money(storeAmount))}${item(esc(therapistName(appt.therapistId)), money(cut))}${item("實際回款", appt.collectedPrice ? money(appt.collectedPrice) : "尚未填寫")}</div><p class="appointment-financial-check">${storeAmount + cut === Number(appt.price || 0) ? "✓ 金額驗算正確" : "⚠ 分潤金額與服務金額不一致"}</p></section>
+    <section class="appointment-card appointment-financial-card"><div class="appointment-section-heading"><span class="ops-section-kicker">財務</span>${editButton("financial", "帳務資訊")}</div><div class="appointment-financial-grid">${item("服務金額", money(appt.price))}${item("應回帳款", money(storeAmount))}${item("師傅抽成", money(cut))}${item("實際回款", appt.collectedPrice ? money(appt.collectedPrice) : "尚未填寫")}</div><p class="appointment-financial-check">${storeAmount + cut === Number(appt.price || 0) ? "✓ 金額驗算正確" : "⚠ 分潤金額與服務金額不一致"}</p></section>
   </section></div>`;
 }
 
 function renderAppointmentDetailForm(appt, allAppts) {
   if (!appointmentDetailEditMode) return renderAppointmentDetailView(appt, allAppts);
   const record = appointmentRecord(appt) || {};
-  const cut = COURSE_CATALOG[appt.service]?.therapistCut || 0;
-  const companyCut = Number(appt.price || 0) - cut;
-  const sameCustomer = allAppts.filter((a) => a.phone && a.phone === appt.phone).length;
   const serviceOptions = [`<option value="">自訂/其他項目</option>`].concat(Object.entries(COURSE_CATALOG).map(([key, course]) => `<option value="${key}" ${appt.service === key ? "selected" : ""}>${esc(course.name)} (${money(course.price)})</option>`)).join("");
+  const scope = appointmentDetailEditSection || "all";
+  const scopeTitle = { basic: "編輯基本資訊", customer: "編輯顧客資訊", financial: "編輯帳務資訊", all: "編輯預約" }[scope] || "編輯預約";
+  const hasScope = (name) => scope === "all" || scope === name;
+  const hidden = (name, value) => `<input type="hidden" name="${name}" value="${esc(value ?? "")}">`;
+  const preservedFields = [
+    hidden("date", appt.date || todayKey()), hidden("time", appt.time || ""), hidden("therapistId", appt.therapistId || ""), hidden("room", appt.room || "R"),
+    hidden("bookingStage", appt.bookingStage || (String(appt.isCompleted) === "true" ? "completed" : "confirmed")), hidden("service", appt.service || ""), hidden("duration", appt.duration || 60),
+    hidden("price", appt.price || 0), hidden("collectedPrice", appt.collectedPrice || record.collectedPrice || ""), hidden("phone", appt.phone || ""),
+    hidden("customerName", appt.customerName || ""), hidden("notes", appt.notes || ""), hidden("recordNotes", record.notes || ""),
+    String(appt.isCompleted) === "true" ? hidden("isCompleted", "on") : ""
+  ].join("");
+  const basicFields = `<div><label class="label">預約日期</label><input name="date" type="date" class="input" value="${esc(appt.date || todayKey())}"></div><div><label class="label">預約時間</label><input name="time" type="time" class="input" value="${esc(appt.time || "")}"></div><div><label class="label">指定按摩師</label><select name="therapistId" class="input">${Object.keys(db.therapists).map((id) => `<option value="${esc(id)}" ${id === appt.therapistId ? "selected" : ""}>${esc(therapistName(id))}</option>`).join("")}</select></div><div><label class="label">工作室安排</label><select name="room" class="input"><option value="R" ${appt.room === "R" ? "selected" : ""}>Royal (R房)</option><option value="T" ${appt.room === "T" ? "selected" : ""}>Tiffany (T房)</option><option value="OUT" ${appt.room === "OUT" ? "selected" : ""}>外出</option></select></div><div><label class="label">預約建立狀態</label><select name="bookingStage" class="input">${bookingStageOptions(appt.bookingStage || (String(appt.isCompleted) === "true" ? "completed" : "confirmed"))}</select></div><div><label class="label">服務課程</label><select name="service" class="input">${serviceOptions}</select></div><div><label class="label">預估時長</label><input name="duration" type="number" min="10" step="10" class="input" value="${esc(appt.duration || 60)}"></div><div><label class="label">應收金額</label><input name="price" type="number" class="input" value="${esc(appt.price || 0)}"></div><div class="md:col-span-2"><label class="label">備註</label><textarea name="notes" class="input min-h-24" placeholder="例如：客人偏好、特殊需求、櫃檯交接事項">${esc(appt.notes || "")}</textarea></div><label class="flex items-center gap-3 rounded-xl border p-4 font-black md:col-span-2"><input name="isCompleted" type="checkbox" ${String(appt.isCompleted) === "true" ? "checked" : ""}> 標記為已完成</label><div class="md:col-span-2"><label class="label">服務紀錄 / 顧客反饋</label><textarea name="recordNotes" class="input min-h-28">${esc(record.notes || "")}</textarea></div>`;
+  const customerFields = `<div><label class="label">聯絡方式</label><input name="phone" class="input" value="${esc(appt.phone || "")}"></div><div><label class="label">顧客姓名 <span class="text-slate-400">(選填)</span></label><input name="customerName" class="input" value="${esc(appt.customerName || "")}" placeholder="未填則顯示顧客編碼"></div>`;
+  const financialFields = `<div><label class="label">應收金額</label><input name="price" type="number" class="input" value="${esc(appt.price || 0)}"></div><div><label class="label">實際回款</label><input name="collectedPrice" type="number" class="input" value="${esc(appt.collectedPrice || record.collectedPrice || "")}"></div>`;
   return `<div class="appointment-detail-layout">
-    <form id="appointmentDetailForm" class="card p-5 appointment-detail-form">
+    <form id="appointmentDetailForm" class="card p-5 appointment-detail-form appointment-scoped-editor">
       <div class="mb-5 flex flex-col justify-between gap-4 border-b pb-5 sm:flex-row sm:items-center">
-        <div><p class="text-xs font-black uppercase tracking-widest text-slate-500">預約資料</p><h3 class="text-xl font-black">${esc(customerDisplay(appt.phone, appt.customerName))}</h3><p class="mt-1 text-xs font-bold text-slate-500">ID：${esc(appt.id)}</p><p class="mt-2 inline-flex rounded-full bg-teal-50 px-3 py-1 text-xs font-black text-teal-700">下一步：${esc(bookingNextAction(appt))}</p></div>
-        <div class="flex gap-2"><button id="backToAppointmentListBtn" type="button" class="btn-light">返回清單</button><button data-delete-appt="${esc(appt.id)}" type="button" class="rounded-xl bg-rose-50 px-4 py-2 font-black text-rose-700">刪除</button></div>
+        <div><p class="text-xs font-black uppercase tracking-widest text-slate-500">預約資料</p><h3 class="text-xl font-black">${esc(scopeTitle)}</h3><p class="mt-1 text-xs font-bold text-slate-500">${esc(customerDisplay(appt.phone, appt.customerName))} · ${esc(appt.id)}</p></div>
       </div>
-      ${bookingStageRailHtml(appt.bookingStage || "confirmed")}
-      <section class="appointment-accounting-strip" aria-label="帳務摘要">
-        <div><span>應收金額</span><strong id="detailPriceSummary" class="text-rose-700">${money(appt.price)}</strong></div>
-        <div><span>店家應收</span><strong id="detailCompanySummary" class="text-teal-700">${money(companyCut)}</strong></div>
-        <div><span>師傅抽成</span><strong id="detailTherapistSummary" class="text-indigo-700">${money(cut)}</strong></div>
-      </section>
-      ${bookingPrimaryActionHtml(appt)}
-      <div class="grid gap-4 md:grid-cols-2">
-        <div><label class="label">預約日期</label><input name="date" type="date" class="input" value="${esc(appt.date || todayKey())}"></div>
-        <div><label class="label">預約時間</label><input name="time" type="time" class="input" value="${esc(appt.time || "")}"></div>
-        <div><label class="label">指定按摩師</label><select name="therapistId" class="input">${Object.keys(db.therapists).map((id) => `<option value="${esc(id)}" ${id === appt.therapistId ? "selected" : ""}>${esc(therapistName(id))}</option>`).join("")}</select></div>
-        <div><label class="label">工作室安排</label><select name="room" class="input"><option value="R" ${appt.room === "R" ? "selected" : ""}>Royal (R房)</option><option value="T" ${appt.room === "T" ? "selected" : ""}>Tiffany (T房)</option><option value="OUT" ${appt.room === "OUT" ? "selected" : ""}>外出</option></select></div>
-        <div><label class="label">預約建立狀態</label><select name="bookingStage" class="input">${bookingStageOptions(appt.bookingStage || (String(appt.isCompleted) === "true" ? "completed" : "confirmed"))}</select></div>
-        <div><label class="label">服務課程</label><select name="service" class="input">${serviceOptions}</select></div>
-        <div><label class="label">預估時長</label><input name="duration" type="number" min="10" step="10" class="input" value="${esc(appt.duration || 60)}"></div>
-        <div><label class="label">應收金額</label><input name="price" type="number" class="input" value="${esc(appt.price || 0)}"></div>
-        <div><label class="label">實際回款</label><input name="collectedPrice" type="number" class="input" value="${esc(appt.collectedPrice || record.collectedPrice || "")}"></div>
-        <div><label class="label">聯絡方式</label><input name="phone" class="input" value="${esc(appt.phone || "")}"></div>
-        <div><label class="label">顧客姓名 <span class="text-slate-400">(選填)</span></label><input name="customerName" class="input" value="${esc(appt.customerName || "")}" placeholder="未填則顯示顧客編碼"></div>
-        <div class="md:col-span-2"><label class="label">備註</label><textarea name="notes" class="input min-h-24" placeholder="例如：客人偏好、特殊需求、櫃檯交接事項">${esc(appt.notes || "")}</textarea></div>
-        <label class="flex items-center gap-3 rounded-xl border p-4 font-black md:col-span-2"><input name="isCompleted" type="checkbox" ${String(appt.isCompleted) === "true" ? "checked" : ""}> 標記為已完成</label>
-        <div class="md:col-span-2"><label class="label">服務紀錄 / 顧客反饋</label><textarea name="recordNotes" class="input min-h-28">${esc(record.notes || "")}</textarea></div>
-      </div>
-      <details class="appointment-customer-summary">
-        <summary><span><b>顧客摘要</b><small>${esc(customerDisplay(appt.phone, appt.customerName))} · 累積預約 ${sameCustomer} 筆</small></span>${iconHtml("chevron-down")}</summary>
-        <div><p><span>聯絡方式</span><b>${esc(appt.phone || "無聯絡方式")}</b></p><p><span>顧客備註</span><b class="whitespace-pre-wrap">${esc(db.customers[appt.phone]?.notes || "尚無顧客備註")}</b></p></div>
-      </details>
+      ${preservedFields}
+      <div class="grid gap-4 md:grid-cols-2">${hasScope("basic") ? basicFields : ""}${hasScope("customer") ? customerFields : ""}${hasScope("financial") ? financialFields : ""}</div>
       <p id="appointmentDetailError" class="mt-4 hidden text-sm font-black text-rose-600"></p>
       <div class="appointment-detail-actions mt-5 flex justify-end gap-3 border-t pt-4"><button id="cancelAppointmentDetailBtn" type="button" class="btn-light">取消</button><button class="btn-teal">儲存預約資料</button></div>
     </form>
