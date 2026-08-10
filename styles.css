@@ -553,6 +553,8 @@ body.h-screen { height: 100vh; }
 .icon-button { display: inline-flex; align-items: center; justify-content: center; }
 .icon-button .lucide { width: 20px; height: 20px; }
 .loader { display: inline-block; width: 18px; height: 18px; margin-left: 8px; border: 3px solid rgba(255,255,255,.4); border-top-color: white; border-radius: 999px; animation: spin 1s linear infinite; vertical-align: middle; }
+/* styles.css loads after Tailwind, so preserve the semantic hidden state. */
+.loader.hidden { display: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .input { width: 100%; border-radius: 8px; border: 1px solid #cfd8e6; padding: 11px 13px; font-weight: 750; outline: none; background: white; transition: border-color .15s ease, box-shadow .15s ease, background .15s ease; }
 .input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(20,184,166,.14); }
