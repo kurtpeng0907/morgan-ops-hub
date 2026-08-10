@@ -2183,6 +2183,182 @@ tr:hover td { background:#f8fafc; }
 .appointment-customer-summary p span { color:#73807c; font-size:11px; font-weight:600; }
 .appointment-customer-summary p b { color:#35413d; font-size:13px; font-weight:500; }
 
+/* Booking detail layout system: shared alignment, hierarchy, and responsive grids. */
+.appointment-detail-layout {
+  width:min(100%, 1220px);
+  max-width:1220px;
+}
+.appointment-detail-view {
+  width:100%;
+  max-width:1220px;
+  gap:22px;
+}
+.appointment-detail-header,
+.appointment-card {
+  border:1px solid #e1e7e4;
+  border-radius:14px;
+  background:#fff;
+  box-shadow:none;
+  padding:32px;
+}
+.appointment-card-heading,
+.appointment-section-heading {
+  margin-bottom:28px;
+}
+.appointment-card-heading h4 {
+  color:#202d29;
+  font-size:20px;
+  line-height:1.25;
+  font-weight:800;
+}
+.appointment-detail-view .ops-section-kicker {
+  color:#0f766e;
+  font-size:12px;
+  font-weight:600;
+  letter-spacing:.01em;
+}
+.appointment-information-card .appointment-info-grid,
+.appointment-information-card .appointment-info-grid + hr + .appointment-section-heading + .appointment-info-grid {
+  grid-template-columns:repeat(3, minmax(0, 1fr));
+  column-gap:32px;
+  row-gap:30px;
+}
+.appointment-financial-grid {
+  grid-template-columns:repeat(4, minmax(0, 1fr));
+  gap:30px 28px;
+}
+.appointment-info-item {
+  align-content:start;
+  gap:7px;
+  min-width:0;
+}
+.appointment-info-item span {
+  color:#78857f;
+  font-size:12px;
+  font-weight:600;
+  line-height:1.35;
+}
+.appointment-info-item strong {
+  color:#25332e;
+  font-size:16px;
+  font-weight:600;
+  line-height:1.45;
+}
+.appointment-financial-card .appointment-info-item strong {
+  color:#20312b;
+  font-size:23px;
+  font-weight:800;
+  letter-spacing:-.02em;
+  line-height:1.2;
+}
+.appointment-card hr {
+  margin:30px 0;
+  border-color:#edf1ef;
+}
+.appointment-notes-grid {
+  grid-template-columns:repeat(2, minmax(0, 1fr));
+  gap:32px;
+}
+.appointment-notes-grid p {
+  margin:7px 0 0;
+  color:#3d4c46;
+  font-size:15px;
+  font-weight:500;
+  line-height:1.6;
+}
+.appointment-financial-check {
+  margin:28px 0 0;
+  padding-top:18px;
+  border-top:1px solid #edf1ef;
+  color:#0f766e;
+  font-size:13px;
+  font-weight:600;
+}
+
+/* Header controls use one 40px alignment rhythm. */
+.ops-date-toolbar,
+.ops-context-date { align-items:center; }
+.ops-context-date .context-today,
+.ops-context-date .ops-date-picker,
+#adminDashboard #topRefreshBtn {
+  height:40px;
+  min-height:40px;
+  box-sizing:border-box;
+}
+.ops-context-date .context-today {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  padding:0 13px;
+}
+.ops-context-date .ops-date-picker { padding:0 3px; }
+.ops-context-date .ops-date-picker label {
+  height:32px;
+  padding-block:0;
+}
+.ops-context-date .ops-date-picker .month-btn {
+  display:grid;
+  width:34px;
+  height:34px;
+  place-items:center;
+  padding:0;
+}
+#adminDashboard #topRefreshBtn {
+  display:grid;
+  width:40px;
+  place-items:center;
+  padding:0;
+}
+
+/* The selected navigation state remains quiet beside operational content. */
+#adminSidebar .nav-btn.active {
+  border:0;
+  background:#edf6f3;
+  color:#185e55;
+  font-weight:700;
+  box-shadow:inset 3px 0 0 #16877d;
+}
+#adminSidebar .nav-btn.active .lucide { color:#16877d; }
+
+/* Keep dispatch tools aligned to the booking content instead of floating in the canvas. */
+#view-dispatch { position:relative; }
+.dispatch-floating-tools {
+  position:absolute;
+  top:0;
+  right:max(0px, calc((100% - 1220px) / 2));
+  z-index:8;
+}
+#view-dispatch .dispatch-floating-tools + .appointment-detail-layout { margin-top:58px; }
+
+@media (max-width:1023px) {
+  .appointment-detail-layout,
+  .appointment-detail-view { max-width:100%; }
+  .appointment-information-card .appointment-info-grid,
+  .appointment-information-card .appointment-info-grid + hr + .appointment-section-heading + .appointment-info-grid,
+  .appointment-financial-grid {
+    grid-template-columns:repeat(2, minmax(0, 1fr));
+  }
+  .appointment-financial-card .appointment-info-item strong { font-size:21px; }
+  .dispatch-floating-tools { right:0; }
+}
+@media (max-width:640px) {
+  .appointment-detail-view { gap:20px; }
+  .appointment-detail-header,
+  .appointment-card { padding:22px 20px; }
+  .appointment-card-heading,
+  .appointment-section-heading { margin-bottom:22px; }
+  .appointment-information-card .appointment-info-grid,
+  .appointment-information-card .appointment-info-grid + hr + .appointment-section-heading + .appointment-info-grid,
+  .appointment-financial-grid,
+  .appointment-notes-grid { grid-template-columns:1fr; }
+  .appointment-info-grid .appointment-info-item:first-child { grid-column:auto; }
+  .appointment-info-item strong { font-size:16px; }
+  .appointment-financial-card .appointment-info-item strong { font-size:22px; }
+  .appointment-card hr { margin:28px 0; }
+  .dispatch-floating-tools { position:fixed; top:auto; right:12px; }
+  #view-dispatch .dispatch-floating-tools + .appointment-detail-layout { margin-top:0; }
+}
+
 .dispatch-floating-tools {
   position:fixed;
   z-index:36;
@@ -2380,4 +2556,25 @@ tr:hover td { background:#f8fafc; }
   #adminDashboard .ops-command-bar.is-compact-context { grid-template-columns:minmax(0,1fr); }
   #adminDashboard .ops-command-bar.is-compact-context .ops-next-action { min-height:70px; border-right:0; border-bottom:1px solid #edf0f5; }
   #adminDashboard .ops-command-bar.is-compact-context .ops-command-actions { grid-column:auto; border-top:0; }
+}
+
+/* Final booking-detail placement override after legacy floating-tool rules. */
+#view-dispatch { position:relative; }
+#view-dispatch .dispatch-floating-tools {
+  position:absolute;
+  top:0;
+  right:max(0px, calc((100% - 1220px) / 2));
+  z-index:8;
+}
+#view-dispatch .dispatch-floating-tools + .appointment-detail-layout { margin-top:58px; }
+@media (max-width:1023px) {
+  #view-dispatch .dispatch-floating-tools { right:0; }
+}
+@media (max-width:640px) {
+  #view-dispatch .dispatch-floating-tools {
+    position:fixed;
+    top:auto;
+    right:12px;
+  }
+  #view-dispatch .dispatch-floating-tools + .appointment-detail-layout { margin-top:0; }
 }
