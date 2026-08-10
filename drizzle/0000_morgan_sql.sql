@@ -64,7 +64,7 @@ CREATE INDEX appointments_customer_date_idx ON appointments(customer_id, date DE
 
 CREATE TABLE service_records (
   record_id text PRIMARY KEY,
-  appointment_id text REFERENCES appointments(id),
+  appointment_id text,
   customer_id uuid NOT NULL REFERENCES customers(id),
   customer_key_legacy text NOT NULL,
   date date NOT NULL,

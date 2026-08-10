@@ -111,7 +111,7 @@ async function main() {
         record_id, appointment_id, customer_id, customer_key_legacy, date, therapist_id,
         therapist_name, service, collected_price, notes, created_at, updated_at, schema_version
       ) VALUES (
-        ${item.recordId}, (SELECT id FROM appointments WHERE id = ${item.appointmentId}),
+        ${item.recordId}, ${item.appointmentId},
         (SELECT id FROM customers WHERE customer_key_legacy = ${item.customerKeyLegacy}),
         ${item.customerKeyLegacy}, ${item.date}::date, ${item.therapistId}, ${item.therapistName},
         ${item.service}, ${item.collectedPrice}::numeric, ${item.notes},

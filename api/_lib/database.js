@@ -3,7 +3,7 @@
 let client;
 
 function databaseUrl() {
-  const value = String(process.env.DATABASE_URL || process.env.POSTGRES_URL || "").trim();
+  const value = String(process.env.MORGAN_DATABASE_URL || process.env.DATABASE_URL || process.env.POSTGRES_URL || "").trim();
   if (!value) throw Object.assign(new Error("DATABASE_URL is not configured"), { code: "database_not_configured" });
   return value;
 }

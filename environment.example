@@ -2,7 +2,7 @@
 MORGAN_DATA_SOURCE=apps-script
 
 # Neon Marketplace injects this server-side. Never expose it with a VITE_ or NEXT_PUBLIC_ prefix.
-DATABASE_URL=postgresql://user:password@host/database?sslmode=require
+MORGAN_DATABASE_URL=postgresql://user:password@host/database?sslmode=verify-full
 
 # Existing server-only secrets
 MORGAN_SESSION_SECRET=replace-with-at-least-32-random-characters

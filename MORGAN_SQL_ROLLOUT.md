@@ -19,7 +19,7 @@
 | `shadow` | 使用 Sheets 回應瀏覽器，同一登入請求並行讀 SQL，日誌只記 counts 與 SHA-256 差異。 |
 | `sql` | Neon 是唯一正式讀寫來源；不自動 fallback 到 Apps Script。 |
 
-Preview 與 Production 必須使用不同 Neon branch／連線字串。`DATABASE_URL` 只能存在 Vercel 加密環境變數，不得放入 HTML 或公開前綴環境變數。
+Preview 與 Production 必須使用不同 Neon branch／連線字串。應優先使用 `MORGAN_DATABASE_URL`；它只能存在 Vercel 加密環境變數，不得放入 HTML 或公開前綴環境變數。
 
 ## 建立資料庫後的執行順序
 
