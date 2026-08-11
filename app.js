@@ -84,7 +84,6 @@ let editingAppointmentId = null;
 let activeAppointmentId = null;
 let appointmentDetailEditMode = false;
 let appointmentDetailEditSection = "";
-let dispatchFloatingCleanup = null;
 let pendingClientSelectionId = null;
 let liveTimer = null;
 let pendingBackupReason = "";
@@ -2238,7 +2237,6 @@ function renderAll() {
   renderPortal();
   renderTopToolbar();
   enhanceOverviewWorkflow();
-  enhanceDispatchWorkflow();
   enhanceReportExceptions();
   restoreViewStateFromUrl();
   hydrateResponsiveTables();
@@ -2253,7 +2251,6 @@ function renderCurrentView(tab = activeTab) {
     enhanceOverviewWorkflow();
   } else if (tab === "dispatch") {
     renderDispatch();
-    enhanceDispatchWorkflow();
   } else if (tab === "customer") renderCustomers();
   else if (tab === "personnel") renderPersonnel();
   else if (tab === "report") {
@@ -3521,7 +3518,6 @@ function renderAppointmentDetail() {
   }
   hydrateResponsiveTables(section);
   refreshIcons();
-  enhanceDispatchWorkflow();
 }
 
 function bookingWorkbenchIntroHtml(monthAppts, pendingSelections) {
@@ -5613,74 +5609,6 @@ function enhanceOverviewWorkflow() {
     details.appendChild(body);
   } else shell.querySelector(":scope > .ops-flow-panel")?.remove();
   view.querySelectorAll("[data-open-work-appt]").forEach((button) => button.onclick = () => openAppointmentDetailPage(button.dataset.openWorkAppt));
-}
-
-function enhanceDispatchWorkflow() {
-  const view = $("view-dispatch");
-  dispatchFloatingCleanup?.();
-  dispatchFloatingCleanup = null;
-  if (!view || view.querySelector(".dispatch-floating-tools")) return;
-  const active = activeAppointmentId ? db.appointments[activeAppointmentId] : null;
-  const activeWorkflowIndex = active ? bookingWorkflowIndex(active.bookingStage) : -1;
-  let noticeHtml = "";
-  if (active) {
-    const cut = COURSE_CATALOG[active.service]?.therapistCut || 0;
-    const companyCut = Number(active.price || 0) - cut;
-    noticeHtml = `<details class="appointment-notice-float">
-      <summary aria-label="開啟預約通知工具" aria-expanded="false">${iconHtml("message-square-text")}<span>通知</span></summary>
-      <section class="appointment-notice-popover" aria-label="預約通知工具">
-        <header><div><strong>複製通知訊息</strong><small>${esc(customerDisplay(active.phone, active.customerName))}</small></div><span class="badge ${bookingStageClass(active.bookingStage)}">${esc(bookingStageLabel(active.bookingStage))}</span></header>
-        <div class="appointment-notice-snapshot"><span>師傅 <b>${esc(therapistName(active.therapistId))}</b></span><span>時間 <b>${esc(active.date)} ${esc(active.time)}</b></span><span>房型 <b>${active.room === "OUT" ? "外出" : `${esc(active.room || "-")}房`}</b></span><span>應收／回款 <b>${money(active.price)}／${money(companyCut)}</b></span></div>
-        <div class="appointment-notice-tabs" role="tablist" aria-label="通知對象"><button type="button" class="active" role="tab" aria-selected="true" data-notice-tab="therapist">給師傅</button><button type="button" role="tab" aria-selected="false" data-notice-tab="customer">給顧客</button></div>
-        <div class="appointment-notice-pane" data-notice-pane="therapist"><textarea id="therapistNoticeText" readonly class="input">${esc(therapistNoticeText(active))}</textarea><button type="button" class="btn-light" data-copy-notice="therapistNoticeText">複製給師傅</button></div>
-        <div class="appointment-notice-pane" data-notice-pane="customer" hidden><textarea id="customerNoticeText" readonly class="input">${esc(customerNoticeText(active))}</textarea><button type="button" class="btn-light" data-copy-notice="customerNoticeText">複製給顧客</button></div>
-        <footer><button type="button" class="btn-teal" data-mark-stage="${esc(active.id)}" data-stage="pre_notice">標記已通知</button></footer>
-      </section>
-    </details>`;
-  }
-  const stageItems = BOOKING_WORKFLOW.map((phase, index) => {
-    const stateClass = index === activeWorkflowIndex ? "is-current" : index < activeWorkflowIndex ? "is-complete" : "";
-    const ariaCurrent = index === activeWorkflowIndex ? ` aria-current="step"` : "";
-    return `<span class="${stateClass}"${ariaCurrent}>${iconHtml(phase.icon)}<b>${index + 1}</b><strong>${esc(phase.label)}</strong></span>`;
-  }).join("");
-  view.insertAdjacentHTML("afterbegin", `<div class="dispatch-floating-tools"><details class="booking-stage-float"><summary aria-label="開啟預約處理流程" aria-expanded="false">${iconHtml("list-ordered")}<span>預約流程</span><b>${BOOKING_WORKFLOW.length}</b></summary><div class="booking-stage-popover" aria-label="預約處理流程"><header><strong>預約處理流程</strong><small>預約成立後，依序完成五項作業</small></header>${stageItems}</div></details>${noticeHtml}</div>`);
-
-  const tools = view.querySelector(".dispatch-floating-tools");
-  const floats = [...tools.querySelectorAll(":scope > details")];
-  floats.forEach((detail) => detail.addEventListener("toggle", () => {
-    detail.querySelector(":scope > summary")?.setAttribute("aria-expanded", String(detail.open));
-    if (detail.open) floats.forEach((peer) => { if (peer !== detail) peer.open = false; });
-  }));
-  tools.querySelectorAll("[data-notice-tab]").forEach((button) => button.onclick = () => {
-    const key = button.dataset.noticeTab;
-    tools.querySelectorAll("[data-notice-tab]").forEach((tab) => {
-      const activeTab = tab === button;
-      tab.classList.toggle("active", activeTab);
-      tab.setAttribute("aria-selected", String(activeTab));
-    });
-    tools.querySelectorAll("[data-notice-pane]").forEach((pane) => { pane.hidden = pane.dataset.noticePane !== key; });
-  });
-  tools.querySelectorAll("[data-copy-notice]").forEach((button) => button.onclick = async () => {
-    const target = $(button.dataset.copyNotice);
-    if (!target) return;
-    target.select();
-    await copyText(target.value, `${button.dataset.copyNotice === "customerNoticeText" ? "給顧客" : "給師傅"}通知已複製`);
-  });
-  tools.querySelectorAll("[data-mark-stage]").forEach((button) => button.onclick = () => updateAppointmentStage(button.dataset.markStage, button.dataset.stage));
-  const onPointerDown = (event) => { if (!tools.contains(event.target)) floats.forEach((detail) => { detail.open = false; }); };
-  const onKeyDown = (event) => {
-    if (event.key !== "Escape") return;
-    const open = floats.find((detail) => detail.open);
-    if (!open) return;
-    open.open = false;
-    open.querySelector(":scope > summary")?.focus();
-  };
-  document.addEventListener("pointerdown", onPointerDown);
-  document.addEventListener("keydown", onKeyDown);
-  dispatchFloatingCleanup = () => {
-    document.removeEventListener("pointerdown", onPointerDown);
-    document.removeEventListener("keydown", onKeyDown);
-  };
 }
 
 function enhanceReportExceptions() {
