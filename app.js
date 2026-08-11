@@ -1868,8 +1868,12 @@ async function updateClientSelection(selection, status, extra = {}) {
   return true;
 }
 
+const PUBLIC_CLIENT_SELECTION_ORIGIN = "https://morgan-ops-hub.vercel.app";
+
 function clientSelectionUrl({ selectionId = "", date, time, service, therapistIds = [] }) {
-  const url = new URL("client-selection.html", window.location.href);
+  // A link copied to a customer must never inherit a Preview/local hostname:
+  // Preview deployments are access-protected and cannot be opened externally.
+  const url = new URL("/client-selection.html", PUBLIC_CLIENT_SELECTION_ORIGIN);
   if (selectionId) {
     url.searchParams.set("selection", selectionId);
     return url.href;

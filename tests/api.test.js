@@ -296,6 +296,12 @@ test("scoped booking editors have isolated visible field contracts", () => {
   assert.match(source, /\.filter\(\(\[name, value\]\) => !visibleFields\.has\(name\)/);
 });
 
+test("customer selection links always use the public Morgan origin", () => {
+  const source = readFileSync(resolve(__dirname, "../app.js"), "utf8");
+  assert.match(source, /PUBLIC_CLIENT_SELECTION_ORIGIN\s*=\s*"https:\/\/morgan-ops-hub\.vercel\.app"/);
+  assert.match(source, /new URL\("\/client-selection\.html", PUBLIC_CLIENT_SELECTION_ORIGIN\)/);
+});
+
 test("shadow comparison projects legacy 30-day data to the selected-day SQL contract", () => {
   const projected = projectSelectedDay({
     therapists: { "002": { name: "A" }, "003": { name: "B" } },
