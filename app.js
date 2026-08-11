@@ -250,6 +250,8 @@ function appointmentMetaFromAppointment(appt = {}) {
     remittanceDue: cleanPin(appt.remittanceDue || ""),
     remittancePaid: appt.remittancePaid === true || String(appt.remittancePaid) === "true",
     remittanceMethod: String(appt.remittanceMethod || "").trim(),
+    remittanceNote: String(appt.remittanceNote || "").trim(),
+    remittanceAccountLast5: String(appt.remittanceAccountLast5 || "").replace(/\D/g, "").slice(-5),
     selectionId: String(appt.selectionId || "").trim(),
     updatedAt: new Date().toISOString()
   };
@@ -450,6 +452,8 @@ function normalizeDb(data) {
       remittanceDue: metaHas("remittanceDue") ? meta.remittanceDue : appt.remittanceDue,
       remittancePaid: metaHas("remittancePaid") ? meta.remittancePaid : appt.remittancePaid,
       remittanceMethod: metaHas("remittanceMethod") ? meta.remittanceMethod : appt.remittanceMethod,
+      remittanceNote: metaHas("remittanceNote") ? meta.remittanceNote : appt.remittanceNote,
+      remittanceAccountLast5: metaHas("remittanceAccountLast5") ? meta.remittanceAccountLast5 : appt.remittanceAccountLast5,
       selectionId: metaHas("selectionId") ? meta.selectionId : appt.selectionId
     });
     appt.id = appt.id || id;
@@ -461,6 +465,8 @@ function normalizeDb(data) {
     appt.remittanceDue = cleanPin(appt.remittanceDue || "");
     appt.remittancePaid = String(appt.remittancePaid) === "true" || appt.remittancePaid === true;
     appt.remittanceMethod = String(appt.remittanceMethod || "").trim();
+    appt.remittanceNote = String(appt.remittanceNote || "").trim();
+    appt.remittanceAccountLast5 = String(appt.remittanceAccountLast5 || "").replace(/\D/g, "").slice(-5);
     appt.customerName = String(appt.customerName || "").trim();
     appt.bookingStage = normalizeBookingStage(appt.bookingStage, appt);
     appt.isCompleted = appt.bookingStage === "completed";
@@ -3501,6 +3507,9 @@ function renderAppointmentDetail() {
     const roomField = editable("room");
     const phoneField = editable("phone");
     const customerNameField = editable("customerName");
+    const remittanceMethodField = editable("remittanceMethod");
+    const remittanceAccountField = editable("remittanceAccountLast5");
+    const transferDetails = form.querySelector("[data-remittance-transfer-details]");
     if (serviceField) serviceField.onchange = () => {
       const course = COURSE_CATALOG[serviceField.value];
       if (course) {
@@ -3513,8 +3522,30 @@ function renderAppointmentDetail() {
       const customer = db.customers[phoneField.value.trim()];
       if (customer && customerNameField && !customerNameField.value.trim()) customerNameField.value = customer.name;
     };
+    const syncTransferDetails = () => {
+      const isTransfer = remittanceMethodField?.value === "轉帳";
+      transferDetails?.toggleAttribute("hidden", !isTransfer);
+      if (remittanceAccountField) {
+        remittanceAccountField.required = isTransfer;
+        if (!isTransfer) remittanceAccountField.value = "";
+      }
+    };
+    if (remittanceMethodField) {
+      remittanceMethodField.onchange = syncTransferDetails;
+      syncTransferDetails();
+    }
     form.onsubmit = (event) => {
       event.preventDefault();
+      const accountLast5 = String(remittanceAccountField?.value || "").replace(/\D/g, "");
+      if (remittanceMethodField?.value === "轉帳" && !/^\d{5}$/.test(accountLast5)) {
+        const error = form.querySelector("#appointmentDetailError");
+        if (error) {
+          error.textContent = "選擇轉帳時，請填寫正確的帳戶末五碼。";
+          error.classList.remove("hidden");
+        }
+        remittanceAccountField?.focus();
+        return;
+      }
       saveAppointmentDetailForm(form);
     };
   }
@@ -3814,13 +3845,15 @@ function appointmentInlineEditorHtml(appt, scope, record = {}) {
   const values = {
     date: appt.date || todayKey(), time: appt.time || "", therapistId: appt.therapistId || "", room: appt.room || "R",
     bookingStage: appt.bookingStage || (String(appt.isCompleted) === "true" ? "completed" : "confirmed"), service: appt.service || "", duration: appt.duration || 60,
-    price: appt.price || 0, collectedPrice: appt.collectedPrice || currentRecord.collectedPrice || "", phone: appt.phone || "",
+    price: appt.price || 0, collectedPrice: appt.collectedPrice || currentRecord.collectedPrice || "",
+    remittanceMethod: appt.remittanceMethod || "", remittanceNote: appt.remittanceNote || "", remittanceAccountLast5: appt.remittanceAccountLast5 || "",
+    phone: appt.phone || "",
     customerName: appt.customerName || "", notes: appt.notes || "", recordNotes: currentRecord.notes || "", isCompleted: String(appt.isCompleted) === "true" ? "on" : ""
   };
   const visibleFieldsByScope = {
     basic: new Set(["date", "time", "therapistId", "room", "bookingStage", "service", "duration", "price"]),
     customer: new Set(["phone", "customerName", "notes", "recordNotes"]),
-    financial: new Set(["price", "collectedPrice"]),
+    financial: new Set(["price", "collectedPrice", "remittanceMethod", "remittanceNote", "remittanceAccountLast5"]),
     all: new Set(Object.keys(values))
   };
   const visibleFields = visibleFieldsByScope[scope] || visibleFieldsByScope.all;
@@ -3831,7 +3864,7 @@ function appointmentInlineEditorHtml(appt, scope, record = {}) {
   const basicFields = `<div><label class="label">預約日期</label><input name="date" type="date" class="input" value="${esc(appt.date || todayKey())}"></div><div><label class="label">預約時間</label><input name="time" type="time" class="input" value="${esc(appt.time || "")}"></div><div><label class="label">指定按摩師</label><select name="therapistId" class="input">${Object.keys(db.therapists).map((id) => `<option value="${esc(id)}" ${id === appt.therapistId ? "selected" : ""}>${esc(therapistName(id))}</option>`).join("")}</select></div><div><label class="label">工作室安排</label><select name="room" class="input"><option value="R" ${appt.room === "R" ? "selected" : ""}>Royal (R房)</option><option value="T" ${appt.room === "T" ? "selected" : ""}>Tiffany (T房)</option><option value="OUT" ${appt.room === "OUT" ? "selected" : ""}>外出</option></select></div><div><label class="label">預約建立狀態</label><select name="bookingStage" class="input">${bookingStageOptions(appt.bookingStage || (String(appt.isCompleted) === "true" ? "completed" : "confirmed"))}</select></div><div><label class="label">服務課程</label><select name="service" class="input">${serviceOptions}</select></div><div><label class="label">預估時長</label><input name="duration" type="number" min="10" step="10" class="input" value="${esc(appt.duration || 60)}"></div><div><label class="label">應收金額</label><input name="price" type="number" class="input" value="${esc(appt.price || 0)}"></div>`;
   const customerFields = `<div><label class="label">聯絡方式</label><input name="phone" class="input" value="${esc(appt.phone || "")}"></div><div><label class="label">顧客姓名 <span class="text-slate-400">(選填)</span></label><input name="customerName" class="input" value="${esc(appt.customerName || "")}" placeholder="未填則顯示顧客編碼"></div><div class="md:col-span-2"><label class="label">本次備註</label><textarea name="notes" class="input min-h-24" placeholder="例如：客人偏好、特殊需求、櫃檯交接事項">${esc(appt.notes || "")}</textarea></div><div class="md:col-span-2"><label class="label">服務紀錄／顧客反饋</label><textarea name="recordNotes" class="input min-h-28">${esc(currentRecord.notes || "")}</textarea></div>`;
   const completionFields = scope === "all" ? `<label class="flex items-center gap-3 rounded-xl border p-4 font-black md:col-span-2"><input name="isCompleted" type="checkbox" ${String(appt.isCompleted) === "true" ? "checked" : ""}> 標記為已完成</label>` : "";
-  const financialFields = `<div><label class="label">應收金額</label><input name="price" type="number" class="input" value="${esc(appt.price || 0)}"></div><div><label class="label">實際回款</label><input name="collectedPrice" type="number" class="input" value="${esc(appt.collectedPrice || currentRecord.collectedPrice || "")}"></div>`;
+  const financialFields = `<div><label class="label">應收金額</label><input name="price" type="number" class="input" value="${esc(appt.price || 0)}"></div><div><label class="label">實際回款</label><input name="collectedPrice" type="number" min="0" class="input" value="${esc(appt.collectedPrice || currentRecord.collectedPrice || "")}"></div><div><label class="label">回款方式</label><select name="remittanceMethod" class="input" data-remittance-method><option value="">尚未選擇</option><option value="現金回帳" ${appt.remittanceMethod === "現金回帳" ? "selected" : ""}>現金</option><option value="轉帳" ${appt.remittanceMethod === "轉帳" ? "selected" : ""}>轉帳</option></select></div><div><label class="label">回款備註 <span class="text-slate-400">(選填)</span></label><input name="remittanceNote" class="input" value="${esc(appt.remittanceNote || "")}" placeholder="例如：收款人、日期或交接說明"></div><div class="md:col-span-2" data-remittance-transfer-details${appt.remittanceMethod === "轉帳" ? "" : " hidden"}><label class="label">轉帳帳戶末五碼</label><input name="remittanceAccountLast5" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" class="input" value="${esc(appt.remittanceAccountLast5 || "")}" placeholder="請填入 5 碼"><p class="appointment-inline-help">選擇轉帳時必填；只保留帳戶末五碼供核對。</p></div>`;
   return `<form id="appointmentDetailForm" class="appointment-detail-form appointment-inline-editor appointment-inline-editor--${esc(scope)}">
       <div class="appointment-inline-editor-heading"><div><span class="ops-section-kicker">${esc(scopeTitle)}</span><p>只會更新這個區塊；其他預約資料保持不變。</p></div></div>
       ${preservedFields}
@@ -3852,9 +3885,14 @@ function renderAppointmentDetailView(appt, allAppts) {
   const room = appt.room === "OUT" ? "外出" : `${appt.room || "R"}房`;
   const editScope = appointmentDetailEditMode ? (appointmentDetailEditSection || "all") : "";
   const editButton = (section, label) => `<button type="button" class="appointment-section-edit" data-edit-appointment data-edit-section="${section}" aria-label="編輯${label}" title="編輯${label}">${appointmentEditIconHtml()}<span class="sr-only">編輯${label}</span></button>`;
+  const remittanceDetail = [
+    appt.remittanceMethod ? `方式：${esc(appt.remittanceMethod === "現金回帳" ? "現金" : appt.remittanceMethod)}` : "",
+    appt.remittanceMethod === "轉帳" && appt.remittanceAccountLast5 ? `帳戶末五碼：${esc(appt.remittanceAccountLast5)}` : "",
+    appt.remittanceNote ? `備註：${esc(appt.remittanceNote)}` : ""
+  ].filter(Boolean).join("<br>");
   const basicContent = editScope === "basic" || editScope === "all" ? appointmentInlineEditorHtml(appt, editScope === "all" ? "all" : "basic", record) : `<div class="appointment-info-grid">${item("預約時間", `${esc(appt.date)}<br>${esc(appt.time)} → ${esc(end)}`)}${item("按摩師", esc(therapistName(appt.therapistId)))}${item("工作室", esc(room))}${item("服務", esc(courseName(appt.service)))}${item("時長", `${esc(String(appt.duration || 60))} 分鐘`)}${item("應收金額", money(appt.price))}</div>`;
   const customerContent = editScope === "customer" ? appointmentInlineEditorHtml(appt, "customer", record) : `<div class="appointment-info-grid">${item("顧客", esc(customerCode))}${item("顧客稱呼", esc(appt.customerName || "尚未設定"))}${item("聯絡方式", esc(appt.phone || "尚未設定"))}</div>`;
-  const financialContent = editScope === "financial" ? appointmentInlineEditorHtml(appt, "financial", record) : `<div class="appointment-financial-grid">${item("服務金額", money(appt.price))}${item("應回帳款", money(storeAmount))}${item("師傅抽成", money(cut))}${item("實際回款", appt.collectedPrice ? money(appt.collectedPrice) : "尚未填寫")}</div><p class="appointment-financial-check">${storeAmount + cut === Number(appt.price || 0) ? "✓ 金額驗算正確" : "⚠ 分潤金額與服務金額不一致"}</p>`;
+  const financialContent = editScope === "financial" ? appointmentInlineEditorHtml(appt, "financial", record) : `<div class="appointment-financial-grid">${item("服務金額", money(appt.price))}${item("應回帳款", money(storeAmount))}${item("師傅抽成", money(cut))}${item("實際回款", `${appt.collectedPrice ? money(appt.collectedPrice) : "尚未填寫"}${remittanceDetail ? `<small class="appointment-remittance-detail">${remittanceDetail}</small>` : ""}`)}</div><p class="appointment-financial-check">${storeAmount + cut === Number(appt.price || 0) ? "✓ 金額驗算正確" : "⚠ 分潤金額與服務金額不一致"}</p>`;
   return `<div class="appointment-detail-layout"><section class="appointment-detail-view">
     ${bookingMobileNextActionHtml(appt)}
     <header class="appointment-detail-header appointment-detail-hero">
@@ -3864,8 +3902,8 @@ function renderAppointmentDetailView(appt, allAppts) {
       ${bookingStageRailHtml(appt.bookingStage || "confirmed")}
     </header>
     ${bookingPrimaryActionHtml(appt)}
-    <section id="appointmentInformationCard" class="appointment-card appointment-information-card"><div class="appointment-card-heading"><div><span class="ops-section-kicker">預約資訊</span><h4>基本安排</h4></div>${editScope ? "" : editButton("basic", "基本資訊")}</div>${basicContent}${editScope === "all" ? "" : `<hr><div class="appointment-section-heading"><span class="ops-section-kicker">顧客資訊</span>${editButton("customer", "顧客資訊")}</div>${customerContent}<hr><div class="appointment-notes-grid"><section class="appointment-detail-subsection"><span class="ops-section-kicker">本次備註</span><p>${esc(appt.notes || "尚無備註")}</p></section><section class="appointment-detail-subsection"><span class="ops-section-kicker">服務紀錄／顧客反饋</span><p>${esc(record.notes || "尚無服務紀錄")}</p></section></div>`}</section>
-    ${editScope === "all" ? "" : `<section id="appointmentFinancialCard" class="appointment-card appointment-financial-card"><div class="appointment-section-heading"><span class="ops-section-kicker">財務</span>${editButton("financial", "帳務資訊")}</div>${financialContent}</section>`}
+    <section id="appointmentInformationCard" class="appointment-card appointment-information-card"><div class="appointment-card-heading"><div><span class="ops-section-kicker">預約資訊</span><h4>基本安排</h4></div>${editScope === "all" ? "" : editButton("basic", "基本資訊")}</div>${basicContent}${editScope === "all" ? "" : `<hr><div class="appointment-section-heading"><span class="ops-section-kicker">顧客資訊</span>${editScope === "customer" ? "" : editButton("customer", "顧客資訊")}</div>${customerContent}<hr><div class="appointment-notes-grid"><section class="appointment-detail-subsection"><span class="ops-section-kicker">本次備註</span><p>${esc(appt.notes || "尚無備註")}</p></section><section class="appointment-detail-subsection"><span class="ops-section-kicker">服務紀錄／顧客反饋</span><p>${esc(record.notes || "尚無服務紀錄")}</p></section></div>`}</section>
+    ${editScope === "all" ? "" : `<section id="appointmentFinancialCard" class="appointment-card appointment-financial-card"><div class="appointment-section-heading"><span class="ops-section-kicker">財務</span>${editScope === "financial" ? "" : editButton("financial", "帳務資訊")}</div>${financialContent}</section>`}
     ${editScope ? "" : bookingMobileActionDockHtml(appt)}
   </section></div>`;
 }
@@ -3888,12 +3926,20 @@ async function saveAppointmentDetailForm(form) {
     bookingStage: normalizeBookingStage(data.bookingStage || old.bookingStage || "confirmed", old),
     isCompleted: data.isCompleted === "on" || data.bookingStage === "completed",
     collectedPrice: data.collectedPrice || "",
+    remittanceMethod: String(data.remittanceMethod || "").trim(),
+    remittanceNote: String(data.remittanceNote || "").trim(),
+    remittanceAccountLast5: String(data.remittanceAccountLast5 || "").replace(/\D/g, "").slice(-5),
     phone: String(data.phone || "").trim(),
     customerName: String(data.customerName || "").trim(),
     notes: String(data.notes || "").trim()
   };
   const err = form.querySelector("#appointmentDetailError");
   if (next.isCompleted) next.bookingStage = "completed";
+  if (next.remittanceMethod === "轉帳" && !/^\d{5}$/.test(next.remittanceAccountLast5)) {
+    err.textContent = "選擇轉帳時，請填寫正確的帳戶末五碼。";
+    err.classList.remove("hidden");
+    return;
+  }
   if (!next.date || !next.time || !next.phone) {
     err.textContent = "日期、時間與聯絡方式必填；顧客姓名可留空。";
     err.classList.remove("hidden");
@@ -3914,7 +3960,7 @@ async function saveAppointmentDetailForm(form) {
     }
     customer.records ||= [];
     const idx = customer.records.findIndex((r) => r.id === next.id);
-    const record = { id: next.id, date: next.date, therapistId: next.therapistId, therapistName: therapistName(next.therapistId), service: next.service, collectedPrice: next.collectedPrice, notes: data.recordNotes || "" };
+    const record = { id: next.id, date: next.date, therapistId: next.therapistId, therapistName: therapistName(next.therapistId), service: next.service, collectedPrice: next.collectedPrice, notes: data.recordNotes || "", remittanceMethod: next.remittanceMethod, remittanceNote: next.remittanceNote, remittanceAccountLast5: next.remittanceAccountLast5 };
     if (idx >= 0) customer.records[idx] = { ...customer.records[idx], ...record };
     else customer.records.push(record);
     db.customers[next.phone] = customer;
