@@ -14,6 +14,10 @@
     const form = $("appointmentDetailForm");
     const appt = activeAppointmentId ? db.appointments[activeAppointmentId] : null;
     if (!form || !appt) return;
+    // The current booking detail renders scoped, in-card editors. They own their
+    // visible fields and submit handler; this legacy compatibility patch is only
+    // for the former full-page detail form.
+    if (form.classList.contains("appointment-inline-editor")) return;
 
     const due = remittanceDueAmount(appt);
     const paid = isRemitted(appt);

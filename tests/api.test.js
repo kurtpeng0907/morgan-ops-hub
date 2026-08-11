@@ -278,6 +278,14 @@ test("browser enables fast API on Preview and explicitly blocks SQL fallback", (
   assert.match(source, /本次不切回舊版資料源/);
 });
 
+test("legacy remittance compatibility does not replace scoped booking editors", () => {
+  const source = readFileSync(resolve(__dirname, "../remittance-fields-patch.js"), "utf8");
+  const scopedEditorGuard = source.indexOf('form.classList.contains("appointment-inline-editor")');
+  const legacyFieldReplacement = source.indexOf('amountContainer.innerHTML = `<label class="label">應回帳金額');
+  assert.ok(scopedEditorGuard >= 0);
+  assert.ok(legacyFieldReplacement > scopedEditorGuard);
+});
+
 test("shadow comparison projects legacy 30-day data to the selected-day SQL contract", () => {
   const projected = projectSelectedDay({
     therapists: { "002": { name: "A" }, "003": { name: "B" } },
