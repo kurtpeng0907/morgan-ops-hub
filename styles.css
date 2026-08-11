@@ -2735,18 +2735,18 @@ tr:hover td { background:#f8fafc; }
 #view-dispatch .appointment-hero-summary { min-height:144px; align-content:center; gap:8px; }
 #view-dispatch .appointment-hero-summary {
   display:grid;
-  grid-template-columns:minmax(178px,.8fr) minmax(0,1.2fr);
-  grid-template-areas:"schedule assignment" "service service";
+  grid-template-columns:minmax(0,1fr) minmax(280px,335px);
+  grid-template-areas:"schedule assignment" "service assignment";
   align-content:center;
   column-gap:32px;
   row-gap:8px;
 }
 #view-dispatch .appointment-hero-schedule { grid-area:schedule; display:flex; flex-direction:column; align-items:flex-start; gap:4px; }
-#view-dispatch .appointment-hero-assignment { grid-area:assignment; display:flex; align-items:baseline; gap:12px; min-width:0; }
-#view-dispatch .appointment-header-service { grid-area:service; }
+#view-dispatch .appointment-hero-assignment { grid-area:assignment; display:flex; flex-direction:column; align-items:flex-end; justify-content:center; gap:4px; min-width:0; text-align:right; }
+#view-dispatch .appointment-header-service { grid-area:service; max-width:325px; }
 #view-dispatch .appointment-header-date { font-size:16px; font-weight:700; }
 #view-dispatch .appointment-header-time { font-size:28px; font-weight:900; }
-#view-dispatch .appointment-header-therapist { font-size:22px; font-weight:600; }
+#view-dispatch .appointment-header-therapist { font-size:clamp(32px,3.1vw,45px); font-weight:700; letter-spacing:-.035em; line-height:1; }
 #view-dispatch .appointment-header-room { font-size:17px; }
 #view-dispatch .appointment-header-service { font-size:16px; }
 #view-dispatch .appointment-detail-hero .appointment-workflow-rail { margin-top:24px; padding-top:22px; }
@@ -2849,7 +2849,8 @@ tr:hover td { background:#f8fafc; }
   #view-dispatch .appointment-identity-card { width:min(194px,100%); min-height:132px; }
   #view-dispatch .appointment-hero-summary { grid-template-columns:1fr; grid-template-areas:"schedule" "assignment" "service"; min-height:0; row-gap:9px; }
   #view-dispatch .appointment-hero-schedule { display:flex; flex-direction:column; align-items:flex-start; gap:4px; }
-  #view-dispatch .appointment-hero-assignment { display:flex; flex-wrap:wrap; gap:7px 12px; }
+  #view-dispatch .appointment-hero-assignment { display:flex; flex-direction:row; flex-wrap:wrap; align-items:baseline; justify-content:flex-start; gap:7px 12px; text-align:left; }
+  #view-dispatch .appointment-header-service { max-width:none; }
   #view-dispatch .appointment-header-time { font-size:24px; }
   #view-dispatch .appointment-header-therapist { font-size:20px; }
   #view-dispatch .appointment-workflow-rail { overflow-x:auto; }
