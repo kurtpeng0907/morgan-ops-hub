@@ -2791,6 +2791,15 @@ tr:hover td { background:#f8fafc; }
   background:transparent;
   backdrop-filter:none;
 }
+#view-dispatch .appointment-inline-editor input[type="number"] {
+  appearance:textfield;
+  -moz-appearance:textfield;
+}
+#view-dispatch .appointment-inline-editor input[type="number"]::-webkit-outer-spin-button,
+#view-dispatch .appointment-inline-editor input[type="number"]::-webkit-inner-spin-button {
+  margin:0;
+  -webkit-appearance:none;
+}
 
 /* New appointment form uses four concise operational sections. */
 .appointment-create-form { display:grid; gap:20px; }

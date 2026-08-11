@@ -2427,7 +2427,7 @@ async function switchTab(tab, options = {}) {
   syncMobileBottomNav();
   $("pageTitle").textContent = tabTitle(tab);
   hideSidebar();
-  if ($("mainContent")) $("mainContent").scrollTop = 0;
+  if ($("mainContent") && !options.preserveScroll) $("mainContent").scrollTop = 0;
   if (options.progressive || partialCloudData) renderCurrentView(tab);
   else renderAll();
   if (tab === "dispatch") focusDispatchTarget();
@@ -3855,8 +3855,8 @@ function renderAppointmentDetailView(appt, allAppts) {
       ${bookingStageRailHtml(appt.bookingStage || "confirmed")}
     </header>
     ${bookingPrimaryActionHtml(appt)}
-    <section class="appointment-card appointment-information-card"><div class="appointment-card-heading"><div><span class="ops-section-kicker">預約資訊</span><h4>基本安排</h4></div>${editScope ? "" : editButton("basic", "基本資訊")}</div>${basicContent}${editScope === "all" ? "" : `<hr><div class="appointment-section-heading"><span class="ops-section-kicker">顧客資訊</span>${editButton("customer", "顧客資訊")}</div>${customerContent}<hr><div class="appointment-notes-grid"><section class="appointment-detail-subsection"><span class="ops-section-kicker">本次備註</span><p>${esc(appt.notes || "尚無備註")}</p></section><section class="appointment-detail-subsection"><span class="ops-section-kicker">服務紀錄／顧客反饋</span><p>${esc(record.notes || "尚無服務紀錄")}</p></section></div>`}</section>
-    ${editScope === "all" ? "" : `<section class="appointment-card appointment-financial-card"><div class="appointment-section-heading"><span class="ops-section-kicker">財務</span>${editButton("financial", "帳務資訊")}</div>${financialContent}</section>`}
+    <section id="appointmentInformationCard" class="appointment-card appointment-information-card"><div class="appointment-card-heading"><div><span class="ops-section-kicker">預約資訊</span><h4>基本安排</h4></div>${editScope ? "" : editButton("basic", "基本資訊")}</div>${basicContent}${editScope === "all" ? "" : `<hr><div class="appointment-section-heading"><span class="ops-section-kicker">顧客資訊</span>${editButton("customer", "顧客資訊")}</div>${customerContent}<hr><div class="appointment-notes-grid"><section class="appointment-detail-subsection"><span class="ops-section-kicker">本次備註</span><p>${esc(appt.notes || "尚無備註")}</p></section><section class="appointment-detail-subsection"><span class="ops-section-kicker">服務紀錄／顧客反饋</span><p>${esc(record.notes || "尚無服務紀錄")}</p></section></div>`}</section>
+    ${editScope === "all" ? "" : `<section id="appointmentFinancialCard" class="appointment-card appointment-financial-card"><div class="appointment-section-heading"><span class="ops-section-kicker">財務</span>${editButton("financial", "帳務資訊")}</div>${financialContent}</section>`}
     ${editScope ? "" : bookingMobileActionDockHtml(appt)}
   </section></div>`;
 }
@@ -3921,11 +3921,16 @@ async function saveAppointmentDetailForm(form) {
       restoreDatabase(snapshot, "預約資料未獲雲端確認，已還原");
       return;
     }
+    const editedSection = appointmentDetailEditSection || "all";
     renderAll();
     activeAppointmentId = next.id;
     appointmentDetailEditMode = false;
     appointmentDetailEditSection = "";
-    switchTab("dispatch");
+    await switchTab("dispatch", { preserveScroll: true });
+    requestAnimationFrame(() => {
+      const target = editedSection === "financial" ? $("appointmentFinancialCard") : $("appointmentInformationCard");
+      target?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
   };
   const conflict = findAppointmentConflict(next);
   if (conflict) confirmAction("仍要儲存撞期預約？", conflict, commit, "強制儲存");
