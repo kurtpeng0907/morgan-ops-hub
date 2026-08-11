@@ -327,7 +327,10 @@ test("scoped booking editors have isolated visible field contracts", () => {
   const source = readFileSync(resolve(__dirname, "../app.js"), "utf8");
   assert.match(source, /basic: new Set\(\["date", "time", "therapistId", "room", "bookingStage", "service", "duration", "price"\]\)/);
   assert.match(source, /customer: new Set\(\["phone", "customerName", "notes", "recordNotes"\]\)/);
-  assert.match(source, /financial: new Set\(\["price", "collectedPrice", "remittanceMethod", "remittanceNote", "remittanceAccountLast5"\]\)/);
+  assert.match(source, /financial: new Set\(\["price", "remittanceDue", "collectedPrice", "remittanceMethod", "remittanceNote", "remittanceAccountLast5"\]\)/);
+  assert.match(source, /<label class="label">服務金額<\/label>/);
+  assert.match(source, /<label class="label">應回帳款<\/label>/);
+  assert.match(source, /師傅抽成<\/span>/);
   assert.match(source, /選擇轉帳時，請填寫正確的帳戶末五碼。/);
   assert.match(source, /\.filter\(\(\[name, value\]\) => !visibleFields\.has\(name\)/);
 });

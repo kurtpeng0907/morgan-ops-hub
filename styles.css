@@ -2793,6 +2793,9 @@ tr:hover td { background:#f8fafc; }
 #view-dispatch .appointment-inline-editor-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px 20px; }
 #view-dispatch .appointment-inline-editor-fields .md\\:col-span-2 { grid-column:1 / -1; }
 #view-dispatch .appointment-inline-help { margin:7px 0 0; color:#71807a; font-size:12px; font-weight:600; line-height:1.5; }
+#view-dispatch .appointment-financial-derived { display:grid; align-content:start; gap:7px; min-width:0; padding-top:1px; }
+#view-dispatch .appointment-financial-derived strong { color:#25332e; font-size:18px; font-weight:800; line-height:1.35; }
+#view-dispatch .appointment-financial-derived p { margin:0; color:#71807a; font-size:12px; font-weight:600; line-height:1.5; }
 #view-dispatch .appointment-inline-editor .appointment-detail-actions { display:flex; justify-content:flex-end; gap:12px; margin:0; padding:18px 0 0; border-top:1px solid #dce8e4; }
 #view-dispatch .appointment-inline-editor .appointment-detail-actions {
   position:static;
