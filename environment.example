@@ -8,3 +8,12 @@ MORGAN_DATABASE_URL=postgresql://user:password@host/database?sslmode=verify-full
 MORGAN_SESSION_SECRET=replace-with-at-least-32-random-characters
 MORGAN_GATEWAY_SECRET=replace-with-the-existing-gateway-secret
 MORGAN_APPS_SCRIPT_URL=https://script.google.com/macros/s/DEPLOYMENT_ID/exec
+
+# LINE staff reminders. Set these only as encrypted Vercel Production variables.
+# Rotate LINE_CHANNEL_SECRET before entering it if it was ever exposed.
+LINE_CHANNEL_ACCESS_TOKEN=replace-with-line-channel-access-token
+LINE_CHANNEL_SECRET=replace-with-rotated-line-channel-secret
+LINE_STAFF_LINK_CODE=replace-with-long-one-time-group-link-code
+LINE_CRON_SECRET=replace-with-long-random-cron-secret
+# Optional: defaults to 60 and is constrained to 15-180 minutes.
+LINE_REMINDER_LEAD_MINUTES=60

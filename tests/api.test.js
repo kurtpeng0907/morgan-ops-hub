@@ -12,6 +12,8 @@ const bootstrapHandler = require("../api/bootstrap");
 const cloudHandler = require("../api/cloud");
 const customerRecordsHandler = require("../api/customer-records");
 const sqlReadHandler = require("../api/sql-read");
+const lineDailyHandler = require("../api/cron/line-daily");
+const lineWebhook = require("../api/line/webhook");
 const { therapistOwnsWrite } = cloudHandler;
 const { createSession, verifySession } = require("../api/_lib/session");
 const sqlRepository = require("../api/_lib/sql-repository");
@@ -19,6 +21,7 @@ const { transform } = require("../scripts/_lib/transform-sheets");
 const { projectSelectedDay, digest } = require("../api/_lib/shadow");
 const { readFileSync } = require("node:fs");
 const { resolve } = require("node:path");
+const { Readable } = require("node:stream");
 
 function responseMock() {
   return {
@@ -67,6 +70,39 @@ test("bootstrap endpoint requires a valid session", async () => {
   await bootstrapHandler({ method: "GET", headers: {}, query: {} }, res);
   assert.equal(res.statusCode, 401);
   assert.equal(res.body.error, "unauthorized");
+});
+
+test("LINE webhook signature verification accepts only the original signed payload", () => {
+  const originalSecret = process.env.LINE_CHANNEL_SECRET;
+  process.env.LINE_CHANNEL_SECRET = "line-test-secret";
+  try {
+    const body = Buffer.from('{"events":[]}');
+    const signature = require("node:crypto").createHmac("sha256", process.env.LINE_CHANNEL_SECRET).update(body).digest("base64");
+    assert.equal(lineWebhook.validSignature(body, signature), true);
+    assert.equal(lineWebhook.validSignature(Buffer.from('{"events":[1]}'), signature), false);
+    assert.equal(lineWebhook.validSignature(body, "not-a-line-signature"), false);
+  } finally { process.env.LINE_CHANNEL_SECRET = originalSecret; }
+});
+
+test("LINE webhook rejects unsigned requests before parsing or writing a recipient", async () => {
+  const req = Readable.from([Buffer.from('{"events":[]}')]);
+  req.method = "POST";
+  req.headers = {};
+  const res = responseMock();
+  await lineWebhook(req, res);
+  assert.equal(res.statusCode, 401);
+  assert.equal(res.body.error, "invalid_signature");
+});
+
+test("LINE manual reminder endpoint requires its independent cron secret", async () => {
+  const originalSecret = process.env.LINE_CRON_SECRET;
+  process.env.LINE_CRON_SECRET = "line-cron-test-secret";
+  try {
+    const res = responseMock();
+    await lineDailyHandler({ method: "POST", headers: {} }, res);
+    assert.equal(res.statusCode, 401);
+    assert.equal(res.body.error, "unauthorized");
+  } finally { process.env.LINE_CRON_SECRET = originalSecret; }
 });
 
 test("bootstrap forwards only signed identity and date", async () => {
@@ -336,4 +372,12 @@ test("consolidated SQL read router keeps paginated endpoints behind one Vercel f
   const config = JSON.parse(readFileSync(resolve(__dirname, "../vercel.json"), "utf8"));
   assert.equal(config.rewrites.length, 4);
   assert.equal(config.rewrites.find((item) => item.source === "/api/appointments").destination, "/api/sql-read?route=appointments");
+});
+
+test("Vercel schedules LINE daily digest at 09:00 Taiwan and checks upcoming reminders every 15 minutes", () => {
+  const config = JSON.parse(readFileSync(resolve(__dirname, "../vercel.json"), "utf8"));
+  assert.deepEqual(config.crons, [
+    { path: "/api/cron/line-daily", schedule: "0 1 * * *" },
+    { path: "/api/cron/line-upcoming", schedule: "*/15 * * * *" }
+  ]);
 });

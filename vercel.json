@@ -1,5 +1,9 @@
 {
   "regions": ["hkg1"],
+  "crons": [
+    { "path": "/api/cron/line-daily", "schedule": "0 1 * * *" },
+    { "path": "/api/cron/line-upcoming", "schedule": "*/15 * * * *" }
+  ],
   "rewrites": [
     { "source": "/api/appointments", "destination": "/api/sql-read?route=appointments" },
     { "source": "/api/customers", "destination": "/api/sql-read?route=customers" },
