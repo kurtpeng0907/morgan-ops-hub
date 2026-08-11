@@ -304,6 +304,7 @@ let db = seedDatabase();
 if (LOCAL_TEST_MODE && new URLSearchParams(window.location.search).get("fixture") === "1") applyLocalTestFixture(db);
 
 function applyLocalTestFixture(target) {
+  target.admins.admin = { name: "測試管理員", pin: "0000", email: "" };
   target.therapists["001"] = { id: "001", nickname: "測試師傅", name: "測試師傅", pin: "0000" };
   target.schedules["001"] = {
     [todayKey()]: "13:00-21:00",
@@ -3322,6 +3323,7 @@ async function quickConfirmClientSelection(selectionId) {
 function openAppointmentDetailPage(id) {
   activeAppointmentId = id || null;
   appointmentDetailEditMode = false;
+  appointmentDetailEditSection = "";
   switchTab("dispatch");
 }
 
@@ -3478,7 +3480,7 @@ function renderAppointmentDetail() {
     appointmentDetailEditMode = true;
     renderAppointmentDetail();
     const editField = { basic: "date", customer: "phone", financial: "price" }[appointmentDetailEditSection];
-    if (editField) requestAnimationFrame(() => section.querySelector(`[name="${editField}"]`)?.focus());
+    if (editField) requestAnimationFrame(() => section.querySelector("#appointmentDetailForm")?.querySelector(`[name="${editField}"]:not([type="hidden"])`)?.focus());
   });
   const backBtn = $("backToAppointmentListBtn");
   if (backBtn) backBtn.onclick = () => { appointmentDetailEditMode = false; appointmentDetailEditSection = ""; activeAppointmentId = null; renderAppointmentDetail(); };
@@ -3490,7 +3492,7 @@ function renderAppointmentDetail() {
     pendingDispatchFocus = "records";
     focusDispatchTarget();
   });
-  const form = $("appointmentDetailForm");
+  const form = section.querySelector("#appointmentDetailForm");
   if (form && appointmentDetailEditMode) {
     const editable = (name) => form.querySelector(`[name="${name}"]:not([type="hidden"])`) || form.querySelector(`[name="${name}"]`);
     const serviceField = editable("service");
@@ -3809,20 +3811,31 @@ function appointmentInlineEditorHtml(appt, scope, record = {}) {
   const scopeTitle = { basic: "編輯基本資訊", customer: "編輯顧客資訊", financial: "編輯帳務資訊", all: "編輯預約" }[scope] || "編輯預約";
   const hasScope = (name) => scope === "all" || scope === name;
   const hidden = (name, value) => `<input type="hidden" name="${name}" value="${esc(value ?? "")}">`;
-  const preservedFields = [
-    hidden("date", appt.date || todayKey()), hidden("time", appt.time || ""), hidden("therapistId", appt.therapistId || ""), hidden("room", appt.room || "R"),
-    hidden("bookingStage", appt.bookingStage || (String(appt.isCompleted) === "true" ? "completed" : "confirmed")), hidden("service", appt.service || ""), hidden("duration", appt.duration || 60),
-    hidden("price", appt.price || 0), hidden("collectedPrice", appt.collectedPrice || currentRecord.collectedPrice || ""), hidden("phone", appt.phone || ""),
-    hidden("customerName", appt.customerName || ""), hidden("notes", appt.notes || ""), hidden("recordNotes", currentRecord.notes || ""),
-    String(appt.isCompleted) === "true" ? hidden("isCompleted", "on") : ""
-  ].join("");
-  const basicFields = `<div><label class="label">預約日期</label><input name="date" type="date" class="input" value="${esc(appt.date || todayKey())}"></div><div><label class="label">預約時間</label><input name="time" type="time" class="input" value="${esc(appt.time || "")}"></div><div><label class="label">指定按摩師</label><select name="therapistId" class="input">${Object.keys(db.therapists).map((id) => `<option value="${esc(id)}" ${id === appt.therapistId ? "selected" : ""}>${esc(therapistName(id))}</option>`).join("")}</select></div><div><label class="label">工作室安排</label><select name="room" class="input"><option value="R" ${appt.room === "R" ? "selected" : ""}>Royal (R房)</option><option value="T" ${appt.room === "T" ? "selected" : ""}>Tiffany (T房)</option><option value="OUT" ${appt.room === "OUT" ? "selected" : ""}>外出</option></select></div><div><label class="label">預約建立狀態</label><select name="bookingStage" class="input">${bookingStageOptions(appt.bookingStage || (String(appt.isCompleted) === "true" ? "completed" : "confirmed"))}</select></div><div><label class="label">服務課程</label><select name="service" class="input">${serviceOptions}</select></div><div><label class="label">預估時長</label><input name="duration" type="number" min="10" step="10" class="input" value="${esc(appt.duration || 60)}"></div><div><label class="label">應收金額</label><input name="price" type="number" class="input" value="${esc(appt.price || 0)}"></div><div class="md:col-span-2"><label class="label">備註</label><textarea name="notes" class="input min-h-24" placeholder="例如：客人偏好、特殊需求、櫃檯交接事項">${esc(appt.notes || "")}</textarea></div><label class="flex items-center gap-3 rounded-xl border p-4 font-black md:col-span-2"><input name="isCompleted" type="checkbox" ${String(appt.isCompleted) === "true" ? "checked" : ""}> 標記為已完成</label><div class="md:col-span-2"><label class="label">服務紀錄 / 顧客反饋</label><textarea name="recordNotes" class="input min-h-28">${esc(currentRecord.notes || "")}</textarea></div>`;
+  const values = {
+    date: appt.date || todayKey(), time: appt.time || "", therapistId: appt.therapistId || "", room: appt.room || "R",
+    bookingStage: appt.bookingStage || (String(appt.isCompleted) === "true" ? "completed" : "confirmed"), service: appt.service || "", duration: appt.duration || 60,
+    price: appt.price || 0, collectedPrice: appt.collectedPrice || currentRecord.collectedPrice || "", phone: appt.phone || "",
+    customerName: appt.customerName || "", notes: appt.notes || "", recordNotes: currentRecord.notes || "", isCompleted: String(appt.isCompleted) === "true" ? "on" : ""
+  };
+  const visibleFieldsByScope = {
+    basic: new Set(["date", "time", "therapistId", "room", "bookingStage", "service", "duration", "price"]),
+    customer: new Set(["phone", "customerName", "notes", "recordNotes"]),
+    financial: new Set(["price", "collectedPrice"]),
+    all: new Set(Object.keys(values))
+  };
+  const visibleFields = visibleFieldsByScope[scope] || visibleFieldsByScope.all;
+  const preservedFields = Object.entries(values)
+    .filter(([name, value]) => !visibleFields.has(name) && (name !== "isCompleted" || value === "on"))
+    .map(([name, value]) => hidden(name, value))
+    .join("");
+  const basicFields = `<div><label class="label">預約日期</label><input name="date" type="date" class="input" value="${esc(appt.date || todayKey())}"></div><div><label class="label">預約時間</label><input name="time" type="time" class="input" value="${esc(appt.time || "")}"></div><div><label class="label">指定按摩師</label><select name="therapistId" class="input">${Object.keys(db.therapists).map((id) => `<option value="${esc(id)}" ${id === appt.therapistId ? "selected" : ""}>${esc(therapistName(id))}</option>`).join("")}</select></div><div><label class="label">工作室安排</label><select name="room" class="input"><option value="R" ${appt.room === "R" ? "selected" : ""}>Royal (R房)</option><option value="T" ${appt.room === "T" ? "selected" : ""}>Tiffany (T房)</option><option value="OUT" ${appt.room === "OUT" ? "selected" : ""}>外出</option></select></div><div><label class="label">預約建立狀態</label><select name="bookingStage" class="input">${bookingStageOptions(appt.bookingStage || (String(appt.isCompleted) === "true" ? "completed" : "confirmed"))}</select></div><div><label class="label">服務課程</label><select name="service" class="input">${serviceOptions}</select></div><div><label class="label">預估時長</label><input name="duration" type="number" min="10" step="10" class="input" value="${esc(appt.duration || 60)}"></div><div><label class="label">應收金額</label><input name="price" type="number" class="input" value="${esc(appt.price || 0)}"></div>`;
   const customerFields = `<div><label class="label">聯絡方式</label><input name="phone" class="input" value="${esc(appt.phone || "")}"></div><div><label class="label">顧客姓名 <span class="text-slate-400">(選填)</span></label><input name="customerName" class="input" value="${esc(appt.customerName || "")}" placeholder="未填則顯示顧客編碼"></div><div class="md:col-span-2"><label class="label">本次備註</label><textarea name="notes" class="input min-h-24" placeholder="例如：客人偏好、特殊需求、櫃檯交接事項">${esc(appt.notes || "")}</textarea></div><div class="md:col-span-2"><label class="label">服務紀錄／顧客反饋</label><textarea name="recordNotes" class="input min-h-28">${esc(currentRecord.notes || "")}</textarea></div>`;
-  const financialFields = `${scope === "all" ? "" : `<div><label class="label">應收金額</label><input name="price" type="number" class="input" value="${esc(appt.price || 0)}"></div>`}<div><label class="label">實際回款</label><input name="collectedPrice" type="number" class="input" value="${esc(appt.collectedPrice || currentRecord.collectedPrice || "")}"></div>`;
+  const completionFields = scope === "all" ? `<label class="flex items-center gap-3 rounded-xl border p-4 font-black md:col-span-2"><input name="isCompleted" type="checkbox" ${String(appt.isCompleted) === "true" ? "checked" : ""}> 標記為已完成</label>` : "";
+  const financialFields = `<div><label class="label">應收金額</label><input name="price" type="number" class="input" value="${esc(appt.price || 0)}"></div><div><label class="label">實際回款</label><input name="collectedPrice" type="number" class="input" value="${esc(appt.collectedPrice || currentRecord.collectedPrice || "")}"></div>`;
   return `<form id="appointmentDetailForm" class="appointment-detail-form appointment-inline-editor appointment-inline-editor--${esc(scope)}">
       <div class="appointment-inline-editor-heading"><div><span class="ops-section-kicker">${esc(scopeTitle)}</span><p>只會更新這個區塊；其他預約資料保持不變。</p></div></div>
       ${preservedFields}
-      <div class="appointment-inline-editor-fields">${hasScope("basic") ? basicFields : ""}${hasScope("customer") ? customerFields : ""}${hasScope("financial") ? financialFields : ""}</div>
+      <div class="appointment-inline-editor-fields">${hasScope("basic") ? basicFields : ""}${hasScope("customer") ? customerFields : ""}${hasScope("financial") ? financialFields : ""}${completionFields}</div>
       <p id="appointmentDetailError" class="mt-4 hidden text-sm font-black text-rose-600"></p>
       <div class="appointment-detail-actions"><button id="cancelAppointmentDetailBtn" type="button" class="btn-light">取消</button><button class="btn-teal">儲存變更</button></div>
     </form>`;
@@ -3879,7 +3892,7 @@ async function saveAppointmentDetailForm(form) {
     customerName: String(data.customerName || "").trim(),
     notes: String(data.notes || "").trim()
   };
-  const err = $("appointmentDetailError");
+  const err = form.querySelector("#appointmentDetailError");
   if (next.isCompleted) next.bookingStage = "completed";
   if (!next.date || !next.time || !next.phone) {
     err.textContent = "日期、時間與聯絡方式必填；顧客姓名可留空。";

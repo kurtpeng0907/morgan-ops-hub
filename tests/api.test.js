@@ -280,10 +280,19 @@ test("browser enables fast API on Preview and explicitly blocks SQL fallback", (
 
 test("legacy remittance compatibility does not replace scoped booking editors", () => {
   const source = readFileSync(resolve(__dirname, "../remittance-fields-patch.js"), "utf8");
-  const scopedEditorGuard = source.indexOf('form.classList.contains("appointment-inline-editor")');
-  const legacyFieldReplacement = source.indexOf('amountContainer.innerHTML = `<label class="label">應回帳金額');
-  assert.ok(scopedEditorGuard >= 0);
-  assert.ok(legacyFieldReplacement > scopedEditorGuard);
+  assert.equal(source.includes("enhanceAppointmentDetailForm"), false);
+  assert.equal(source.includes("saveAppointmentDetailWithRemittance"), false);
+  assert.equal(source.includes("amountContainer.innerHTML"), false);
+  assert.equal(source.includes("renderAppointmentDetail = function patchedRenderAppointmentDetail"), false);
+  assert.match(source, /openTherapistReport = function patchedOpenTherapistReport/);
+});
+
+test("scoped booking editors have isolated visible field contracts", () => {
+  const source = readFileSync(resolve(__dirname, "../app.js"), "utf8");
+  assert.match(source, /basic: new Set\(\["date", "time", "therapistId", "room", "bookingStage", "service", "duration", "price"\]\)/);
+  assert.match(source, /customer: new Set\(\["phone", "customerName", "notes", "recordNotes"\]\)/);
+  assert.match(source, /financial: new Set\(\["price", "collectedPrice"\]\)/);
+  assert.match(source, /\.filter\(\(\[name, value\]\) => !visibleFields\.has\(name\)/);
 });
 
 test("shadow comparison projects legacy 30-day data to the selected-day SQL contract", () => {

@@ -19,7 +19,7 @@ const mockDb = {
     "002": { [today]: "13:00-21:00" },
     "003": { [today]: "15:00-23:00" }
   },
-  admins: { admin: { name: "測試管理員", pin: "", pinConfigured: true, email: "" } },
+  admins: { admin: { name: "測試管理員", pin: "0000", pinConfigured: true, email: "" } },
   appointments: {
     "APT-MOCK-1": { id: "APT-MOCK-1", date: today, time: "14:00", therapistId: "002", customerName: "測試顧客", phone: "TEST-001", service: "C90", duration: 90, room: "R", price: "2500", collectedPrice: "", isCompleted: false, notes: "", bookingStage: "confirmed", remittanceDue: "", remittancePaid: false, remittanceMethod: "" }
   },

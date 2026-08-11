@@ -2,7 +2,6 @@
 
 (function patchRemittanceFields() {
   if (typeof renderAppointmentDetail !== "function") return;
-  const originalRenderAppointmentDetail = renderAppointmentDetail;
 
   const remittanceDueAmount = (appt) => remittanceDueFor(appt);
   const isRemitted = (appt) => isRemittancePaid(appt);
@@ -10,138 +9,10 @@
     .map((method) => `<option value="${esc(method)}" ${selected === method ? "selected" : ""}>${method || "選擇回帳管道"}</option>`)
     .join("");
 
-  function enhanceAppointmentDetailForm() {
-    const form = $("appointmentDetailForm");
-    const appt = activeAppointmentId ? db.appointments[activeAppointmentId] : null;
-    if (!form || !appt) return;
-    // The current booking detail renders scoped, in-card editors. They own their
-    // visible fields and submit handler; this legacy compatibility patch is only
-    // for the former full-page detail form.
-    if (form.classList.contains("appointment-inline-editor")) return;
-
-    const due = remittanceDueAmount(appt);
-    const paid = isRemitted(appt);
-    const currentRecord = appointmentRecord(appt);
-    const currentMethod = appt.remittanceMethod || currentRecord?.remittanceMethod || "";
-    const oldCollectedInput = form.elements.collectedPrice;
-    const amountContainer = oldCollectedInput?.closest("div");
-    if (amountContainer) {
-      amountContainer.innerHTML = `<label class="label">應回帳金額</label><input name="remittanceDue" type="number" min="0" step="1" class="input" value="${esc(due)}"><p class="mt-2 text-xs font-bold text-slate-500">已依課程金額自動帶入，可依實際情況手動調整。</p>`;
-    }
-
-    const completeLabel = form.elements.isCompleted?.closest("label");
-    if (completeLabel && !form.querySelector("[data-remittance-fields]")) {
-      completeLabel.insertAdjacentHTML("beforebegin", `
-        <div data-remittance-fields class="grid gap-4 md:col-span-2 md:grid-cols-2">
-          <label class="flex items-center gap-3 rounded-xl border p-4 font-black">
-            <input name="remittancePaid" type="checkbox" class="h-5 w-5" ${paid ? "checked" : ""}> 已回帳
-          </label>
-          <div><label class="label">回帳管道</label><select name="remittanceMethod" class="input">${remittanceMethodOptions(currentMethod)}</select></div>
-        </div>
-      `);
-    }
-
-    form.onsubmit = (event) => {
-      event.preventDefault();
-      saveAppointmentDetailWithRemittance(form);
-    };
-  }
-
-  async function saveAppointmentDetailWithRemittance(form) {
-    const old = db.appointments[activeAppointmentId];
-    if (!old) return;
-    const data = Object.fromEntries(new FormData(form).entries());
-    const draft = {
-      ...old,
-      ...data,
-      id: old.id,
-      appId: old.id,
-      duration: Number(data.duration || 60),
-      price: Number(data.price || 0),
-      bookingStage: normalizeBookingStage(data.bookingStage || old.bookingStage || "confirmed", old),
-      isCompleted: data.isCompleted === "on" || data.bookingStage === "completed",
-      phone: String(data.phone || "").trim(),
-      customerName: String(data.customerName || "").trim(),
-      notes: String(data.notes || "").trim()
-    };
-    if (draft.isCompleted) draft.bookingStage = "completed";
-    const dueInput = String(data.remittanceDue ?? "").trim();
-    const due = Math.max(0, Number(dueInput === "" ? remittanceDueFor(draft) : dueInput) || 0);
-    const paid = data.remittancePaid === "on";
-    draft.remittanceDue = String(due);
-    draft.remittancePaid = paid;
-    draft.remittanceMethod = paid ? String(data.remittanceMethod || "").trim() : "";
-    draft.collectedPrice = paid ? String(due) : "";
-
-    const err = $("appointmentDetailError");
-    if (!draft.date || !draft.time || !draft.phone) {
-      err.textContent = "日期、時間與聯絡方式必填；顧客姓名可留空。";
-      err.classList.remove("hidden");
-      return;
-    }
-    if (paid && !draft.remittanceMethod) {
-      err.textContent = "已回帳時請選擇回帳管道：現金回帳或轉帳。";
-      err.classList.remove("hidden");
-      return;
-    }
-    err.classList.add("hidden");
-
-    const commit = async () => {
-      const snapshot = snapshotDatabase();
-      setFormBusy(form, true);
-      if (old.phone && old.phone !== draft.phone && db.customers[old.phone]?.records) {
-        db.customers[old.phone].records = db.customers[old.phone].records.filter((record) => record.id !== draft.id);
-      }
-      db.appointments[draft.id] = draft;
-      const customer = db.customers[draft.phone] || { name: draft.customerName, notes: "", records: [] };
-      customer.name = draft.customerName;
-      if (!customer.code) {
-        db.customers[draft.phone] = customer;
-        assignCustomerCodes(db);
-      }
-      customer.records ||= [];
-      const idx = customer.records.findIndex((record) => record.id === draft.id);
-      const record = {
-        id: draft.id,
-        date: draft.date,
-        therapistId: draft.therapistId,
-        therapistName: therapistName(draft.therapistId),
-        service: draft.service,
-        collectedPrice: draft.collectedPrice,
-        remittanceDue: draft.remittanceDue,
-        remittancePaid: draft.remittancePaid,
-        remittanceMethod: draft.remittanceMethod,
-        notes: data.recordNotes || ""
-      };
-      if (idx >= 0) customer.records[idx] = { ...customer.records[idx], ...record };
-      else customer.records.push(record);
-      db.customers[draft.phone] = customer;
-      const actions = [
-        { action: "addAppointment", data: draft },
-        { action: "saveCustomer", data: { phone: draft.phone, ...customer } },
-        syncAppointmentMeta(draft)
-      ].filter(Boolean);
-      if (old.phone && old.phone !== draft.phone && db.customers[old.phone]) actions.push({ action: "saveCustomer", data: { phone: old.phone, ...db.customers[old.phone] } });
-      const saved = await saveCloudActions(actions, "預約與回帳狀態已寫入雲端");
-      setFormBusy(form, false);
-      if (!saved) {
-        restoreDatabase(snapshot, "預約與回帳未獲雲端確認，已還原");
-        return;
-      }
-      renderAll();
-      activeAppointmentId = draft.id;
-      switchTab("dispatch");
-    };
-
-    const conflict = findAppointmentConflict(draft);
-    if (conflict) confirmAction("仍要儲存撞期預約？", conflict, commit, "強制儲存");
-    else commit();
-  }
-
-  renderAppointmentDetail = function patchedRenderAppointmentDetail() {
-    originalRenderAppointmentDetail();
-    enhanceAppointmentDetailForm();
-  };
+  // Booking detail now owns scoped, in-card editors in app.js. Do not wrap its
+  // renderer here: this compatibility file only extends the therapist report
+  // flow below. Keeping the render path single-owner prevents legacy field
+  // replacement and submit handlers from leaking into any booking section.
 
   openTherapistReport = function patchedOpenTherapistReport(id) {
     const appt = db.appointments[id];
