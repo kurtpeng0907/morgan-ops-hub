@@ -62,7 +62,7 @@ let monthWeeks = [];
 let currentUser = null;
 let activeTab = "overview";
 let activeAppointmentView = "card";
-let activeDispatchPanel = "query";
+let activeDispatchPanel = "tasks";
 let dispatchQueryState = { date: "", time: "", service: "C120" };
 let pendingDispatchFocus = "";
 let appointmentRecordScope = "today";
@@ -2408,7 +2408,7 @@ async function switchTab(tab, options = {}) {
     pendingDispatchFocus = options.focus;
     activeDispatchPanel = options.focus === "board" ? "tasks" : options.focus;
   } else if (tab === "dispatch" && options.clearAppointment) {
-    activeDispatchPanel = "query";
+    activeDispatchPanel = "tasks";
   }
   activeTab = tab;
   const tabState = { tab };
@@ -3070,19 +3070,15 @@ function openAppointmentModal({ therapistId, date, appointmentId, time = "", ser
   showModal(`
     <div class="modal max-w-xl">
       <h3 class="mb-5 border-b pb-4 text-xl font-black">${existing ? "修改預約" : "新增顧客預約"} <span class="ml-2 rounded-lg bg-teal-50 px-2 py-1 text-sm text-teal-700">${esc(selectedDate)}</span></h3>
-      <form id="apptForm" class="space-y-4">
-        <div><label class="label">指定按摩師</label><select name="therapistId" class="input">${Object.keys(db.therapists).map((id) => `<option value="${id}" ${id === selectedTherapist ? "selected" : ""}>${esc(therapistName(id))}</option>`).join("")}</select></div>
-        <div class="grid gap-4 sm:grid-cols-2">
+      <form id="apptForm" class="appointment-create-form">
+        <section class="appointment-form-section"><div class="appointment-form-section-heading"><span>01</span><div><h4>時間與服務</h4><p>先確認此筆預約的服務內容與時段。</p></div></div><div class="grid gap-4 sm:grid-cols-2">
           <div><label class="label">服務課程</label><select name="service" class="input">${serviceOptions}</select></div>
           <div><label class="label">應收金額</label><input name="price" type="number" class="input" value="${esc(existing?.price || selectedCourse.price || "")}"></div>
           <div><label class="label">預約時間</label><input name="time" type="time" class="input" value="${esc(existing?.time || time || "")}"></div>
           <div><label class="label">預估時長</label><input name="duration" type="number" min="10" step="10" class="input" value="${esc(existing?.duration || selectedCourse.duration || 60)}"></div>
-        </div>
-        <div><label class="label">工作室安排</label><select name="room" class="input"><option value="R">Royal (R房)</option><option value="T">Tiffany (T房)</option><option value="OUT">外出</option></select><p id="roomHint" class="mt-2 hidden rounded-lg p-2 text-xs font-black"></p></div>
-        <div><label class="label">預約進度</label><select name="bookingStage" class="input">${bookingStageOptions(selectedStage)}</select></div>
-        <div><label class="label">聯絡方式</label><input name="phone" class="input" value="${esc(existing?.phone || phone || "")}"></div>
-        <div><label class="label">顧客姓名 <span class="text-slate-400">(選填)</span></label><input name="customerName" class="input" value="${esc(existing?.customerName || customerName || "")}" placeholder="未填則顯示顧客編碼"></div>
-        <div><label class="label">備註</label><textarea name="notes" class="input min-h-24" placeholder="例如：客人偏好、特殊需求、櫃檯交接事項">${esc(existing?.notes || notes || "")}</textarea></div>
+        </div></section>
+        <section class="appointment-form-section"><div class="appointment-form-section-heading"><span>02</span><div><h4>師傅與工作室</h4><p>確認負責師傅、房型與預約處理階段。</p></div></div><div class="grid gap-4 sm:grid-cols-2"><div><label class="label">指定按摩師</label><select name="therapistId" class="input">${Object.keys(db.therapists).map((id) => `<option value="${id}" ${id === selectedTherapist ? "selected" : ""}>${esc(therapistName(id))}</option>`).join("")}</select></div><div><label class="label">工作室安排</label><select name="room" class="input"><option value="R">Royal (R房)</option><option value="T">Tiffany (T房)</option><option value="OUT">外出</option></select><p id="roomHint" class="mt-2 hidden rounded-lg p-2 text-xs font-black"></p></div><div class="sm:col-span-2"><label class="label">預約進度</label><select name="bookingStage" class="input">${bookingStageOptions(selectedStage)}</select></div></div></section>
+        <section class="appointment-form-section"><div class="appointment-form-section-heading"><span>03</span><div><h4>顧客與備註</h4><p>保留必要聯絡資訊與現場交接事項。</p></div></div><div class="grid gap-4 sm:grid-cols-2"><div><label class="label">聯絡方式</label><input name="phone" class="input" value="${esc(existing?.phone || phone || "")}"></div><div><label class="label">顧客姓名 <span class="text-slate-400">(選填)</span></label><input name="customerName" class="input" value="${esc(existing?.customerName || customerName || "")}" placeholder="未填則顯示顧客編碼"></div><div class="sm:col-span-2"><label class="label">備註</label><textarea name="notes" class="input min-h-24" placeholder="例如：客人偏好、特殊需求、櫃檯交接事項">${esc(existing?.notes || notes || "")}</textarea></div></div></section>
         <p id="apptError" class="hidden text-sm font-black text-rose-600"></p>
         <div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">${existing ? "更新預約" : "儲存預約"}</button></div>
       </form>
@@ -3435,19 +3431,43 @@ function renderAppointmentDetail() {
   });
   section.querySelectorAll("[data-copy-and-mark-notice]").forEach((btn) => btn.onclick = async () => {
     const target = $("therapistNoticeText");
-    if (!target) return;
-    target.select();
-    const copied = await copyText(target.value, "給師傅通知已複製");
+    const appt = db.appointments[btn.dataset.copyAndMarkNotice];
+    if (!appt) return;
+    target?.select();
+    const copied = await copyText(target?.value || therapistNoticeText(appt), "給師傅通知已複製");
     if (copied === false) return;
     await updateAppointmentStage(btn.dataset.copyAndMarkNotice, "pre_notice");
     showSnackbar("通知已複製，並標記為已完成");
   });
+  section.querySelectorAll("[data-mobile-booking-action]").forEach((btn) => btn.onclick = () => {
+    section.querySelector(".booking-primary-action button")?.click();
+  });
+  section.querySelectorAll("[data-scroll-booking-workflow]").forEach((btn) => btn.onclick = () => {
+    section.querySelector(".appointment-workflow-rail")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+  section.querySelectorAll("[data-copy-mobile-notice]").forEach((btn) => btn.onclick = async () => {
+    const appt = db.appointments[btn.dataset.copyMobileNotice];
+    if (!appt) return;
+    const kind = btn.dataset.noticeKind === "customer" ? "customer" : "therapist";
+    const text = kind === "customer" ? customerNoticeText(appt) : therapistNoticeText(appt);
+    await copyText(text, `${kind === "customer" ? "給顧客" : "給師傅"}通知已複製`);
+  });
   section.querySelectorAll("[data-focus-appointment-field]").forEach((btn) => btn.onclick = () => {
     const detailForm = $("appointmentDetailForm");
-    const field = detailForm?.elements?.namedItem(btn.dataset.focusAppointmentField);
-    if (!field) return;
-    field.scrollIntoView({ behavior: "smooth", block: "center" });
-    setTimeout(() => field.focus({ preventScroll: true }), 180);
+    const field = detailForm?.querySelector(`[name="${btn.dataset.focusAppointmentField}"]:not([type="hidden"])`);
+    if (field) {
+      field.scrollIntoView({ behavior: "smooth", block: "center" });
+      setTimeout(() => field.focus({ preventScroll: true }), 180);
+      return;
+    }
+    appointmentDetailEditSection = btn.dataset.focusAppointmentField === "collectedPrice" ? "financial" : "basic";
+    appointmentDetailEditMode = true;
+    renderAppointmentDetail();
+    requestAnimationFrame(() => {
+      const nextField = $("appointmentDetailForm")?.querySelector(`[name="${btn.dataset.focusAppointmentField}"]:not([type="hidden"])`);
+      nextField?.scrollIntoView({ behavior: "smooth", block: "center" });
+      nextField?.focus({ preventScroll: true });
+    });
   });
   section.querySelectorAll("[data-copy-notice]").forEach((btn) => btn.onclick = async () => {
     const target = $(btn.dataset.copyNotice);
@@ -3475,26 +3495,24 @@ function renderAppointmentDetail() {
   });
   const form = $("appointmentDetailForm");
   if (form && appointmentDetailEditMode) {
-    const updateAccountingSummary = () => {
-      const price = Number(form.price.value || 0);
-      const therapistCut = COURSE_CATALOG[form.service.value]?.therapistCut || 0;
-      $("detailPriceSummary").textContent = money(price);
-      $("detailCompanySummary").textContent = money(price - therapistCut);
-      $("detailTherapistSummary").textContent = money(therapistCut);
-    };
-    form.service.onchange = () => {
-      const course = COURSE_CATALOG[form.service.value];
+    const editable = (name) => form.querySelector(`[name="${name}"]:not([type="hidden"])`) || form.querySelector(`[name="${name}"]`);
+    const serviceField = editable("service");
+    const durationField = editable("duration");
+    const priceField = editable("price");
+    const roomField = editable("room");
+    const phoneField = editable("phone");
+    const customerNameField = editable("customerName");
+    if (serviceField) serviceField.onchange = () => {
+      const course = COURSE_CATALOG[serviceField.value];
       if (course) {
-        form.duration.value = course.duration;
-        form.price.value = course.price;
-        if (form.service.value.startsWith("OUT")) form.room.value = "OUT";
+        if (durationField) durationField.value = course.duration;
+        if (priceField) priceField.value = course.price;
+        if (serviceField.value.startsWith("OUT") && roomField) roomField.value = "OUT";
       }
-      updateAccountingSummary();
     };
-    form.price.oninput = updateAccountingSummary;
-    form.phone.oninput = () => {
-      const customer = db.customers[form.phone.value.trim()];
-      if (customer && !form.customerName.value.trim()) form.customerName.value = customer.name;
+    if (phoneField) phoneField.oninput = () => {
+      const customer = db.customers[phoneField.value.trim()];
+      if (customer && customerNameField && !customerNameField.value.trim()) customerNameField.value = customer.name;
     };
     form.onsubmit = (event) => {
       event.preventDefault();
@@ -3509,16 +3527,16 @@ function renderAppointmentDetail() {
 function bookingWorkbenchIntroHtml(monthAppts, pendingSelections) {
   const actionableCount = monthAppts.filter((appt) => bookingNextActionMeta(appt).key !== "complete").length;
   const tab = (key, icon, label, count = "") => `<button type="button" class="dispatch-view-tab ${activeDispatchPanel === key ? "active" : ""}" data-dispatch-view="${key}" aria-selected="${activeDispatchPanel === key}">${iconHtml(icon)}<span>${label}</span>${count !== "" ? `<b>${count}</b>` : ""}</button>`;
-  return `<section class="card dispatch-command-bar">
+  return `<section class="card dispatch-command-bar booking-workbench-header">
     <div class="dispatch-command-main">
       <div>
-        <span class="ops-section-kicker">預約系統</span>
-        <h2>現在要處理哪一件事？</h2>
-        <p>建立新預約、處理下一步，或查詢已建立的紀錄。</p>
+        <span class="ops-section-kicker">預約工作台</span>
+        <h2>先完成今天需要處理的預約</h2>
+        <p>依下一步處理待辦，再查看時段或完整紀錄。</p>
       </div>
       <nav class="dispatch-view-tabs" aria-label="預約工作區">
-        ${tab("query", "calendar-plus", "建立預約")}
-        ${tab("tasks", "list-checks", "待處理", pendingSelections.length + actionableCount)}
+        ${tab("tasks", "list-checks", "今日待辦", pendingSelections.length + actionableCount)}
+        ${tab("query", "calendar-days", "今日時間表")}
         ${tab("records", "history", "全部預約", monthAppts.length)}
       </nav>
     </div>
@@ -3606,34 +3624,53 @@ function bookingPrimaryActionHtml(appt) {
   };
   if (action.key === "match") {
     const config = stageConfigs[action.stage] || stageConfigs.inquiry;
-    return `<div class="mb-5 flex flex-col justify-between gap-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center">
+    return `<div class="booking-primary-action mb-5 flex flex-col justify-between gap-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center">
       <div><span class="ops-section-kicker text-amber-700">目前待辦</span><h4 class="mt-1 font-black">${esc(action.label)}</h4><p class="mt-1 text-sm font-bold text-slate-600">${config.desc}</p></div>
       <button type="button" class="btn-teal shrink-0" data-primary-stage="${esc(appt.id)}" data-stage="${config.nextStage}" data-action-label="${config.button}">${config.button}</button>
     </div>`;
   }
   if (action.key === "pre_notice") {
-    return `<div class="mb-5 flex flex-col justify-between gap-4 rounded-2xl border border-violet-200 bg-violet-50 p-4 sm:flex-row sm:items-center">
+    return `<div class="booking-primary-action mb-5 flex flex-col justify-between gap-4 rounded-2xl border border-violet-200 bg-violet-50 p-4 sm:flex-row sm:items-center">
       <div><span class="ops-section-kicker text-violet-700">目前待辦</span><h4 class="mt-1 font-black">完成行前通知</h4><p class="mt-1 text-sm font-bold text-slate-600">複製給師傅的通知內容，並將預約標記為已通知。</p></div>
       <button type="button" class="btn-teal shrink-0" data-copy-and-mark-notice="${esc(appt.id)}">複製通知並標記完成</button>
     </div>`;
   }
   if (action.key === "service_report") {
-    return `<div class="mb-5 flex flex-col justify-between gap-4 rounded-2xl border border-indigo-200 bg-indigo-50 p-4 sm:flex-row sm:items-center">
+    return `<div class="booking-primary-action mb-5 flex flex-col justify-between gap-4 rounded-2xl border border-indigo-200 bg-indigo-50 p-4 sm:flex-row sm:items-center">
       <div><span class="ops-section-kicker text-indigo-700">目前待辦</span><h4 class="mt-1 font-black">填寫服務回報</h4><p class="mt-1 text-sm font-bold text-slate-600">補上實際回款與服務紀錄，再勾選完成並儲存。</p></div>
       <button type="button" class="btn-teal shrink-0" data-focus-appointment-field="collectedPrice">填寫服務結果</button>
     </div>`;
   }
   if (action.key === "payment_record") {
     const focusField = action.label.includes("實際回款") ? "collectedPrice" : "recordNotes";
-    return `<div class="mb-5 flex flex-col justify-between gap-4 rounded-2xl border border-rose-200 bg-rose-50 p-4 sm:flex-row sm:items-center">
+    return `<div class="booking-primary-action mb-5 flex flex-col justify-between gap-4 rounded-2xl border border-rose-200 bg-rose-50 p-4 sm:flex-row sm:items-center">
       <div><span class="ops-section-kicker text-rose-700">目前待辦</span><h4 class="mt-1 font-black">${esc(action.label)}</h4><p class="mt-1 text-sm font-bold text-slate-600">資料補齊並儲存後，這筆預約會離開待辦看板。</p></div>
       <button type="button" class="btn-teal shrink-0" data-focus-appointment-field="${focusField}">補齊資料</button>
     </div>`;
   }
-  return `<div class="mb-5 flex flex-col justify-between gap-4 rounded-2xl border border-teal-200 bg-teal-50 p-4 sm:flex-row sm:items-center">
+  return `<div class="booking-primary-action mb-5 flex flex-col justify-between gap-4 rounded-2xl border border-teal-200 bg-teal-50 p-4 sm:flex-row sm:items-center">
     <div><span class="ops-section-kicker text-teal-700">目前狀態</span><h4 class="mt-1 font-black">已完成，資料完整</h4><p class="mt-1 text-sm font-bold text-slate-600">目前沒有後續待辦；如需修正可編輯下方資料。</p></div>
     <span class="badge bg-teal-100 px-4 py-2 text-teal-800">已完成</span>
   </div>`;
+}
+
+function bookingMobileNextActionHtml(appt) {
+  const action = bookingNextActionMeta(appt);
+  const end = minsToTime(timeToMinutes(appt.time) + Number(appt.duration || 60));
+  const messages = {
+    match: "依目前處理階段完成預約確認。",
+    pre_notice: "先完成顧客與師傅的行前通知。",
+    service_report: "服務結束後補上服務回報與回款。",
+    payment_record: "補齊回款或服務紀錄，完成本筆預約。",
+    complete: "本筆預約資料已完成。"
+  };
+  return `<section class="appointment-mobile-next-action" aria-label="目前待辦"><span class="ops-section-kicker">目前待辦</span><h4>${esc(action.label)}</h4><p>${esc(appt.date)} · ${esc(appt.time)} → ${esc(end)}<br>${esc(messages[action.key] || "請依目前狀態完成下一步。")}</p></section>`;
+}
+
+function bookingMobileActionDockHtml(appt) {
+  const action = bookingNextActionMeta(appt);
+  const tools = `<details class="booking-mobile-tools"><summary aria-label="開啟預約工具" title="預約工具">${iconHtml("more-horizontal")}<span class="sr-only">預約工具</span></summary><section><button type="button" data-scroll-booking-workflow>${iconHtml("list-ordered")}查看預約流程</button><button type="button" data-copy-mobile-notice="${esc(appt.id)}" data-notice-kind="therapist">${iconHtml("copy")}複製給師傅</button><button type="button" data-copy-mobile-notice="${esc(appt.id)}" data-notice-kind="customer">${iconHtml("message-square-text")}複製給顧客</button><hr><button type="button" data-edit-appointment data-edit-section="all">${appointmentEditIconHtml()}編輯預約</button><button type="button" data-delete-appt="${esc(appt.id)}" class="appointment-delete-btn">${iconHtml("trash-2")}刪除資料</button></section></details>`;
+  return `<div class="booking-mobile-action-dock${action.key === "complete" ? " is-tools-only" : ""}">${action.key === "complete" ? "" : `<button type="button" class="btn-teal" data-mobile-booking-action>${esc(action.label)}</button>`}${tools}</div>`;
 }
 
 function therapistNoticeText(appt) {
@@ -3691,14 +3728,15 @@ function renderAppointmentListPage(appts) {
   const monthSet = new Set(monthDates.map((d) => d.key));
   const monthAppts = appts.filter((a) => monthSet.has(a.date));
   const pendingSelections = clientSelectionList("pending");
-  const today = todayKey();
-  const visibleAppts = appointmentRecordScope === "month" ? monthAppts : monthAppts.filter((a) => a.date === today);
+  const activeDate = dispatchQueryState.date || selectedOpsDate || todayKey();
+  const dayAppts = appts.filter((a) => a.date === activeDate);
+  const visibleAppts = appointmentRecordScope === "month" ? monthAppts : dayAppts;
   const visibleConfirmed = visibleAppts.filter(isBookingConfirmed);
   const visibleUnconfirmed = visibleAppts.filter(isBookingUnconfirmed);
   const visibleFollowup = visibleAppts.filter((a) => a.bookingStage === "pre_notice" || (String(a.isCompleted) === "true" && (!String(a.collectedPrice || "").trim() || !String(appointmentRecord(a)?.notes || "").trim())));
-  const listTitle = appointmentRecordScope === "month" ? "完整預約清單" : "今日預約清單";
-  const listDesc = appointmentRecordScope === "month" ? "目前顯示本月所有預約；可切回今日，避免日常操作資訊過多。" : "日常作業先看今日預約；需要核對時再展開本月完整清單。";
-  const toggleText = appointmentRecordScope === "month" ? "只看今日" : "完整清單";
+  const listTitle = appointmentRecordScope === "month" ? "完整預約清單" : `${activeDate} 預約清單`;
+  const listDesc = appointmentRecordScope === "month" ? "目前顯示本月所有預約；可切回指定日期，避免日常操作資訊過多。" : "依上方日期查看當日全部預約；需要核對時再展開完整清單。";
+  const toggleText = appointmentRecordScope === "month" ? "只看當日" : "完整清單";
   const pendingSelectionPanel = pendingSelections.length ? `<div class="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-5">
     <div class="mb-4 flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
       <div><h3 class="font-black text-amber-950">客選待確認</h3><p class="text-sm font-bold text-amber-800">客人已選師傅，但尚未正式建立預約。</p></div>
@@ -3760,13 +3798,38 @@ function renderAppointmentListPage(appts) {
     <div class="table-wrap mt-5"><table><thead><tr><th>時間 / 顧客</th><th>師傅 / 服務</th><th>進度 / 下一步</th><th class="text-right">金額</th><th class="text-right">操作</th></tr></thead><tbody>${rows}</tbody></table></div>
   </div>`;
   const taskWorkspace = `<div class="dispatch-task-workspace">
-    <div class="dispatch-section-heading"><div><span class="ops-section-kicker">今日作業</span><h3>依下一步處理待辦</h3><p>先完成客選確認，再依流程推進現有預約。</p></div><button class="btn-teal" data-dispatch-view="query">${iconHtml("plus")}<span>建立新預約</span></button></div>
+    <div class="dispatch-section-heading"><div><span class="ops-section-kicker">${esc(activeDate)} · 今日作業</span><h3>依下一步處理待辦</h3><p>先完成客選確認，再依流程推進現有預約。</p></div><button class="btn-teal" data-dispatch-view="query">${iconHtml("plus")}<span>建立／安排預約</span></button></div>
     ${pendingSelectionPanel}
-    ${bookingStageBoardHtml(monthAppts)}
+    ${bookingStageBoardHtml(dayAppts)}
   </div>`;
   const queryWorkspace = `<div class="dispatch-query-workspace">${appointmentQueryPanelHtml()}</div>`;
   const workspace = activeDispatchPanel === "tasks" ? taskWorkspace : activeDispatchPanel === "records" ? recordsPanel : queryWorkspace;
   return `${bookingWorkbenchIntroHtml(monthAppts, pendingSelections)}<div class="dispatch-workspace">${workspace}</div>`;
+}
+
+function appointmentInlineEditorHtml(appt, scope, record = {}) {
+  const currentRecord = Object.keys(record).length ? record : (appointmentRecord(appt) || {});
+  const serviceOptions = [`<option value="">自訂/其他項目</option>`].concat(Object.entries(COURSE_CATALOG).map(([key, course]) => `<option value="${key}" ${appt.service === key ? "selected" : ""}>${esc(course.name)} (${money(course.price)})</option>`)).join("");
+  const scopeTitle = { basic: "編輯基本資訊", customer: "編輯顧客資訊", financial: "編輯帳務資訊", all: "編輯預約" }[scope] || "編輯預約";
+  const hasScope = (name) => scope === "all" || scope === name;
+  const hidden = (name, value) => `<input type="hidden" name="${name}" value="${esc(value ?? "")}">`;
+  const preservedFields = [
+    hidden("date", appt.date || todayKey()), hidden("time", appt.time || ""), hidden("therapistId", appt.therapistId || ""), hidden("room", appt.room || "R"),
+    hidden("bookingStage", appt.bookingStage || (String(appt.isCompleted) === "true" ? "completed" : "confirmed")), hidden("service", appt.service || ""), hidden("duration", appt.duration || 60),
+    hidden("price", appt.price || 0), hidden("collectedPrice", appt.collectedPrice || currentRecord.collectedPrice || ""), hidden("phone", appt.phone || ""),
+    hidden("customerName", appt.customerName || ""), hidden("notes", appt.notes || ""), hidden("recordNotes", currentRecord.notes || ""),
+    String(appt.isCompleted) === "true" ? hidden("isCompleted", "on") : ""
+  ].join("");
+  const basicFields = `<div><label class="label">預約日期</label><input name="date" type="date" class="input" value="${esc(appt.date || todayKey())}"></div><div><label class="label">預約時間</label><input name="time" type="time" class="input" value="${esc(appt.time || "")}"></div><div><label class="label">指定按摩師</label><select name="therapistId" class="input">${Object.keys(db.therapists).map((id) => `<option value="${esc(id)}" ${id === appt.therapistId ? "selected" : ""}>${esc(therapistName(id))}</option>`).join("")}</select></div><div><label class="label">工作室安排</label><select name="room" class="input"><option value="R" ${appt.room === "R" ? "selected" : ""}>Royal (R房)</option><option value="T" ${appt.room === "T" ? "selected" : ""}>Tiffany (T房)</option><option value="OUT" ${appt.room === "OUT" ? "selected" : ""}>外出</option></select></div><div><label class="label">預約建立狀態</label><select name="bookingStage" class="input">${bookingStageOptions(appt.bookingStage || (String(appt.isCompleted) === "true" ? "completed" : "confirmed"))}</select></div><div><label class="label">服務課程</label><select name="service" class="input">${serviceOptions}</select></div><div><label class="label">預估時長</label><input name="duration" type="number" min="10" step="10" class="input" value="${esc(appt.duration || 60)}"></div><div><label class="label">應收金額</label><input name="price" type="number" class="input" value="${esc(appt.price || 0)}"></div><div class="md:col-span-2"><label class="label">備註</label><textarea name="notes" class="input min-h-24" placeholder="例如：客人偏好、特殊需求、櫃檯交接事項">${esc(appt.notes || "")}</textarea></div><label class="flex items-center gap-3 rounded-xl border p-4 font-black md:col-span-2"><input name="isCompleted" type="checkbox" ${String(appt.isCompleted) === "true" ? "checked" : ""}> 標記為已完成</label><div class="md:col-span-2"><label class="label">服務紀錄 / 顧客反饋</label><textarea name="recordNotes" class="input min-h-28">${esc(currentRecord.notes || "")}</textarea></div>`;
+  const customerFields = `<div><label class="label">聯絡方式</label><input name="phone" class="input" value="${esc(appt.phone || "")}"></div><div><label class="label">顧客姓名 <span class="text-slate-400">(選填)</span></label><input name="customerName" class="input" value="${esc(appt.customerName || "")}" placeholder="未填則顯示顧客編碼"></div>`;
+  const financialFields = `${scope === "all" ? "" : `<div><label class="label">應收金額</label><input name="price" type="number" class="input" value="${esc(appt.price || 0)}"></div>`}<div><label class="label">實際回款</label><input name="collectedPrice" type="number" class="input" value="${esc(appt.collectedPrice || currentRecord.collectedPrice || "")}"></div>`;
+  return `<form id="appointmentDetailForm" class="appointment-detail-form appointment-inline-editor appointment-inline-editor--${esc(scope)}">
+      <div class="appointment-inline-editor-heading"><div><span class="ops-section-kicker">${esc(scopeTitle)}</span><p>只會更新這個區塊；其他預約資料保持不變。</p></div></div>
+      ${preservedFields}
+      <div class="appointment-inline-editor-fields">${hasScope("basic") ? basicFields : ""}${hasScope("customer") ? customerFields : ""}${hasScope("financial") ? financialFields : ""}</div>
+      <p id="appointmentDetailError" class="mt-4 hidden text-sm font-black text-rose-600"></p>
+      <div class="appointment-detail-actions"><button id="cancelAppointmentDetailBtn" type="button" class="btn-light">取消</button><button class="btn-teal">儲存變更</button></div>
+    </form>`;
 }
 
 function renderAppointmentDetailView(appt, allAppts) {
@@ -3778,57 +3841,28 @@ function renderAppointmentDetailView(appt, allAppts) {
   const item = (label, value) => `<div class="appointment-info-item"><span>${label}</span><strong>${value}</strong></div>`;
   const end = minsToTime(timeToMinutes(appt.time) + Number(appt.duration || 60));
   const room = appt.room === "OUT" ? "外出" : `${appt.room || "R"}房`;
+  const editScope = appointmentDetailEditMode ? (appointmentDetailEditSection || "all") : "";
   const editButton = (section, label) => `<button type="button" class="appointment-section-edit" data-edit-appointment data-edit-section="${section}" aria-label="編輯${label}" title="編輯${label}">${appointmentEditIconHtml()}<span class="sr-only">編輯${label}</span></button>`;
+  const basicContent = editScope === "basic" || editScope === "all" ? appointmentInlineEditorHtml(appt, editScope === "all" ? "all" : "basic", record) : `<div class="appointment-info-grid">${item("預約時間", `${esc(appt.date)}<br>${esc(appt.time)} → ${esc(end)}`)}${item("按摩師", esc(therapistName(appt.therapistId)))}${item("工作室", esc(room))}${item("服務", esc(courseName(appt.service)))}${item("時長", `${esc(String(appt.duration || 60))} 分鐘`)}${item("應收金額", money(appt.price))}</div>`;
+  const customerContent = editScope === "customer" ? appointmentInlineEditorHtml(appt, "customer", record) : `<div class="appointment-info-grid">${item("顧客", esc(customerCode))}${item("顧客稱呼", esc(appt.customerName || "尚未設定"))}${item("聯絡方式", esc(appt.phone || "尚未設定"))}</div>`;
+  const financialContent = editScope === "financial" ? appointmentInlineEditorHtml(appt, "financial", record) : `<div class="appointment-financial-grid">${item("服務金額", money(appt.price))}${item("應回帳款", money(storeAmount))}${item("師傅抽成", money(cut))}${item("實際回款", appt.collectedPrice ? money(appt.collectedPrice) : "尚未填寫")}</div><p class="appointment-financial-check">${storeAmount + cut === Number(appt.price || 0) ? "✓ 金額驗算正確" : "⚠ 分潤金額與服務金額不一致"}</p>`;
   return `<div class="appointment-detail-layout"><section class="appointment-detail-view">
+    ${bookingMobileNextActionHtml(appt)}
     <header class="appointment-detail-header appointment-detail-hero">
       <button id="backToAppointmentListBtn" type="button" class="appointment-back appointment-back-icon" aria-label="返回預約列表" title="返回預約列表">${iconHtml("arrow-left")}<span class="sr-only">返回預約列表</span></button>
-      <details class="appointment-more">
-        <summary aria-label="更多預約操作" title="更多預約操作"><svg aria-hidden="true" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m0 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16m-4.5 6.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3m4.5 0a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3m4.5 0a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3"/></svg><span class="sr-only">更多預約操作</span></summary>
-        <div class="appointment-more-menu" role="menu" aria-label="預約操作">
-          <button type="button" role="menuitem" data-edit-appointment>編輯預約</button>
-          <button data-delete-appt="${esc(appt.id)}" type="button" role="menuitem" class="appointment-delete-btn">刪除資料</button>
-        </div>
-      </details>
-      <div class="appointment-hero-main">
-        <section class="appointment-identity-card"><span class="ops-section-kicker">預約詳情</span><h3>${esc(customerCode)}</h3><p class="appointment-secondary-id" title="${esc(appt.id)}">${esc(appt.id)}</p></section>
-        <section class="appointment-hero-summary"><div class="appointment-hero-schedule"><p class="appointment-header-line appointment-header-date">${esc(appt.date)}</p><p class="appointment-header-line appointment-header-time">${esc(appt.time)} ➡︎ ${esc(end)}</p></div><div class="appointment-hero-assignment"><p class="appointment-header-line appointment-header-therapist">${esc(therapistName(appt.therapistId))}</p><p class="appointment-header-line appointment-header-room">${esc(room)}</p></div><p class="appointment-header-line appointment-header-service">${esc(courseName(appt.service))} · ${esc(String(appt.duration || 60))} 分鐘 · ${money(appt.price)}</p></section>
-      </div>
+      <details class="appointment-more"><summary aria-label="更多預約操作" title="更多預約操作"><svg aria-hidden="true" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m0 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16m-4.5 6.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3m4.5 0a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3m4.5 0a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3"/></svg><span class="sr-only">更多預約操作</span></summary><div class="appointment-more-menu" role="menu" aria-label="預約操作"><button type="button" role="menuitem" data-edit-appointment data-edit-section="all">編輯預約</button><button data-delete-appt="${esc(appt.id)}" type="button" role="menuitem" class="appointment-delete-btn">刪除資料</button></div></details>
+      <div class="appointment-hero-main"><section class="appointment-identity-card"><span class="ops-section-kicker">預約詳情</span><h3>${esc(customerCode)}</h3><p class="appointment-secondary-id" title="${esc(appt.id)}">${esc(appt.id)}</p></section><section class="appointment-hero-summary"><div class="appointment-hero-schedule"><p class="appointment-header-line appointment-header-date">${esc(appt.date)}</p><p class="appointment-header-line appointment-header-time">${esc(appt.time)} ➡︎ ${esc(end)}</p></div><div class="appointment-hero-assignment"><p class="appointment-header-line appointment-header-therapist">${esc(therapistName(appt.therapistId))}</p><p class="appointment-header-line appointment-header-room">${esc(room)}</p></div><p class="appointment-header-line appointment-header-service">${esc(courseName(appt.service))} · ${esc(String(appt.duration || 60))} 分鐘 · ${money(appt.price)}</p></section></div>
       ${bookingStageRailHtml(appt.bookingStage || "confirmed")}
     </header>
-    <section class="appointment-card appointment-information-card"><div class="appointment-card-heading"><div><span class="ops-section-kicker">預約資訊</span><h4>基本安排</h4></div>${editButton("basic", "基本資訊")}</div><div class="appointment-info-grid">${item("預約時間", `${esc(appt.date)}<br>${esc(appt.time)} → ${esc(end)}`)}${item("按摩師", esc(therapistName(appt.therapistId)))}${item("工作室", esc(room))}${item("服務", esc(courseName(appt.service)))}${item("時長", `${esc(String(appt.duration || 60))} 分鐘`)}${item("應收金額", money(appt.price))}</div><hr><div class="appointment-section-heading"><span class="ops-section-kicker">顧客資訊</span>${editButton("customer", "顧客資訊")}</div><div class="appointment-info-grid">${item("顧客", esc(customerCode))}${item("顧客稱呼", esc(appt.customerName || "尚未設定"))}${item("聯絡方式", esc(appt.phone || "尚未設定"))}</div><hr><div class="appointment-notes-grid"><section class="appointment-detail-subsection"><span class="ops-section-kicker">本次備註</span><p>${esc(appt.notes || "尚無備註")}</p></section><section class="appointment-detail-subsection"><span class="ops-section-kicker">服務紀錄／顧客反饋</span><p>${esc(record.notes || "尚無服務紀錄")}</p></section></div></section>
-    <section class="appointment-card appointment-financial-card"><div class="appointment-section-heading"><span class="ops-section-kicker">財務</span>${editButton("financial", "帳務資訊")}</div><div class="appointment-financial-grid">${item("服務金額", money(appt.price))}${item("應回帳款", money(storeAmount))}${item("師傅抽成", money(cut))}${item("實際回款", appt.collectedPrice ? money(appt.collectedPrice) : "尚未填寫")}</div><p class="appointment-financial-check">${storeAmount + cut === Number(appt.price || 0) ? "✓ 金額驗算正確" : "⚠ 分潤金額與服務金額不一致"}</p></section>
+    ${bookingPrimaryActionHtml(appt)}
+    <section class="appointment-card appointment-information-card"><div class="appointment-card-heading"><div><span class="ops-section-kicker">預約資訊</span><h4>基本安排</h4></div>${editScope ? "" : editButton("basic", "基本資訊")}</div>${basicContent}${editScope === "all" ? "" : `<hr><div class="appointment-section-heading"><span class="ops-section-kicker">顧客資訊</span>${editButton("customer", "顧客資訊")}</div>${customerContent}<hr><div class="appointment-notes-grid"><section class="appointment-detail-subsection"><span class="ops-section-kicker">本次備註</span><p>${esc(appt.notes || "尚無備註")}</p></section><section class="appointment-detail-subsection"><span class="ops-section-kicker">服務紀錄／顧客反饋</span><p>${esc(record.notes || "尚無服務紀錄")}</p></section></div>`}</section>
+    ${editScope === "all" ? "" : `<section class="appointment-card appointment-financial-card"><div class="appointment-section-heading"><span class="ops-section-kicker">財務</span>${editButton("financial", "帳務資訊")}</div>${financialContent}</section>`}
+    ${editScope ? "" : bookingMobileActionDockHtml(appt)}
   </section></div>`;
 }
 
 function renderAppointmentDetailForm(appt, allAppts) {
-  if (!appointmentDetailEditMode) return renderAppointmentDetailView(appt, allAppts);
-  const record = appointmentRecord(appt) || {};
-  const serviceOptions = [`<option value="">自訂/其他項目</option>`].concat(Object.entries(COURSE_CATALOG).map(([key, course]) => `<option value="${key}" ${appt.service === key ? "selected" : ""}>${esc(course.name)} (${money(course.price)})</option>`)).join("");
-  const scope = appointmentDetailEditSection || "all";
-  const scopeTitle = { basic: "編輯基本資訊", customer: "編輯顧客資訊", financial: "編輯帳務資訊", all: "編輯預約" }[scope] || "編輯預約";
-  const hasScope = (name) => scope === "all" || scope === name;
-  const hidden = (name, value) => `<input type="hidden" name="${name}" value="${esc(value ?? "")}">`;
-  const preservedFields = [
-    hidden("date", appt.date || todayKey()), hidden("time", appt.time || ""), hidden("therapistId", appt.therapistId || ""), hidden("room", appt.room || "R"),
-    hidden("bookingStage", appt.bookingStage || (String(appt.isCompleted) === "true" ? "completed" : "confirmed")), hidden("service", appt.service || ""), hidden("duration", appt.duration || 60),
-    hidden("price", appt.price || 0), hidden("collectedPrice", appt.collectedPrice || record.collectedPrice || ""), hidden("phone", appt.phone || ""),
-    hidden("customerName", appt.customerName || ""), hidden("notes", appt.notes || ""), hidden("recordNotes", record.notes || ""),
-    String(appt.isCompleted) === "true" ? hidden("isCompleted", "on") : ""
-  ].join("");
-  const basicFields = `<div><label class="label">預約日期</label><input name="date" type="date" class="input" value="${esc(appt.date || todayKey())}"></div><div><label class="label">預約時間</label><input name="time" type="time" class="input" value="${esc(appt.time || "")}"></div><div><label class="label">指定按摩師</label><select name="therapistId" class="input">${Object.keys(db.therapists).map((id) => `<option value="${esc(id)}" ${id === appt.therapistId ? "selected" : ""}>${esc(therapistName(id))}</option>`).join("")}</select></div><div><label class="label">工作室安排</label><select name="room" class="input"><option value="R" ${appt.room === "R" ? "selected" : ""}>Royal (R房)</option><option value="T" ${appt.room === "T" ? "selected" : ""}>Tiffany (T房)</option><option value="OUT" ${appt.room === "OUT" ? "selected" : ""}>外出</option></select></div><div><label class="label">預約建立狀態</label><select name="bookingStage" class="input">${bookingStageOptions(appt.bookingStage || (String(appt.isCompleted) === "true" ? "completed" : "confirmed"))}</select></div><div><label class="label">服務課程</label><select name="service" class="input">${serviceOptions}</select></div><div><label class="label">預估時長</label><input name="duration" type="number" min="10" step="10" class="input" value="${esc(appt.duration || 60)}"></div><div><label class="label">應收金額</label><input name="price" type="number" class="input" value="${esc(appt.price || 0)}"></div><div class="md:col-span-2"><label class="label">備註</label><textarea name="notes" class="input min-h-24" placeholder="例如：客人偏好、特殊需求、櫃檯交接事項">${esc(appt.notes || "")}</textarea></div><label class="flex items-center gap-3 rounded-xl border p-4 font-black md:col-span-2"><input name="isCompleted" type="checkbox" ${String(appt.isCompleted) === "true" ? "checked" : ""}> 標記為已完成</label><div class="md:col-span-2"><label class="label">服務紀錄 / 顧客反饋</label><textarea name="recordNotes" class="input min-h-28">${esc(record.notes || "")}</textarea></div>`;
-  const customerFields = `<div><label class="label">聯絡方式</label><input name="phone" class="input" value="${esc(appt.phone || "")}"></div><div><label class="label">顧客姓名 <span class="text-slate-400">(選填)</span></label><input name="customerName" class="input" value="${esc(appt.customerName || "")}" placeholder="未填則顯示顧客編碼"></div>`;
-  const financialFields = `<div><label class="label">應收金額</label><input name="price" type="number" class="input" value="${esc(appt.price || 0)}"></div><div><label class="label">實際回款</label><input name="collectedPrice" type="number" class="input" value="${esc(appt.collectedPrice || record.collectedPrice || "")}"></div>`;
-  return `<div class="appointment-detail-layout">
-    <form id="appointmentDetailForm" class="card p-5 appointment-detail-form appointment-scoped-editor">
-      <div class="mb-5 flex flex-col justify-between gap-4 border-b pb-5 sm:flex-row sm:items-center">
-        <div><p class="text-xs font-black uppercase tracking-widest text-slate-500">預約資料</p><h3 class="text-xl font-black">${esc(scopeTitle)}</h3><p class="mt-1 text-xs font-bold text-slate-500">${esc(customerDisplay(appt.phone, appt.customerName))} · ${esc(appt.id)}</p></div>
-      </div>
-      ${preservedFields}
-      <div class="grid gap-4 md:grid-cols-2">${hasScope("basic") ? basicFields : ""}${hasScope("customer") ? customerFields : ""}${hasScope("financial") ? financialFields : ""}</div>
-      <p id="appointmentDetailError" class="mt-4 hidden text-sm font-black text-rose-600"></p>
-      <div class="appointment-detail-actions mt-5 flex justify-end gap-3 border-t pt-4"><button id="cancelAppointmentDetailBtn" type="button" class="btn-light">取消</button><button class="btn-teal">儲存預約資料</button></div>
-    </form>
-  </div>`;
+  return renderAppointmentDetailView(appt, allAppts);
 }
 
 async function saveAppointmentDetailForm(form) {
