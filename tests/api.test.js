@@ -299,6 +299,9 @@ test("frontdesk stays on scoped SQL APIs and never falls back to Apps Script or 
   assert.match(source, /\/api\/public-schedule/);
   assert.match(source, /\/api\/schedules\?from=/);
   assert.match(source, /\/api\/appointments\?from=/);
+  assert.match(source, /window\.changeMonth = async function\(offset\)[\s\S]*?await fetchDatabase\(\)/);
+  assert.match(source, /window\.refreshFrontdeskMonth = async function\(\)/);
+  assert.match(source, /frontdeskLoadGeneration/);
   assert.doesNotMatch(source, /script\.google\.com/);
   assert.doesNotMatch(source, /\/api\/full-data/);
 });

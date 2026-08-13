@@ -358,7 +358,7 @@
                             <div class="flex items-center gap-2 bg-zinc-100 p-1.5 rounded-xl shrink-0 border border-zinc-200/60 shadow-inner w-full sm:w-auto">
                                 <button id="btnApptViewList" onclick="switchApptView('list')" class="flex-1 sm:flex-none px-5 py-2 text-xs font-bold rounded-lg bg-white shadow-sm text-zinc-800 transition-all tracking-wide">分類列表</button>
                                 <button id="btnApptViewCal" onclick="switchApptView('calendar')" class="flex-1 sm:flex-none px-5 py-2 text-xs font-bold rounded-lg text-zinc-500 hover:text-zinc-800 transition-all tracking-wide">月度日曆</button>
-                                <button onclick="renderMyAppointments()" class="ml-1 px-3 py-2 text-zinc-500 hover:text-zinc-800 transition-colors" title="重新整理">
+                                <button onclick="refreshFrontdeskMonth()" class="ml-1 px-3 py-2 text-zinc-500 hover:text-zinc-800 transition-colors" title="重新讀取本月資料">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
                                 </button>
                             </div>
@@ -447,6 +447,7 @@
         let currentUserId = null;
         let currentYear = new Date().getFullYear();
         let currentMonth = new Date().getMonth(); 
+        let frontdeskLoadGeneration = 0;
         let monthDatesList = [];
         let monthWeeksList = [];
         
@@ -629,6 +630,13 @@
             generateMonthData();
             
             if (currentUserId && !document.getElementById('editForm').classList.contains('hidden')) {
+                try {
+                    const refreshed = await fetchDatabase();
+                    if (!refreshed) return;
+                } catch (error) {
+                    showSnackbar(`無法讀取 ${currentYear} 年 ${currentMonth + 1} 月資料，請稍後再試。`, 'error');
+                    return;
+                }
                 populateWeekSelector();
                 renderEditInputs();
                 renderMyAppointments();
@@ -703,17 +711,21 @@
         async function refreshFastFrontdeskDatabase(signal) {
             const today = localDateKey(new Date());
             const { from, to } = frontdeskMonthRange();
+            const loadGeneration = ++frontdeskLoadGeneration;
             const bootstrap = await fetchFrontdeskJson(`/api/bootstrap?date=${today}`, signal);
             const [schedulePayload, appointments] = await Promise.all([
                 fetchFrontdeskJson(`/api/schedules?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, signal),
                 fetchAllFastAppointments(from, to, signal)
             ]);
+            const selectedRange = frontdeskMonthRange();
+            if (loadGeneration !== frontdeskLoadGeneration || selectedRange.from !== from || selectedRange.to !== to) return false;
             const data = bootstrap.data || {};
             data.schedules = schedulePayload.schedules || {};
             data.appointments = Object.fromEntries(appointments.map((item) => [String(item.id), item]));
             data.therapists ||= {};
             data.customers ||= {};
             normalizeFastFrontdeskDatabase(data);
+            return true;
         }
 
         async function tryFastFrontdeskLogin(inputId, pin) {
@@ -743,12 +755,11 @@
             const timeoutId = setTimeout(() => controller.abort(), CLOUD_READ_TIMEOUT_MS);
             try {
                 if (fastFrontdeskSession) {
-                    await refreshFastFrontdeskDatabase(controller.signal);
-                    clearTimeout(timeoutId);
-                    return;
+                    return await refreshFastFrontdeskDatabase(controller.signal);
                 }
                 throw new Error("請先以師傅帳號登入資料庫工作台。");
             } catch (e) { console.error("API 連線異常"); throw e; }
+            finally { clearTimeout(timeoutId); }
         }
 
         async function loadFastCustomerRecords(customerKey) {
@@ -1024,6 +1035,20 @@
                 btnList.className = "flex-1 sm:flex-none px-5 py-2 text-xs font-bold rounded-lg text-zinc-500 hover:text-zinc-800 transition-all";
                 document.getElementById('myAppointmentsContainer').classList.add('hidden');
                 document.getElementById('myAppointmentsCalendarContainer').classList.remove('hidden');
+            }
+        };
+
+        window.refreshFrontdeskMonth = async function() {
+            if (!fastFrontdeskSession || !currentUserId) return;
+            try {
+                const refreshed = await fetchDatabase();
+                if (!refreshed) return;
+                populateWeekSelector();
+                renderEditInputs();
+                renderMyAppointments();
+                showSnackbar(`${currentYear} 年 ${currentMonth + 1} 月資料已更新。`, 'success');
+            } catch (error) {
+                showSnackbar(`無法讀取 ${currentYear} 年 ${currentMonth + 1} 月資料，請稍後再試。`, 'error');
             }
         };
 
