@@ -125,7 +125,9 @@ const therapistWritePayload = (id, therapist = {}) => {
     id,
     nickname: displayName,
     name: displayName,
-    pin: sheetText(therapist.pin || "")
+    // PIN is sent to the SQL gateway and must never use the Sheets apostrophe
+    // escape that represents leading-zero text in a worksheet cell.
+    pin: cleanPin(therapist.pin || "")
   };
 };
 const isSystemCustomerKey = (key = "") => String(key).startsWith("SYS_");

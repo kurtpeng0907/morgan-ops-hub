@@ -10,15 +10,24 @@ const HASH_OPTIONS = Object.freeze({
   outputLen: 32
 });
 
+// Google Sheets stores leading-zero text with a leading apostrophe. PINs are
+// authenticated by SQL rather than Sheets, so keep their numeric text exact
+// and only remove that legacy transport marker at the security boundary.
+function normalizePin(pin) {
+  const value = String(pin ?? "").trim();
+  return /^'0\d+$/.test(value) ? value.slice(1) : value;
+}
+
 async function hashPin(pin) {
-  const value = String(pin || "");
+  const value = normalizePin(pin);
   if (!value || value.length > 80) throw Object.assign(new Error("invalid_pin"), { code: "invalid_pin" });
   return hash(value, HASH_OPTIONS);
 }
 
 async function verifyPin(hashValue, pin) {
-  if (!hashValue || !pin) return false;
-  try { return await verify(String(hashValue), String(pin)); } catch { return false; }
+  const value = normalizePin(pin);
+  if (!hashValue || !value) return false;
+  try { return await verify(String(hashValue), value); } catch { return false; }
 }
 
-module.exports = { hashPin, verifyPin, HASH_OPTIONS };
+module.exports = { hashPin, verifyPin, normalizePin, HASH_OPTIONS };

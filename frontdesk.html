@@ -514,7 +514,9 @@
                 id,
                 nickname: displayName,
                 name: displayName,
-                pin: sheetText(therapist.pin || "")
+                // PIN is sent to the SQL gateway and must never use the Sheets
+                // apostrophe escape that represents leading-zero worksheet text.
+                pin: cleanPin(therapist.pin || "")
             };
         };
         const esc = (value = "") => String(value ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));

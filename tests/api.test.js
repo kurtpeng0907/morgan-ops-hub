@@ -15,6 +15,7 @@ const sqlReadHandler = require("../api/sql-read");
 const publicScheduleHandler = require("../api/public-schedule");
 const { therapistOwnsWrite } = cloudHandler;
 const { createSession, verifySession } = require("../api/_lib/session");
+const { hashPin, verifyPin } = require("../api/_lib/pin");
 const sqlRepository = require("../api/_lib/sql-repository");
 const { transform } = require("../scripts/_lib/transform-sheets");
 const { projectSelectedDay, digest } = require("../api/_lib/shadow");
@@ -38,6 +39,13 @@ test("signed sessions preserve leading-zero staff IDs and reject tampering", () 
   assert.equal(verifySession(req).sub, "002");
   const tampered = { headers: { cookie: `morgan_session=${encodeURIComponent(session.token + "x")}` } };
   assert.equal(verifySession(tampered), null);
+});
+
+test("SQL PIN hashing preserves leading-zero PIN text without a Sheets apostrophe", async () => {
+  const pinHash = await hashPin("'0000");
+  assert.equal(await verifyPin(pinHash, "0000"), true);
+  assert.equal(await verifyPin(pinHash, "'0000"), true);
+  assert.equal(await verifyPin(pinHash, "0001"), false);
 });
 
 test("session endpoint returns identity without returning the PIN", async () => {
@@ -296,12 +304,17 @@ test("public frontdesk schedule is SQL-only and exposes only the requested thera
 
 test("frontdesk stays on scoped SQL APIs and never falls back to Apps Script or admin full-data", () => {
   const source = readFileSync(resolve(__dirname, "../frontdesk.html"), "utf8");
+  const adminSource = readFileSync(resolve(__dirname, "../app.js"), "utf8");
   assert.match(source, /\/api\/public-schedule/);
   assert.match(source, /\/api\/schedules\?from=/);
   assert.match(source, /\/api\/appointments\?from=/);
   assert.match(source, /window\.changeMonth = async function\(offset\)[\s\S]*?await fetchDatabase\(\)/);
   assert.match(source, /window\.refreshFrontdeskMonth = async function\(\)/);
   assert.match(source, /frontdeskLoadGeneration/);
+  assert.match(source, /pin: cleanPin\(therapist\.pin \|\| ""\)/);
+  assert.match(adminSource, /pin: cleanPin\(therapist\.pin \|\| ""\)/);
+  assert.doesNotMatch(source, /pin: sheetText\(therapist\.pin/);
+  assert.doesNotMatch(adminSource, /pin: sheetText\(therapist\.pin/);
   assert.doesNotMatch(source, /script\.google\.com/);
   assert.doesNotMatch(source, /\/api\/full-data/);
 });
