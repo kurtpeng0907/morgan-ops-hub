@@ -12,6 +12,7 @@ const bootstrapHandler = require("../api/bootstrap");
 const cloudHandler = require("../api/cloud");
 const customerRecordsHandler = require("../api/customer-records");
 const sqlReadHandler = require("../api/sql-read");
+const publicScheduleHandler = require("../api/public-schedule");
 const { therapistOwnsWrite } = cloudHandler;
 const { createSession, verifySession } = require("../api/_lib/session");
 const sqlRepository = require("../api/_lib/sql-repository");
@@ -269,6 +270,37 @@ test("SQL outage is labeled so the browser does not fall back to Apps Script", a
     sqlRepository.authenticateAndBootstrap = originalMethod;
     process.env.MORGAN_DATA_SOURCE = originalMode;
   }
+});
+
+test("public frontdesk schedule is SQL-only and exposes only the requested therapist's shifts", async () => {
+  const originalMode = process.env.MORGAN_DATA_SOURCE;
+  const originalMethod = sqlRepository.publicTherapistSchedule;
+  process.env.MORGAN_DATA_SOURCE = "sql";
+  sqlRepository.publicTherapistSchedule = async (therapistId, from, to) => ({
+    therapist: { id: "002", name: "測試師傅" }, schedules: { "2026-08-10": "13:00-21:00" }, from, to, requested: therapistId
+  });
+  try {
+    const res = responseMock();
+    await publicScheduleHandler({ method: "GET", headers: {}, query: { therapistId: "2", from: "2026-08-01", to: "2026-08-31" } }, res);
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body.therapist, { id: "002", name: "測試師傅" });
+    assert.deepEqual(res.body.schedules, { "2026-08-10": "13:00-21:00" });
+    assert.equal(Object.hasOwn(res.body, "appointments"), false);
+    assert.equal(Object.hasOwn(res.body, "customers"), false);
+    assert.match(res.headers["server-timing"], /^sql;dur=/);
+  } finally {
+    sqlRepository.publicTherapistSchedule = originalMethod;
+    process.env.MORGAN_DATA_SOURCE = originalMode;
+  }
+});
+
+test("frontdesk stays on scoped SQL APIs and never falls back to Apps Script or admin full-data", () => {
+  const source = readFileSync(resolve(__dirname, "../frontdesk.html"), "utf8");
+  assert.match(source, /\/api\/public-schedule/);
+  assert.match(source, /\/api\/schedules\?from=/);
+  assert.match(source, /\/api\/appointments\?from=/);
+  assert.doesNotMatch(source, /script\.google\.com/);
+  assert.doesNotMatch(source, /\/api\/full-data/);
 });
 
 test("browser enables fast API on Preview and explicitly blocks SQL fallback", () => {

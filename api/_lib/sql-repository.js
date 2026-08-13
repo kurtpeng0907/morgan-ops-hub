@@ -362,8 +362,49 @@ async function fullData(identity) {
   return { data: { therapists, schedules, admins, appointments, customers }, meta: { partial: false, source: "neon-postgres", generatedAt: new Date().toISOString() } };
 }
 
+// The unauthenticated frontdesk lookup returns one requested therapist's
+// shift labels only; it never returns appointments or customer data.
+async function publicTherapistSchedule(therapistId, fromValue, toValue) {
+  const requestedId = String(therapistId || "").trim();
+  const from = dateKey(fromValue);
+  const to = dateKey(toValue || from);
+  const rangeDays = from && to ? Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000) : NaN;
+  if (!requestedId || !from || !to || from > to || !Number.isInteger(rangeDays) || rangeDays > 62) {
+    throw Object.assign(new Error("invalid_schedule_query"), { code: "validation_error" });
+  }
+  const sql = sqlClient();
+  const therapistRows = await sql`
+    SELECT therapist_id, display_name
+    FROM therapists
+    WHERE active = true
+      AND (
+        therapist_id = ${requestedId}
+        OR regexp_replace(therapist_id, '^0+', '') = regexp_replace(${requestedId}, '^0+', '')
+      )
+    ORDER BY therapist_id
+    LIMIT 2
+  `;
+  if (therapistRows.length !== 1) {
+    throw Object.assign(new Error("therapist_not_found"), { code: "not_found" });
+  }
+  const therapist = therapistRows[0];
+  const scheduleRows = await sql`
+    SELECT date, shift
+    FROM schedules
+    WHERE therapist_id = ${String(therapist.therapist_id)}
+      AND date BETWEEN ${from}::date AND ${to}::date
+    ORDER BY date
+  `;
+  return {
+    therapist: { id: String(therapist.therapist_id), name: String(therapist.display_name || therapist.therapist_id) },
+    schedules: Object.fromEntries(scheduleRows.map((row) => [sqlDate(row.date), String(row.shift || "")])),
+    from,
+    to
+  };
+}
+
 module.exports = {
   authenticateAndBootstrap, bootstrap, customerRecords, listAppointments, listSchedules, listCustomers, report,
   mutationStatus, applyMutation, fullData, appointmentShape, serviceRecordShape,
-  decodeCursor, protectPins
+  decodeCursor, protectPins, publicTherapistSchedule
 };

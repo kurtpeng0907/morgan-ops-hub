@@ -440,7 +440,6 @@
     </div>
 
     <script>
-        const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiTI5Z8c76YNlcPMYWyR17HGaU4QvzHJm32nWeCHsnaknVx/exec";
         const CLOUD_READ_TIMEOUT_MS = 45000;
         const FRONTDESK_LOGIN_LOG_KEY = "SYS_FRONTDESK_LOGIN_LOG";
         
@@ -678,6 +677,45 @@
             });
         }
 
+        const localDateKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        const frontdeskMonthRange = () => {
+            const start = new Date(currentYear, currentMonth, 1);
+            const end = new Date(currentYear, currentMonth + 1, 0);
+            return { from: localDateKey(start), to: localDateKey(end) };
+        };
+        async function fetchFrontdeskJson(path, signal) {
+            const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', signal });
+            const payload = await response.json();
+            if (!response.ok || !payload.success) throw new Error(payload.error || `HTTP ${response.status}`);
+            return payload;
+        }
+        async function fetchAllFastAppointments(from, to, signal) {
+            const appointments = [];
+            let cursor = '';
+            do {
+                const query = `/api/appointments?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+                const payload = await fetchFrontdeskJson(query, signal);
+                appointments.push(...(payload.appointments || []));
+                cursor = payload.nextCursor || '';
+            } while (cursor);
+            return appointments;
+        }
+        async function refreshFastFrontdeskDatabase(signal) {
+            const today = localDateKey(new Date());
+            const { from, to } = frontdeskMonthRange();
+            const bootstrap = await fetchFrontdeskJson(`/api/bootstrap?date=${today}`, signal);
+            const [schedulePayload, appointments] = await Promise.all([
+                fetchFrontdeskJson(`/api/schedules?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, signal),
+                fetchAllFastAppointments(from, to, signal)
+            ]);
+            const data = bootstrap.data || {};
+            data.schedules = schedulePayload.schedules || {};
+            data.appointments = Object.fromEntries(appointments.map((item) => [String(item.id), item]));
+            data.therapists ||= {};
+            data.customers ||= {};
+            normalizeFastFrontdeskDatabase(data);
+        }
+
         async function tryFastFrontdeskLogin(inputId, pin) {
             try {
                 const auth = await fetch('/api/session', {
@@ -688,18 +726,15 @@
                     body: JSON.stringify({ id: String(inputId), pin: String(pin) })
                 });
                 if (auth.status === 401) return { available: true, authenticated: false };
-                if (!auth.ok) return { available: false };
+                if (!auth.ok) return { available: true, authenticated: false, error: 'authentication_service_unavailable' };
                 const authPayload = await auth.json();
                 if (!authPayload.success || authPayload.identity?.role !== 'therapist') return { available: true, authenticated: false };
-                const date = new Date().toISOString().slice(0, 10);
-                const bootstrap = await fetch(`/api/bootstrap?date=${date}`, { credentials: 'same-origin', cache: 'no-store' });
-                const bootstrapPayload = await bootstrap.json();
-                if (!bootstrap.ok || !bootstrapPayload.success) return { available: false };
-                normalizeFastFrontdeskDatabase(bootstrapPayload.data);
                 fastFrontdeskSession = true;
+                await refreshFastFrontdeskDatabase();
                 return { available: true, authenticated: true, id: String(authPayload.identity.sub || inputId) };
             } catch(e) {
-                return { available: false };
+                fastFrontdeskSession = false;
+                return { available: true, authenticated: false, error: 'sql_frontdesk_unavailable' };
             }
         }
 
@@ -708,88 +743,11 @@
             const timeoutId = setTimeout(() => controller.abort(), CLOUD_READ_TIMEOUT_MS);
             try {
                 if (fastFrontdeskSession) {
-                    const res = await fetch('/api/full-data', { signal: controller.signal, credentials: 'same-origin', cache: 'no-store' });
-                    const payload = await res.json();
-                    if (!res.ok || !payload.success) throw new Error(payload.error || `HTTP ${res.status}`);
-                    normalizeFastFrontdeskDatabase(payload.data);
+                    await refreshFastFrontdeskDatabase(controller.signal);
                     clearTimeout(timeoutId);
                     return;
                 }
-                const cacheBuster = "?t=" + new Date().getTime();
-                const res = await fetch(API_URL + cacheBuster, { signal: controller.signal, cache: "no-store" });
-                clearTimeout(timeoutId);
-                
-                if (!res.ok) throw new Error(`HTTP 錯誤狀態碼：${res.status}`);
-                
-                const text = await res.text();
-                let nextDB;
-                try {
-                    nextDB = JSON.parse(text);
-                } catch (parseError) {
-                    throw new Error("雲端回傳格式異常。");
-                }
-
-                if (!nextDB || typeof nextDB !== 'object' || nextDB.success === false) {
-                    throw new Error(nextDB?.error || "雲端拒絕存取。");
-                }
-                if (!['therapists', 'schedules', 'appointments', 'customers'].every(key => nextDB[key] && typeof nextDB[key] === 'object')) {
-                    throw new Error("雲端資料不完整，已保留目前畫面。");
-                }
-                globalDB = nextDB;
-
-                if (!globalDB.therapists) globalDB.therapists = {};
-                if (!globalDB.appointments) globalDB.appointments = {};
-                if (!globalDB.customers) globalDB.customers = {};
-                globalDB.approvals = {};
-                globalDB.appointmentMeta = {};
-
-                Object.keys(globalDB.customers).forEach(key => {
-                    if (!key.startsWith('SYS_THERAPIST_PROFILE_')) return;
-                    const id = key.replace('SYS_THERAPIST_PROFILE_', '');
-                    let profile = {};
-                    try { profile = JSON.parse(globalDB.customers[key].notes || "{}"); } catch(e) {}
-                    globalDB.therapists[id] = { ...(globalDB.therapists[id] || {}), ...profile };
-                });
-                Object.keys(globalDB.customers).forEach(key => {
-                    if (!key.startsWith(APPOINTMENT_META_PREFIX)) return;
-                    try {
-                        const meta = JSON.parse(globalDB.customers[key].notes || "{}");
-                        const id = meta.id || key.replace(APPOINTMENT_META_PREFIX, '');
-                        if (id) globalDB.appointmentMeta[id] = { ...meta, id };
-                    } catch(e) {}
-                });
-                Object.keys(globalDB.therapists).forEach(id => {
-                    globalDB.therapists[id] = normalizeTherapistProfile(globalDB.therapists[id]);
-                });
-                Object.keys(globalDB.customers).forEach(key => {
-                    if (!key.startsWith(APPROVAL_PREFIX)) return;
-                    try {
-                        const approval = JSON.parse(globalDB.customers[key].notes || "{}");
-                        if (approval.id) globalDB.approvals[approval.id] = approval;
-                    } catch(e) {}
-                });
-                
-                Object.keys(globalDB.appointments).forEach(key => {
-                    let appt = globalDB.appointments[key];
-                    const meta = globalDB.appointmentMeta[key] || {};
-                    ['bookingStage', 'isCompleted', 'collectedPrice', 'remittanceDue', 'remittancePaid', 'remittanceMethod', 'selectionId'].forEach(field => {
-                        if (Object.prototype.hasOwnProperty.call(meta, field)) appt[field] = meta[field];
-                    });
-                    appt.id = key; 
-                    if (appt.date && (appt.date.includes(' ') || appt.date.includes('T'))) {
-                        try {
-                            const d = new Date(appt.date);
-                            if (!isNaN(d.getTime())) appt.date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-                        } catch(e) {}
-                    }
-                    if (appt.time) {
-                        const timeStr = String(appt.time);
-                        if (timeStr.includes('GMT') || timeStr.includes('1899') || timeStr.includes('T')) {
-                            const timeMatch = timeStr.match(/(\d{2}):(\d{2}):\d{2}/);
-                            if (timeMatch) appt.time = `${timeMatch[1]}:${timeMatch[2]}`;
-                        }
-                    }
-                });
+                throw new Error("請先以師傅帳號登入資料庫工作台。");
             } catch (e) { console.error("API 連線異常"); throw e; }
         }
 
@@ -815,35 +773,16 @@
                 if (!res.ok || !result.success || result.verified !== true) throw new Error(result.error || '雲端未確認寫入');
                 return result;
             }
-            const res = await fetch(API_URL, {
-                method: 'POST',
-                body: JSON.stringify(payload),
-                redirect: 'manual',
-                cache: "no-store"
-            });
-            if (res.type === 'opaqueredirect' || res.status === 0 || (res.status >= 300 && res.status < 400)) {
-                return { ok: true, redirected: true };
-            }
-            const text = await res.text();
-            try {
-                const result = text ? JSON.parse(text) : { ok: true };
-                if (result?.success === false) throw new Error(result.error || "雲端拒絕寫入");
-                return result;
-            } catch (e) {
-                if (/雲端拒絕|unauthorized|quota|exceeded/i.test(String(e?.message || e))) throw e;
-                return { ok: true, raw: text };
-            }
+            throw new Error('請先以師傅帳號登入資料庫工作台。');
         }
 
         const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
         let batchSupportPromise = null;
 
         function supportsBatchWrites() {
+            if (fastFrontdeskSession) return Promise.resolve(true);
             if (!batchSupportPromise) {
-                batchSupportPromise = fetch(`${API_URL}?mode=capabilities&t=${Date.now()}`, { cache: 'no-store' })
-                    .then(res => res.ok ? res.json() : null)
-                    .then(payload => payload?.capabilities?.batch === true)
-                    .catch(() => false);
+                batchSupportPromise = Promise.resolve(false);
             }
             return batchSupportPromise;
         }
@@ -1100,17 +1039,18 @@
             btn.disabled = true; btnText.innerText = ""; loader.classList.remove('hidden'); err.classList.add('hidden');
             
             try {
-                await fetchDatabase();
-                const id = findTherapistId(inputId);
-                if (!id) {
+                const { from, to } = frontdeskMonthRange();
+                const result = await fetchFrontdeskJson(`/api/public-schedule?therapistId=${encodeURIComponent(inputId)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+                const id = result.therapist?.id;
+                if (!id || !result.therapist) {
                     err.innerText = "查無此編號，請重新輸入。"; err.classList.remove('hidden'); 
                     return;
                 }
                 
-                document.getElementById('queryName').innerText = therapistName(id);
+                document.getElementById('queryName').innerText = result.therapist.name;
                 document.getElementById('queryId').innerText = `ID: ${id}`;
                 
-                const sched = globalDB.schedules[id] || {};
+                const sched = result.schedules || {};
                 const container = document.getElementById('queryScheduleContainer'); container.innerHTML = '';
                 
                 const firstDayMap = { 1: 'lg:col-start-1', 2: 'lg:col-start-2', 3: 'lg:col-start-3', 4: 'lg:col-start-4', 5: 'lg:col-start-5', 6: 'lg:col-start-6', 0: 'lg:col-start-7' };
@@ -1162,7 +1102,7 @@
                 const fast = await tryFastFrontdeskLogin(inputId, pin);
                 if (fast.available) {
                     if (!fast.authenticated) {
-                        err.innerText = "身分驗證失敗，請檢查編號或密碼。";
+                        err.innerText = fast.error ? "資料庫工作台暫時無法使用，請稍後重試。" : "身分驗證失敗，請檢查編號或密碼。";
                         err.classList.remove('hidden');
                         return;
                     }
@@ -1176,18 +1116,6 @@
                     recordFrontdeskLogin(currentUserId);
                     return;
                 }
-                await fetchDatabase();
-                const id = findTherapistId(inputId);
-                if (globalDB.therapists[id] && pinMatches(globalDB.therapists[id].pin, pin)) {
-                    currentUserId = id;
-                    document.getElementById('loggedInName').innerText = therapistName(id);
-                    populateWeekSelector();
-                    renderEditInputs();
-                    switchPortalTab('appointments');
-                    document.getElementById('loginForm').classList.add('hidden');
-                    document.getElementById('editForm').classList.remove('hidden');
-                    recordFrontdeskLogin(id);
-                } else { err.innerText = "身分驗證失敗，請檢查編號或密碼。"; err.classList.remove('hidden'); }
             } catch (error) { err.innerText = `連線異常，請稍後重試。`; err.classList.remove('hidden'); } 
             finally { btn.disabled = false; btnText.innerText = "登入專屬中樞"; loader.classList.add('hidden'); }
         };
@@ -1627,7 +1555,7 @@
                     return saved
                         && String(saved.collectedPrice || '') === String(collectedPrice || '')
                         && (saved.bookingStage === appointmentData.bookingStage || JSON.parse(savedMeta?.notes || '{}').bookingStage === appointmentData.bookingStage)
-                        && Boolean(savedMeta);
+                        && (fastFrontdeskSession || Boolean(savedMeta));
                 }, "服務紀錄");
 
                 globalDB.customers[currentReportingPhone] = cust;

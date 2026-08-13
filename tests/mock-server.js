@@ -70,7 +70,8 @@ const handlers = {
   "/api/mutation-status": require("../api/mutation-status"),
   "/api/service-records-audit": require("../api/service-records-audit"),
   "/api/logout": require("../api/logout"),
-  "/api/performance": require("../api/performance")
+  "/api/performance": require("../api/performance"),
+  "/api/public-schedule": require("../api/public-schedule")
 };
 
 function contentType(file) {
