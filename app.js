@@ -25,7 +25,7 @@ const FAST_API_TIMEOUT_MS = 6000;
 // early and falls back to the legacy full-data download.
 const FAST_BOOTSTRAP_TIMEOUT_MS = 18000;
 
-const COURSE_CATALOG = {
+const DEFAULT_COURSE_CATALOG = {
   A60: { name: "A課程 60分", duration: 60, price: 1800, therapistCut: 1000 },
   C120: { name: "C課程 120分", duration: 120, price: 2800, therapistCut: 1600 },
   C90: { name: "C課程 90分", duration: 90, price: 2500, therapistCut: 1400 },
@@ -34,6 +34,13 @@ const COURSE_CATALOG = {
   OUT_DAY: { name: "外出 (22:00前)", duration: 120, price: 3200, therapistCut: 2000 },
   OUT_NIGHT: { name: "外出 (22:00後)", duration: 120, price: 3500, therapistCut: 2200 }
 };
+let COURSE_CATALOG = { ...DEFAULT_COURSE_CATALOG };
+const DEFAULT_ROOM_CATALOG = {
+  R: { name: "Royal (R房)", enabled: true, order: 10, external: false },
+  T: { name: "Tiffany (T房)", enabled: true, order: 20, external: false },
+  OUT: { name: "外出", enabled: true, order: 30, external: true }
+};
+let ROOM_CATALOG = { ...DEFAULT_ROOM_CATALOG };
 
 // Historical-only profiles keep departed therapists visible in past reports
 // without restoring login, scheduling, or dispatch access.
@@ -69,6 +76,7 @@ let appointmentRecordScope = "today";
 let activePersonnelPanel = "schedule";
 let activeReportPanel = "revenue";
 let activeSystemPanel = "status";
+let systemHealthSnapshot = null;
 let customerSortState = { key: "code", direction: "asc" };
 let customerPage = 1;
 const CUSTOMER_PAGE_SIZE = 25;
@@ -189,6 +197,7 @@ const APPOINTMENT_META_PREFIX = "SYS_APPT_META_";
 const ADMIN_LOGIN_LOG_KEY = "SYS_ADMIN_LOGIN_LOG";
 const FRONTDESK_LOGIN_LOG_KEY = "SYS_FRONTDESK_LOGIN_LOG";
 const SYSTEM_NOTE_KEY = "SYS_SYSTEM_NOTE";
+const OPERATIONS_CONFIG_KEY = "SYS_OPERATIONS_CONFIG";
 const CLOUD_SYNC_META_KEY = "SYS_SYNC_META";
 const SYSTEM_NOTE_LOCAL_KEY = `${STORAGE_KEY}-system-note`;
 const approvalKey = (id) => `${APPROVAL_PREFIX}${id}`;
@@ -213,6 +222,17 @@ const BOOKING_WORKFLOW = [
   { key: "accounting", label: "回帳及紀錄", icon: "wallet-cards", stages: ["completed"] }
 ];
 const bookingStageLabel = (stage) => BOOKING_STAGES.find((item) => item.key === stage)?.label || "已確認預約";
+const BOOKING_STAGE_NEXT = Object.freeze({
+  inquiry: ["candidate_sent"],
+  candidate_sent: ["therapist_match"],
+  therapist_match: ["customer_confirm"],
+  customer_confirm: ["confirmed"],
+  confirmed: ["pre_notice"],
+  pre_notice: ["service_report"],
+  service_report: ["completed"],
+  completed: [],
+  cancelled: []
+});
 const bookingWorkflowIndex = (stage = "confirmed") => {
   const normalized = normalizeBookingStage(stage);
   const index = BOOKING_WORKFLOW.findIndex((phase) => phase.stages.includes(normalized));
@@ -227,7 +247,16 @@ const bookingStageClass = (stage) => ({
   pre_notice: "bg-violet-50 text-violet-700",
   completed: "bg-slate-200 text-slate-700"
 }[stage] || "bg-teal-50 text-teal-700");
-const bookingStageOptions = (selected = "confirmed") => BOOKING_STAGES.map((item) => `<option value="${item.key}" ${item.key === selected ? "selected" : ""}>${item.label}</option>`).join("");
+const bookingStageOptions = (selected = "confirmed", current = "", flexible = true) => {
+  const normalizedCurrent = normalizeBookingStage(current || selected);
+  const allowed = new Set([normalizedCurrent, ...(BOOKING_STAGE_NEXT[normalizedCurrent] || [])]);
+  return BOOKING_STAGES.map((item) => `<option value="${item.key}" ${item.key === selected ? "selected" : ""}${!flexible && !allowed.has(item.key) ? " disabled" : ""}>${item.label}${item.key === normalizedCurrent ? "（目前）" : (!flexible && allowed.has(item.key) ? "（下一步）" : "")}</option>`).join("");
+};
+const bookingStageEditOptions = (current = "confirmed") => {
+  const normalized = normalizeBookingStage(current);
+  const allowed = new Set([normalized, ...(BOOKING_STAGE_NEXT[normalized] || [])]);
+  return BOOKING_STAGES.filter((item) => allowed.has(item.key)).map((item) => `<option value="${item.key}" ${item.key === normalized ? "selected" : ""}>${item.label}${item.key === normalized ? "（目前）" : "（下一步）"}</option>`).join("");
+};
 const isBookingConfirmed = (appt = {}) => ["confirmed", "pre_notice", "completed"].includes(appt.bookingStage) || String(appt.isCompleted) === "true";
 const isBookingUnconfirmed = (appt = {}) => !isBookingConfirmed(appt);
 const isKnownBookingStage = (stage = "") => BOOKING_STAGES.some((item) => item.key === stage);
@@ -279,6 +308,64 @@ function normalizeTherapistProfile(therapist = {}) {
   });
   return normalized;
 }
+
+function defaultOperationsConfig() {
+  return {
+    version: 1,
+    courses: Object.entries(DEFAULT_COURSE_CATALOG).map(([code, course], index) => ({ code, ...course, enabled: true, order: (index + 1) * 10 })),
+    rooms: Object.entries(DEFAULT_ROOM_CATALOG).map(([code, room]) => ({ code, ...room })),
+    noticeTemplates: {
+      therapist: "預約通知\n時間：{{dateTime}}\n課程：{{service}}\n應收金額：{{price}}\n應回帳金額：{{remittanceDue}}\n場地：{{room}}",
+      customer: "預約成功\n師傅：{{therapist}}\n時間：{{dateTime}}\n課程：{{service}}\n金額：{{price}}\n地點：{{room}}"
+    },
+    updatedAt: ""
+  };
+}
+
+function normalizeOperationsConfig(value = {}) {
+  const fallback = defaultOperationsConfig();
+  const source = value && typeof value === "object" ? value : {};
+  const courses = Array.isArray(source.courses) ? source.courses : fallback.courses;
+  const rooms = Array.isArray(source.rooms) ? source.rooms : fallback.rooms;
+  return {
+    ...fallback,
+    ...source,
+    courses: courses.map((course, index) => ({
+      code: String(course.code || "").trim(), name: String(course.name || "").trim(),
+      duration: Math.max(10, Number(course.duration || 60)), price: Math.max(0, Number(course.price || 0)),
+      therapistCut: Math.max(0, Number(course.therapistCut || 0)), enabled: course.enabled !== false,
+      order: Number.isFinite(Number(course.order)) ? Number(course.order) : (index + 1) * 10
+    })).filter((course) => course.code),
+    rooms: rooms.map((room, index) => ({
+      code: String(room.code || "").trim(), name: String(room.name || "").trim(), enabled: room.enabled !== false,
+      order: Number.isFinite(Number(room.order)) ? Number(room.order) : (index + 1) * 10,
+      external: room.external === true || String(room.code) === "OUT"
+    })).filter((room) => room.code),
+    noticeTemplates: { ...fallback.noticeTemplates, ...(source.noticeTemplates || {}) }
+  };
+}
+
+function applyOperationsConfig(config) {
+  const normalized = normalizeOperationsConfig(config);
+  const catalog = {};
+  normalized.courses.forEach((course) => { catalog[course.code] = { name: course.name, duration: course.duration, price: course.price, therapistCut: course.therapistCut, enabled: course.enabled, order: course.order }; });
+  COURSE_CATALOG = { ...DEFAULT_COURSE_CATALOG, ...catalog };
+  const rooms = {};
+  normalized.rooms.forEach((room) => { rooms[room.code] = room; });
+  ROOM_CATALOG = { ...DEFAULT_ROOM_CATALOG, ...rooms };
+  return normalized;
+}
+
+function operationsConfigStore() {
+  const store = db.customers[OPERATIONS_CONFIG_KEY] || { name: "營運全域設定", notes: "", records: [] };
+  let parsed = {};
+  try { parsed = JSON.parse(store.notes || "{}"); } catch {}
+  return normalizeOperationsConfig(parsed);
+}
+
+function activeCourses() { return Object.entries(COURSE_CATALOG).filter(([, course]) => course.enabled !== false).sort(([, a], [, b]) => Number(a.order || 0) - Number(b.order || 0)); }
+function activeRooms() { return Object.entries(ROOM_CATALOG).filter(([, room]) => room.enabled !== false).sort(([, a], [, b]) => Number(a.order || 0) - Number(b.order || 0)); }
+function roomName(room = "") { return ROOM_CATALOG[room]?.name || (room === "OUT" ? "外出" : `${room || "-"}房`); }
 
 function therapistDisplayMeta(therapist = {}) {
   const body = [];
@@ -436,6 +523,9 @@ function normalizeDb(data) {
       if (id) data.appointmentMeta[id] = { ...meta, id };
     } catch {}
   });
+  let operationsConfig = defaultOperationsConfig();
+  try { operationsConfig = JSON.parse(data.customers[OPERATIONS_CONFIG_KEY]?.notes || "{}"); } catch {}
+  data.operationsConfig = applyOperationsConfig(operationsConfig);
   Object.keys(data.therapists).forEach((id) => {
     data.therapists[id] = normalizeTherapistProfile(data.therapists[id]);
   });
@@ -994,6 +1084,13 @@ function cloudActionVerified(item, cloudDb) {
   return ["sendEmailNotification", "repairTherapists"].includes(item.action);
 }
 
+function clientSelectionConfirmationVerified(selectionId, appointmentId, cloudDb) {
+  const selection = cloudDb?.clientSelections?.[selectionId];
+  const appointment = cloudDb?.appointments?.[appointmentId];
+  return Boolean(selection && selection.status === "confirmed" && selection.appointmentId === appointmentId
+    && appointment && appointment.selectionId === selectionId && appointment.bookingStage === "confirmed");
+}
+
 async function readBackVerifiedCloud(actions, customVerifier) {
   const delays = [1000, 3000];
   let latest = null;
@@ -1045,6 +1142,16 @@ async function saveCloudActions(actions, successMessage = "已儲存到雲端", 
     if (!gatewayWritesVerified) {
       showSnackbar("雲端尚未確認寫入；請稍後重試");
       return false;
+    }
+    if (options.requireReadBack) {
+      const cloudDb = await readBackVerifiedCloud(actions, options.verifyCloud);
+      if (!cloudDb) {
+        markSyncPending(true, "cloud-awaiting-confirmation");
+        showSnackbar("客選與預約尚未完成一致確認；請稍後重試");
+        return false;
+      }
+      db = cloudDb;
+      persist();
     }
     markSyncPending(false);
     showSnackbar(successMessage);
@@ -1247,6 +1354,24 @@ async function copyText(value, successMessage = "已複製") {
   }
   showSnackbar(successMessage);
   return true;
+}
+
+function openNoticeEditorModal(appt) {
+  if (!appt) return;
+  const therapistText = therapistNoticeText(appt);
+  const customerText = customerNoticeText(appt);
+  showModal(`<div class="modal max-w-2xl"><div class="mb-5 flex items-start justify-between gap-4 border-b pb-4"><div><span class="ops-section-kicker text-violet-700">行前通知</span><h3 class="mt-1 text-xl font-black">編輯並複製通知</h3><p class="mt-1 text-sm font-bold text-slate-500">兩種通知使用相同編輯版型；只有「複製並標記完成」會推進預約狀態。</p></div><button type="button" class="btn-light" data-close-modal>關閉</button></div><div class="space-y-5"><section class="rounded-xl border border-slate-200 bg-white p-4"><div class="mb-2 flex items-center justify-between gap-3"><span class="label">給師傅的通知內容</span><span class="badge bg-violet-50 text-violet-700">內部通知</span></div><textarea id="noticeEditorTherapist" class="input min-h-40 whitespace-pre-wrap leading-relaxed">${esc(therapistText)}</textarea><div class="mt-3 flex flex-wrap justify-end gap-2"><button type="button" class="btn-light" id="copyTherapistNoticeBtn">複製給師傅</button><button type="button" class="btn-teal" id="copyAndCompleteNoticeBtn">複製並標記完成</button></div></section><section class="rounded-xl border border-slate-200 bg-white p-4"><div class="mb-2 flex items-center justify-between gap-3"><span class="label">給顧客的通知內容</span><span class="badge bg-teal-50 text-teal-700">顧客通知</span></div><textarea id="noticeEditorCustomer" class="input min-h-40 whitespace-pre-wrap leading-relaxed">${esc(customerText)}</textarea><div class="mt-3 flex justify-end"><button type="button" class="btn-light" id="copyCustomerNoticeBtn">複製給顧客</button></div></section><p id="noticeEditorError" class="hidden text-sm font-black text-rose-600"></p></div></div>`);
+  const therapistField = $("noticeEditorTherapist");
+  const customerField = $("noticeEditorCustomer");
+  $("copyTherapistNoticeBtn")?.addEventListener("click", () => copyText(therapistField?.value || "", "給師傅通知已複製"));
+  $("copyCustomerNoticeBtn")?.addEventListener("click", () => copyText(customerField?.value || "", "給顧客通知已複製"));
+  $("copyAndCompleteNoticeBtn")?.addEventListener("click", async () => {
+    const copied = await copyText(therapistField?.value || "", "給師傅通知已複製");
+    if (copied === false) return;
+    closeModal();
+    await updateAppointmentStage(appt.id, "pre_notice");
+    showSnackbar("通知已複製，並標記為已完成");
+  });
 }
 
 function downloadCurrentBackup() {
@@ -1710,6 +1835,30 @@ function parseShiftSegments(shift = "") {
   }).filter(Boolean);
 }
 
+function shiftScheduledMinutes(shift = "") {
+  return parseShiftSegments(shift).reduce((total, segment) => {
+    const minutes = Number(segment.end) - Number(segment.start);
+    return Number.isFinite(minutes) && minutes > 0 ? total + minutes : total;
+  }, 0);
+}
+
+function formatScheduledHours(minutes = 0) {
+  const total = Math.max(0, Math.round(Number(minutes) || 0));
+  const hours = Math.floor(total / 60);
+  const remainder = total % 60;
+  return remainder ? `${hours} 小時 ${remainder} 分` : `${hours} 小時`;
+}
+
+function therapistScheduledHours(id, dates = currentScheduleViewDates) {
+  const schedule = db.schedules[id] || {};
+  return dates.reduce((summary, date) => {
+    const minutes = shiftScheduledMinutes(schedule[date.key] || "休假");
+    if (minutes > 0) summary.workingDays += 1;
+    summary.minutes += minutes;
+    return summary;
+  }, { minutes: 0, workingDays: 0 });
+}
+
 const SCHEDULE_WINDOW_START = 11 * 60;
 const SCHEDULE_WINDOW_END = 26 * 60;
 const AFTER_MIDNIGHT_CUTOFF = 5 * 60;
@@ -1844,6 +1993,21 @@ function isOpenClientSelection(item = {}) {
   return !item.appointmentId && !Object.values(db.appointments || {}).some((appt) => appt.selectionId === item.id);
 }
 
+function clientSelectionAvailability(selection = {}) {
+  const deadline = new Date(`${String(selection.date || "")}T${String(selection.time || "00:00").slice(0, 5)}:00`);
+  if (Number.isFinite(deadline.getTime()) && deadline.getTime() <= Date.now()) {
+    return { available: false, key: "expired", label: "已過時段", detail: "請聯繫顧客或重新安排時段" };
+  }
+  if (!selection.selectedTherapistId) {
+    const candidates = availableTherapistCandidates({ date: selection.date, time: selection.time, service: selection.service, duration: selection.duration, limit: Infinity });
+    return candidates.length ? { available: true, key: "needs_match", label: `待媒合 · ${candidates.length} 位可接`, detail: "可查詢其他可接師傅" } : { available: false, key: "no_candidate", label: "目前無可接師傅", detail: "請改期或手動安排" };
+  }
+  const selected = availableTherapistCandidates({ date: selection.date, time: selection.time, service: selection.service, duration: selection.duration, limit: Infinity }).some((item) => item.id === String(selection.selectedTherapistId));
+  return selected
+    ? { available: true, key: "available", label: "師傅仍可接", detail: "可快速確認" }
+    : { available: false, key: "conflict", label: "師傅時段已失效", detail: "請重新媒合或編輯建立" };
+}
+
 function clientSelectionList(status = "") {
   return Object.values(db.clientSelections || {})
     .filter((item) => !status || (item.status === status && isOpenClientSelection(item)))
@@ -1869,6 +2033,7 @@ async function updateClientSelection(selection, status, extra = {}) {
 }
 
 const PUBLIC_CLIENT_SELECTION_ORIGIN = "https://morgan-ops-hub.vercel.app";
+const PUBLIC_CUSTOMER_BOOKING_URL = `${PUBLIC_CLIENT_SELECTION_ORIGIN}/customer-booking.html`;
 
 function clientSelectionUrl({ selectionId = "", date, time, service, therapistIds = [] }) {
   // A link copied to a customer must never inherit a Preview/local hostname:
@@ -1962,7 +2127,7 @@ function lineTrialPanelHtml() {
 }
 
 function openLineTrialModal() {
-  const serviceOptions = Object.entries(COURSE_CATALOG).map(([key, course]) => `<option value="${key}">${esc(course.name)}</option>`).join("");
+  const serviceOptions = activeCourses().map(([key, course]) => `<option value="${key}">${esc(course.name)}</option>`).join("");
   showModal(`<div class="modal max-w-3xl"><h3 class="mb-5 border-b pb-4 text-xl font-black">模擬 LINE 預約需求</h3>
     <form id="lineTrialForm" class="space-y-4">
       <div><label class="label">客人訊息</label><input name="message" class="input" placeholder="例：想預約今晚 20:00 C課程120分"></div>
@@ -2227,8 +2392,19 @@ function renderAppShellNavigation() {
     therapistNav.innerHTML = `<p class="px-2 py-2 text-xs font-black uppercase tracking-widest text-slate-500">師傅專屬中樞</p>${THERAPIST_NAV_ITEMS.map((item) => navItemHtml(item)).join("")}`;
   }
   const mobileNav = $("mobileBottomNav");
-  if (mobileNav) mobileNav.innerHTML = ADMIN_NAV_ITEMS.map((item) => navItemHtml(item, "data-mobile-tab")).join("");
+  if (mobileNav) {
+    const mobilePrimary = ADMIN_NAV_ITEMS.filter((item) => ["overview", "dispatch", "customer", "personnel"].includes(item.tab));
+    const moreActive = ["report", "system"].includes(activeTab);
+    const moreCount = ["report", "system"].reduce((sum, item) => sum + navPendingCount(item), 0);
+    mobileNav.innerHTML = `${mobilePrimary.map((item) => navItemHtml(item, "data-mobile-tab")).join("")}<button type="button" data-mobile-more class="nav-btn${moreActive ? " active" : ""}">${iconHtml("ellipsis")}<span>更多</span>${moreCount ? `<b class="nav-count">${moreCount}</b>` : ""}</button>`;
+  }
   refreshIcons();
+}
+
+function openMobileMoreMenu() {
+  const items = ADMIN_NAV_ITEMS.filter((item) => ["report", "system"].includes(item.tab));
+  showModal(`<div class="modal max-w-sm"><div class="mb-4 flex items-center justify-between border-b pb-4"><h3 class="text-xl font-black">更多功能</h3><button class="btn-light" data-close-modal>關閉</button></div><div class="grid gap-2">${items.map((item) => `<button class="system-action-row w-full text-left" data-mobile-more-tab="${esc(item.tab)}"><span class="system-action-copy"><span class="system-action-icon">${iconHtml(item.icon)}</span><strong>${esc(item.label)}</strong></span>${iconHtml("chevron-right")}</button>`).join("")}</div></div>`);
+  $("modalRoot")?.querySelectorAll("[data-mobile-more-tab]").forEach((button) => button.onclick = () => { closeModal(); switchTab(button.dataset.mobileMoreTab); });
 }
 
 function closestFromEvent(event, selector) {
@@ -2579,7 +2755,7 @@ function renderOverview() {
     <div class="ops-dashboard">
       <section class="ops-command-bar is-compact-context">
         <div class="ops-next-action">
-          <span class="ops-eyebrow">${iconHtml("activity")} ${dayWord}下一個行動</span>
+          <span class="ops-eyebrow">${iconHtml("activity")} 下一步</span>
           <strong>${nextAppt ? `${nextAppt.time} · ${customerDisplay(nextAppt.phone, nextAppt.customerName)}` : (pendingApprovals[0] ? `${therapistName(pendingApprovals[0].therapistId)} · ${approvalTypeLabel(pendingApprovals[0].type)}` : "今日營運已整理完成")}</strong>
           <small>${nextAppt ? `${therapistName(nextAppt.therapistId)} · ${courseName(nextAppt.service)}` : (pendingApprovals.length ? `待審核 ${pendingApprovals.length} 筆` : "目前沒有後續預約")}</small>
         </div>
@@ -2598,20 +2774,20 @@ function renderOverview() {
 
       <div class="ops-workspace-grid ${workingCount ? "has-schedule" : "is-schedule-empty"}">
         <section class="ops-panel ops-schedule-panel">
-          <header class="ops-panel-header"><div><span class="ops-section-kicker">人力調度</span><h3>當日排班</h3><p>11:00 到隔日 02:00，紅線標示目前時間</p></div><div class="flex items-center gap-2"><span class="badge bg-teal-50 text-teal-700">${workingCount} 人</span><button class="btn-teal px-3 py-2 text-xs" data-jump-tab="personnel" data-personnel-panel="schedule">${workingCount ? "完整班表" : "前往排班"}</button></div></header>
+          <header class="ops-panel-header"><div><h3>今日排班</h3></div><div class="flex items-center gap-2"><span class="badge bg-teal-50 text-teal-700">${workingCount} 人</span><button class="btn-teal px-3 py-2 text-xs" data-jump-tab="personnel" data-personnel-panel="schedule">${workingCount ? "完整班表" : "前往排班"}</button></div></header>
           <div class="ops-panel-body">${dailyScheduleBoardHtml(today)}</div>
         </section>
 
         <aside class="ops-side-stack">
           <section class="ops-panel ops-queue-panel">
-            <header class="ops-panel-header"><div><span class="ops-section-kicker">下一步</span><h3>待處理</h3><p>依序完成今天還需要跟進的工作</p></div></header>
+            <header class="ops-panel-header"><div><h3>待處理</h3></div></header>
             <div class="ops-queue-list">${queueHtml}</div>
           </section>
           <section class="ops-panel ops-store-tools">
-            <header class="ops-panel-header"><div><span class="ops-section-kicker">店務工具</span><h3>每日店務紀錄</h3></div><span id="liveClock" class="ops-live-clock"></span></header>
+            <header class="ops-panel-header"><div><h3>店務</h3></div><span id="liveClock" class="ops-live-clock"></span></header>
             <div class="ops-tool-list">
               <article class="ops-tool-card">
-                <div class="ops-tool-heading"><span class="ops-tool-icon tone-blue">${iconHtml("key-round")}</span><div><strong>大門密碼</strong><small>更新後可查看歷史</small></div></div>
+                <div class="ops-tool-heading"><span class="ops-tool-icon tone-blue">${iconHtml("key-round")}</span><div><strong>大門密碼</strong></div></div>
                 <div class="ops-door-controls"><input id="doorPassword" class="input" value="${esc(db.customers.SYS_DOOR_PWD?.notes || "")}" aria-label="大門密碼"><button id="randomDoorBtn" class="btn-light ops-icon-button" aria-label="產生並儲存隨機大門密碼" title="產生隨機密碼">${iconHtml("dices")}<span>隨機</span></button><button id="doorHistoryBtn" class="btn-light ops-icon-button" aria-label="查看大門密碼修改紀錄" title="查看修改紀錄">${iconHtml("history")}<span>紀錄</span></button><button id="saveDoorBtn" class="btn-teal">${iconHtml("save")}<span>儲存</span></button></div>
               </article>
               <article class="ops-tool-card">
@@ -2628,7 +2804,7 @@ function renderOverview() {
       </div>
 
       <section class="ops-panel ops-flow-panel">
-        <header class="ops-panel-header"><div><span class="ops-section-kicker">服務進度</span><h3>今日流程</h3><p>點選任一筆即可查看、修改與推進狀態</p></div><button class="btn-light px-3 py-2 text-xs" data-jump-tab="dispatch" data-dispatch-focus="records">查看完整清單</button></header>
+        <header class="ops-panel-header"><div><h3>今日流程</h3></div><button class="btn-light px-3 py-2 text-xs" data-jump-tab="dispatch" data-dispatch-focus="records">完整清單</button></header>
         <div class="overview-flow-head"><span>時間</span><span>顧客</span><span>師傅</span><span>服務</span><span>狀態</span><span>金額</span><span></span></div>
         <div class="overview-flow-list">${todayFlowRows}</div>
       </section>
@@ -2799,7 +2975,7 @@ function appointmentQueryPanelHtml() {
   const selectedTime = queryTimeLabel($("appointmentTime")?.value || dispatchQueryState.time || "");
   const selectedService = $("appointmentService")?.value || dispatchQueryState.service || "C120";
   dispatchQueryState = { date: selectedDate, time: selectedTime, service: selectedService };
-  const serviceOptions = Object.entries(COURSE_CATALOG).map(([key, course]) => `<option value="${key}" ${selectedService === key ? "selected" : ""}>${esc(course.name)}</option>`).join("");
+  const serviceOptions = activeCourses().map(([key, course]) => `<option value="${key}" ${selectedService === key ? "selected" : ""}>${esc(course.name)}</option>`).join("");
   return `
     <div id="appointmentQueryPanel" class="card dispatch-query-card scroll-mt-20 p-5">
       <div class="flex flex-col gap-5">
@@ -3010,7 +3186,7 @@ function apptCard(a) {
 
 function renderTimeline(date, appts) {
   const container = $("appointmentTimeline");
-  const rooms = ["R", "T", "OUT"];
+  const rooms = activeRooms().map(([code]) => code);
   const startHour = SCHEDULE_WINDOW_START / 60;
   const endHour = SCHEDULE_WINDOW_END / 60;
   const pxPerMinute = 1.55;
@@ -3025,7 +3201,7 @@ function renderTimeline(date, appts) {
   if (nowTop !== null) html += `<div class="absolute left-0 right-0 z-20 border-t-2 border-rose-500" style="top:${nowTop}px"><span class="ml-1 -translate-y-1/2 rounded bg-rose-500 px-1.5 py-0.5 text-[10px] font-black text-white">現在</span></div>`;
   html += `</div>`;
   rooms.forEach((room) => {
-    html += `<div class="timeline-grid relative min-w-[260px] flex-1 border-r" style="height:${height + 48}px"><div class="sticky top-0 z-10 h-12 border-b bg-white p-3 text-center text-sm font-black">${room === "OUT" ? "外出" : `${room}房`}</div>`;
+    html += `<div class="timeline-grid relative min-w-[260px] flex-1 border-r" style="height:${height + 48}px"><div class="sticky top-0 z-10 h-12 border-b bg-white p-3 text-center text-sm font-black">${esc(roomName(room))}</div>`;
     if (nowTop !== null) html += `<div class="absolute left-0 right-0 z-10 border-t-2 border-rose-500/70" style="top:${nowTop}px"></div>`;
     appts.filter((a) => a.room === room).forEach((a) => {
       const top = 48 + (normalizedTimelineMinute(timeToMinutes(a.time)) - startHour * 60) * pxPerMinute;
@@ -3045,12 +3221,13 @@ function renderTimeline(date, appts) {
 
 function roomBadge(room) {
   const map = { R: "border-amber-200 bg-amber-50 text-amber-800", T: "border-cyan-200 bg-cyan-50 text-cyan-800", OUT: "border-rose-200 bg-rose-50 text-rose-700" };
-  return `<span class="badge ${map[room] || "bg-slate-100 text-slate-600"}">${room === "OUT" ? "外出" : `${esc(room || "-")}房`}</span>`;
+  return `<span class="badge ${map[room] || "bg-slate-100 text-slate-600"}">${esc(roomName(room))}</span>`;
 }
 
 function suggestedRoomFor({ date, time, duration = 60, service = "", excludeId = "" }) {
-  if (String(service || "").startsWith("OUT")) return "OUT";
-  if (!date || !time) return "R";
+  const availableRooms = activeRooms().map(([code]) => code);
+  if (String(service || "").startsWith("OUT") && availableRooms.includes("OUT")) return "OUT";
+  if (!date || !time) return availableRooms.find((code) => code !== "OUT") || availableRooms[0] || "R";
   const start = normalizedTimelineMinute(timeToMinutes(time));
   const end = start + Number(duration || 60) + 10;
   const taken = Object.values(db.appointments).filter((a) => a.date === date && a.id !== excludeId);
@@ -3060,9 +3237,7 @@ function suggestedRoomFor({ date, time, duration = 60, service = "", excludeId =
     const apptEnd = apptStart + Number(a.duration || 60) + 10;
     return start < apptEnd && end > apptStart;
   });
-  if (isAvailable("R")) return "R";
-  if (isAvailable("T")) return "T";
-  return "R";
+  return availableRooms.find((room) => isAvailable(room)) || availableRooms.find((room) => room !== "OUT") || availableRooms[0] || "R";
 }
 
 function openAppointmentModal({ therapistId, date, appointmentId, time = "", service = "", phone = "", customerName = "", notes = "", bookingStage = "", selectionId = "" }) {
@@ -3074,7 +3249,9 @@ function openAppointmentModal({ therapistId, date, appointmentId, time = "", ser
   const selectedService = existing?.service || service || "";
   const selectedCourse = COURSE_CATALOG[selectedService] || {};
   const selectedStage = existing?.bookingStage || bookingStage || "confirmed";
-  const serviceOptions = [`<option value="">自訂/其他項目</option>`].concat(Object.entries(COURSE_CATALOG).map(([k, c]) => `<option value="${k}" ${selectedService === k ? "selected" : ""}>${esc(c.name)} (${money(c.price)})</option>`)).join("");
+  const serviceOptions = [`<option value="">自訂/其他項目</option>`].concat(activeCourses().map(([k, c]) => `<option value="${k}" ${selectedService === k ? "selected" : ""}>${esc(c.name)} (${money(c.price)})</option>`)).join("");
+  const configuredRooms = activeRooms();
+  const roomOptions = (existing?.room && !configuredRooms.some(([code]) => code === existing.room) ? [[existing.room, { name: `${roomName(existing.room)}（歷史）` }], ...configuredRooms] : configuredRooms).map(([code, room]) => `<option value="${esc(code)}" ${existing?.room === code ? "selected" : ""}>${esc(room.name)}</option>`).join("");
   showModal(`
     <div class="modal max-w-xl">
       <h3 class="mb-5 border-b pb-4 text-xl font-black">${existing ? "修改預約" : "新增顧客預約"} <span class="ml-2 rounded-lg bg-teal-50 px-2 py-1 text-sm text-teal-700">${esc(selectedDate)}</span></h3>
@@ -3085,7 +3262,7 @@ function openAppointmentModal({ therapistId, date, appointmentId, time = "", ser
           <div><label class="label">預約時間</label><input name="time" type="time" class="input" value="${esc(existing?.time || time || "")}"></div>
           <div><label class="label">預估時長</label><input name="duration" type="number" min="10" step="10" class="input" value="${esc(existing?.duration || selectedCourse.duration || 60)}"></div>
         </div></section>
-        <section class="appointment-form-section"><div class="appointment-form-section-heading"><span>02</span><div><h4>師傅與工作室</h4><p>確認負責師傅、房型與預約處理階段。</p></div></div><div class="grid gap-4 sm:grid-cols-2"><div><label class="label">指定按摩師</label><select name="therapistId" class="input">${Object.keys(db.therapists).map((id) => `<option value="${id}" ${id === selectedTherapist ? "selected" : ""}>${esc(therapistName(id))}</option>`).join("")}</select></div><div><label class="label">工作室安排</label><select name="room" class="input"><option value="R">Royal (R房)</option><option value="T">Tiffany (T房)</option><option value="OUT">外出</option></select><p id="roomHint" class="mt-2 hidden rounded-lg p-2 text-xs font-black"></p></div><div class="sm:col-span-2"><label class="label">預約進度</label><select name="bookingStage" class="input">${bookingStageOptions(selectedStage)}</select></div></div></section>
+        <section class="appointment-form-section"><div class="appointment-form-section-heading"><span>02</span><div><h4>師傅與工作室</h4><p>確認負責師傅、房型與預約處理階段。</p></div></div><div class="grid gap-4 sm:grid-cols-2"><div><label class="label">指定按摩師</label><select name="therapistId" class="input">${Object.keys(db.therapists).map((id) => `<option value="${id}" ${id === selectedTherapist ? "selected" : ""}>${esc(therapistName(id))}</option>`).join("")}</select></div><div><label class="label">工作室安排</label><select name="room" class="input">${roomOptions}</select><p id="roomHint" class="mt-2 hidden rounded-lg p-2 text-xs font-black"></p></div><div class="sm:col-span-2"><label class="label">預約進度</label><select name="bookingStage" class="input">${bookingStageOptions(selectedStage)}</select></div></div></section>
         <section class="appointment-form-section"><div class="appointment-form-section-heading"><span>03</span><div><h4>顧客與備註</h4><p>保留必要聯絡資訊與現場交接事項。</p></div></div><div class="grid gap-4 sm:grid-cols-2"><div><label class="label">聯絡方式</label><input name="phone" class="input" value="${esc(existing?.phone || phone || "")}"></div><div><label class="label">顧客姓名 <span class="text-slate-400">(選填)</span></label><input name="customerName" class="input" value="${esc(existing?.customerName || customerName || "")}" placeholder="未填則顯示顧客編碼"></div><div class="sm:col-span-2"><label class="label">備註</label><textarea name="notes" class="input min-h-24" placeholder="例如：客人偏好、特殊需求、櫃檯交接事項">${esc(existing?.notes || notes || "")}</textarea></div></div></section>
         <p id="apptError" class="hidden text-sm font-black text-rose-600"></p>
         <div class="flex justify-end gap-3 border-t pt-4"><button type="button" class="btn-light" data-close-modal>取消</button><button class="btn-teal">${existing ? "更新預約" : "儲存預約"}</button></div>
@@ -3253,11 +3430,12 @@ async function updateAppointmentStage(id, stage) {
   const appt = db.appointments[id];
   if (!appt) return;
   const snapshot = snapshotDatabase();
+  const expectedBookingStage = normalizeBookingStage(appt.bookingStage, appt);
   appt.bookingStage = normalizeBookingStage(stage, appt);
   appt.isCompleted = appt.bookingStage === "completed";
   const metaAction = syncAppointmentMeta(appt);
   const saved = await saveCloudActions([
-    { action: "addAppointment", data: { ...appt, appId: id } },
+    { action: "addAppointment", data: { ...appt, appId: id, expectedBookingStage } },
     metaAction
   ].filter(Boolean), "預約進度已更新");
   if (!saved) {
@@ -3271,6 +3449,16 @@ async function updateAppointmentStage(id, stage) {
 async function quickConfirmClientSelection(selectionId) {
   const selection = db.clientSelections[selectionId];
   if (!selection) return;
+  if (selection.appointmentId || !isOpenClientSelection(selection) || selection.status !== "pending") {
+    showSnackbar("這筆客選已處理，請重新整理待辦清單");
+    return;
+  }
+  const availability = clientSelectionAvailability(selection);
+  if (!availability.available) {
+    showSnackbar(`${availability.label}：${availability.detail}`);
+    renderAppointmentDetail();
+    return;
+  }
   const course = COURSE_CATALOG[selection.service] || {};
   const id = `APT-${Date.now().toString(36).toUpperCase()}`;
   const data = {
@@ -3318,7 +3506,10 @@ async function quickConfirmClientSelection(selectionId) {
       { action: "saveCustomer", data: { phone: data.phone, ...customer } },
       { action: "saveCustomer", data: { phone: clientSelectionKey(nextSelection.id), ...db.customers[clientSelectionKey(nextSelection.id)] } },
       metaAction
-    ].filter(Boolean), "已快速建立確認預約");
+    ].filter(Boolean), "已快速建立確認預約", {
+      requireReadBack: true,
+      verifyCloud: (cloudDb) => clientSelectionConfirmationVerified(nextSelection.id, id, cloudDb)
+    });
     if (!saved) {
       restoreDatabase(snapshot, "快速確認未獲雲端確認，已還原");
       return;
@@ -3357,12 +3548,11 @@ function bookingNextActionMeta(appt = {}) {
   }
   if (stage === "confirmed") return { key: "pre_notice", label: "完成行前通知", tone: "violet", stage };
   if (stage === "pre_notice") return { key: "service_report", label: "填寫服務回報", tone: "indigo", stage };
-  if (stage === "completed" && (!hasCollectedPrice || !hasRecordNotes)) {
-    const missing = [
-      !hasCollectedPrice ? "實際回款" : "",
-      !hasRecordNotes ? "服務紀錄" : ""
-    ].filter(Boolean).join("與");
-    return { key: "payment_record", label: `補${missing}`, tone: "rose", stage };
+  if (stage === "completed" && !hasCollectedPrice) {
+    return { key: "payment_record", label: "補實際回款", tone: "rose", stage };
+  }
+  if (stage === "completed" && !hasRecordNotes) {
+    return { key: "complete", label: "帳務已完成，待補服務紀錄", tone: "teal", stage, reminder: true };
   }
   return { key: "complete", label: "已完成，資料完整", tone: "teal", stage };
 }
@@ -3439,14 +3629,9 @@ function renderAppointmentDetail() {
     );
   });
   section.querySelectorAll("[data-copy-and-mark-notice]").forEach((btn) => btn.onclick = async () => {
-    const target = $("therapistNoticeText");
     const appt = db.appointments[btn.dataset.copyAndMarkNotice];
     if (!appt) return;
-    target?.select();
-    const copied = await copyText(target?.value || therapistNoticeText(appt), "給師傅通知已複製");
-    if (copied === false) return;
-    await updateAppointmentStage(btn.dataset.copyAndMarkNotice, "pre_notice");
-    showSnackbar("通知已複製，並標記為已完成");
+    openNoticeEditorModal(appt);
   });
   section.querySelectorAll("[data-mobile-booking-action]").forEach((btn) => btn.onclick = () => {
     section.querySelector(".booking-primary-action button")?.click();
@@ -3454,12 +3639,32 @@ function renderAppointmentDetail() {
   section.querySelectorAll("[data-scroll-booking-workflow]").forEach((btn) => btn.onclick = () => {
     section.querySelector(".appointment-workflow-rail")?.scrollIntoView({ behavior: "smooth", block: "center" });
   });
+  section.querySelectorAll("[data-back-to-appointment-list]").forEach((btn) => btn.onclick = () => {
+    appointmentDetailEditMode = false;
+    appointmentDetailEditSection = "";
+    activeAppointmentId = null;
+    renderAppointmentDetail();
+  });
   section.querySelectorAll("[data-copy-mobile-notice]").forEach((btn) => btn.onclick = async () => {
     const appt = db.appointments[btn.dataset.copyMobileNotice];
     if (!appt) return;
     const kind = btn.dataset.noticeKind === "customer" ? "customer" : "therapist";
     const text = kind === "customer" ? customerNoticeText(appt) : therapistNoticeText(appt);
     await copyText(text, `${kind === "customer" ? "給顧客" : "給師傅"}通知已複製`);
+  });
+  section.querySelectorAll("[data-focus-service-result]").forEach((btn) => btn.onclick = () => {
+    appointmentDetailEditSection = "all";
+    appointmentDetailEditMode = true;
+    renderAppointmentDetail();
+    requestAnimationFrame(() => {
+      const form = $("appointmentDetailForm");
+      const payment = form?.querySelector('[name="collectedPrice"]:not([type="hidden"])');
+      const notes = form?.querySelector('[name="recordNotes"]:not([type="hidden"])');
+      payment?.scrollIntoView({ behavior: "smooth", block: "center" });
+      payment?.focus({ preventScroll: true });
+      notes?.classList.add("ring-2", "ring-amber-300");
+      setTimeout(() => notes?.classList.remove("ring-2", "ring-amber-300"), 1800);
+    });
   });
   section.querySelectorAll("[data-focus-appointment-field]").forEach((btn) => btn.onclick = () => {
     const detailForm = $("appointmentDetailForm");
@@ -3513,6 +3718,9 @@ function renderAppointmentDetail() {
     const customerNameField = editable("customerName");
     const remittanceMethodField = editable("remittanceMethod");
     const remittanceAccountField = editable("remittanceAccountLast5");
+    const bookingStageField = form.querySelector("[data-booking-stage]");
+    const stageOverrideField = form.querySelector("[data-stage-override]");
+    const stageOverrideReason = form.querySelector("[data-stage-override-reason]");
     const transferDetails = form.querySelector("[data-remittance-transfer-details]");
     if (serviceField) serviceField.onchange = () => {
       const course = COURSE_CATALOG[serviceField.value];
@@ -3538,6 +3746,26 @@ function renderAppointmentDetail() {
       remittanceMethodField.onchange = syncTransferDetails;
       syncTransferDetails();
     }
+    if (bookingStageField && stageOverrideField) {
+      const syncStageOverride = () => {
+        const enabled = stageOverrideField.checked;
+        bookingStageField.querySelectorAll("option").forEach((option) => { option.disabled = !enabled && option.dataset.allowed !== "true" && option.selected === false; });
+        if (stageOverrideReason) {
+          stageOverrideReason.classList.toggle("hidden", !enabled);
+          stageOverrideReason.required = enabled;
+          if (!enabled) stageOverrideReason.value = "";
+        }
+      };
+      const currentOption = bookingStageField.querySelector("option[selected]") || bookingStageField.selectedOptions[0];
+      bookingStageField.querySelectorAll("option").forEach((option) => {
+        option.dataset.allowed = option.disabled ? "false" : "true";
+        option.disabled = false;
+      });
+      const allowedStages = new Set([currentOption?.value, ...(BOOKING_STAGE_NEXT[currentOption?.value] || [])]);
+      bookingStageField.querySelectorAll("option").forEach((option) => { option.disabled = !allowedStages.has(option.value); });
+      stageOverrideField.onchange = syncStageOverride;
+      syncStageOverride();
+    }
     form.onsubmit = (event) => {
       event.preventDefault();
       const accountLast5 = String(remittanceAccountField?.value || "").replace(/\D/g, "");
@@ -3548,6 +3776,15 @@ function renderAppointmentDetail() {
           error.classList.remove("hidden");
         }
         remittanceAccountField?.focus();
+        return;
+      }
+      if (stageOverrideField?.checked && String(stageOverrideReason?.value || "").trim().length < 5) {
+        const error = form.querySelector("#appointmentDetailError");
+        if (error) {
+          error.textContent = "進階狀態調整必須填寫至少 5 個字的原因。";
+          error.classList.remove("hidden");
+        }
+        stageOverrideReason?.focus();
         return;
       }
       saveAppointmentDetailForm(form);
@@ -3670,8 +3907,8 @@ function bookingPrimaryActionHtml(appt) {
   }
   if (action.key === "service_report") {
     return `<div class="booking-primary-action mb-5 flex flex-col justify-between gap-4 rounded-2xl border border-indigo-200 bg-indigo-50 p-4 sm:flex-row sm:items-center">
-      <div><span class="ops-section-kicker text-indigo-700">目前待辦</span><h4 class="mt-1 font-black">填寫服務回報</h4><p class="mt-1 text-sm font-bold text-slate-600">補上實際回款與服務紀錄，再勾選完成並儲存。</p></div>
-      <button type="button" class="btn-teal shrink-0" data-focus-appointment-field="collectedPrice">填寫服務結果</button>
+      <div><span class="ops-section-kicker text-indigo-700">目前待辦</span><h4 class="mt-1 font-black">填寫服務結果</h4><p class="mt-1 text-sm font-bold text-slate-600">實際回款為必要欄位；服務紀錄可稍後補登，但建議一併填寫。</p></div>
+      <button type="button" class="btn-teal shrink-0" data-focus-service-result="${esc(appt.id)}">填寫服務結果</button>
     </div>`;
   }
   if (action.key === "payment_record") {
@@ -3681,9 +3918,9 @@ function bookingPrimaryActionHtml(appt) {
       <button type="button" class="btn-teal shrink-0" data-focus-appointment-field="${focusField}">補齊資料</button>
     </div>`;
   }
-  return `<div class="booking-primary-action mb-5 flex flex-col justify-between gap-4 rounded-2xl border border-teal-200 bg-teal-50 p-4 sm:flex-row sm:items-center">
-    <div><span class="ops-section-kicker text-teal-700">目前狀態</span><h4 class="mt-1 font-black">已完成，資料完整</h4><p class="mt-1 text-sm font-bold text-slate-600">目前沒有後續待辦；如需修正可編輯下方資料。</p></div>
-    <span class="badge bg-teal-100 px-4 py-2 text-teal-800">已完成</span>
+  return `<div class="booking-primary-action mb-5 flex flex-col justify-between gap-4 rounded-2xl border ${action.reminder ? "border-amber-200 bg-amber-50" : "border-teal-200 bg-teal-50"} p-4 sm:flex-row sm:items-center">
+    <div><span class="ops-section-kicker ${action.reminder ? "text-amber-700" : "text-teal-700"}">目前狀態</span><h4 class="mt-1 font-black">${esc(action.label || "已完成，資料完整")}</h4><p class="mt-1 text-sm font-bold text-slate-600">${action.reminder ? "帳務已視為完成；服務紀錄可稍後補登。" : "目前沒有後續待辦；如需修正可編輯下方資料。"}</p></div>
+    <span class="badge ${action.reminder ? "bg-amber-100 text-amber-800" : "bg-teal-100 text-teal-800"} px-4 py-2">${action.reminder ? "待補紀錄" : "已完成"}</span>
   </div>`;
 }
 
@@ -3697,24 +3934,17 @@ function bookingMobileNextActionHtml(appt) {
     payment_record: "補齊回款或服務紀錄，完成本筆預約。",
     complete: "本筆預約資料已完成。"
   };
-  return `<section class="appointment-mobile-next-action" aria-label="目前待辦"><span class="ops-section-kicker">目前待辦</span><h4>${esc(action.label)}</h4><p>${esc(appt.date)} · ${esc(appt.time)} → ${esc(end)}<br>${esc(messages[action.key] || "請依目前狀態完成下一步。")}</p></section>`;
+  return `<section class="appointment-mobile-next-action" aria-label="目前待辦"><span class="ops-section-kicker">目前待辦</span><h4>${esc(action.label)}</h4><p>${esc(messages[action.key] || "請依目前狀態完成下一步。")}</p></section>`;
 }
 
 function bookingMobileActionDockHtml(appt) {
   const action = bookingNextActionMeta(appt);
-  const tools = `<details class="booking-mobile-tools"><summary aria-label="開啟預約工具" title="預約工具">${iconHtml("more-horizontal")}<span class="sr-only">預約工具</span></summary><section><button type="button" data-scroll-booking-workflow>${iconHtml("list-ordered")}查看預約流程</button><button type="button" data-copy-mobile-notice="${esc(appt.id)}" data-notice-kind="therapist">${iconHtml("copy")}複製給師傅</button><button type="button" data-copy-mobile-notice="${esc(appt.id)}" data-notice-kind="customer">${iconHtml("message-square-text")}複製給顧客</button><hr><button type="button" data-edit-appointment data-edit-section="all">${appointmentEditIconHtml()}編輯預約</button><button type="button" data-delete-appt="${esc(appt.id)}" class="appointment-delete-btn">${iconHtml("trash-2")}刪除資料</button></section></details>`;
+  const tools = `<details class="booking-mobile-tools"><summary aria-label="開啟預約工具" title="預約工具">${iconHtml("more-horizontal")}<span class="sr-only">預約工具</span></summary><section><button type="button" data-back-to-appointment-list>${iconHtml("arrow-left")}返回預約列表</button><button type="button" data-scroll-booking-workflow>${iconHtml("list-ordered")}查看預約流程</button><button type="button" data-copy-mobile-notice="${esc(appt.id)}" data-notice-kind="therapist">${iconHtml("copy")}複製給師傅</button><button type="button" data-copy-mobile-notice="${esc(appt.id)}" data-notice-kind="customer">${iconHtml("message-square-text")}複製給顧客</button><hr><button type="button" data-edit-appointment data-edit-section="all">${appointmentEditIconHtml()}編輯預約</button><button type="button" data-delete-appt="${esc(appt.id)}" class="appointment-delete-btn">${iconHtml("trash-2")}刪除資料</button></section></details>`;
   return `<div class="booking-mobile-action-dock${action.key === "complete" ? " is-tools-only" : ""}">${action.key === "complete" ? "" : `<button type="button" class="btn-teal" data-mobile-booking-action>${esc(action.label)}</button>`}${tools}</div>`;
 }
 
 function therapistNoticeText(appt) {
-  const remittanceDue = remittanceDueFor(appt);
-  return [
-    `預約通知`,
-    `時間：${appointmentNoticeDateTime(appt)}`,
-    `課程：${noticeCourseName(appt)}`,
-    `應收金額：${money(appt.price)}`,
-    `應回帳金額：${money(remittanceDue)}`
-  ].filter(Boolean).join("\n");
+  return renderNoticeTemplate(operationsConfigStore().noticeTemplates.therapist, appt);
 }
 
 function noticeCourseName(appt) {
@@ -3747,14 +3977,12 @@ function customerNoticeClosing(appt) {
 }
 
 function customerNoticeText(appt) {
-  return [
-    "預約成功",
-    `師傅：${therapistName(appt.therapistId)}`,
-    `時間：${appointmentNoticeDateTime(appt)}`,
-    `課程：${noticeCourseName(appt)}`,
-    `金額：${money(appt.price)}`,
-    customerNoticeClosing(appt)
-  ].join("\n");
+  return renderNoticeTemplate(operationsConfigStore().noticeTemplates.customer, appt);
+}
+
+function renderNoticeTemplate(template, appt = {}) {
+  const tokens = { dateTime: appointmentNoticeDateTime(appt), service: noticeCourseName(appt), price: money(appt.price), remittanceDue: money(remittanceDueFor(appt)), therapist: therapistName(appt.therapistId), room: roomName(appt.room) };
+  return String(template || "").replace(/\{\{(dateTime|service|price|remittanceDue|therapist|room)\}\}/g, (_, key) => tokens[key] || "").trim();
 }
 
 function renderAppointmentListPage(appts) {
@@ -3772,12 +4000,13 @@ function renderAppointmentListPage(appts) {
   const toggleText = appointmentRecordScope === "month" ? "只看當日" : "完整清單";
   const pendingSelectionPanel = pendingSelections.length ? `<div class="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-5">
     <div class="mb-4 flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
-      <div><h3 class="font-black text-amber-950">客選待確認</h3><p class="text-sm font-bold text-amber-800">客人已選師傅，但尚未正式建立預約。</p></div>
+      <div><h3 class="font-black text-amber-950">待確認預約需求</h3><p class="text-sm font-bold text-amber-800">店家確認後才會建立正式預約。</p></div>
       <span class="badge bg-white text-amber-700">${pendingSelections.length} 筆</span>
     </div>
     <div class="grid gap-3 lg:grid-cols-2">
       ${pendingSelections.map((selection) => {
         const hasTherapist = Boolean(selection.selectedTherapistId);
+        const availability = clientSelectionAvailability(selection);
         const profile = hasTherapist ? db.therapists[selection.selectedTherapistId] || {} : {};
         const displayName = hasTherapist ? therapistName(selection.selectedTherapistId) : "尚未媒合師傅";
         return `<article class="rounded-xl border border-amber-100 bg-white p-4">
@@ -3788,13 +4017,14 @@ function renderAppointmentListPage(appts) {
                 <p class="text-xs font-black text-slate-400">${esc(selection.date)} ${esc(selection.time)} · ${esc(courseName(selection.service))}</p>
                 <h4 class="mt-1 truncate font-black">${esc(displayName)}</h4>
                 <p class="mt-1 text-sm font-bold text-slate-500">${esc(selection.customerName || "未留姓名")} ${selection.customerContact ? `｜${esc(selection.customerContact)}` : ""}</p>
-                ${selection.source === "line-trial" ? `<p class="mt-2 line-clamp-2 text-xs font-bold text-amber-700">LINE訊息：${esc(selection.customerNote || "")}</p>` : ""}
+                ${selection.source === "public-booking" ? `<p class="mt-2 text-xs font-black text-teal-700">公開預約需求</p>` : selection.source === "line-trial" ? `<p class="mt-2 line-clamp-2 text-xs font-bold text-amber-700">LINE訊息：${esc(selection.customerNote || "")}</p>` : ""}
               </div>
             </div>
-            <span class="badge ${hasTherapist ? "bg-amber-50 text-amber-700" : "bg-indigo-50 text-indigo-700"}">${hasTherapist ? "待確認" : "待媒合"}</span>
+            <span class="badge ${availability.available ? (hasTherapist ? "bg-amber-50 text-amber-700" : "bg-indigo-50 text-indigo-700") : "bg-rose-50 text-rose-700"}">${esc(availability.label)}</span>
           </div>
+          <p class="mt-3 text-xs font-black ${availability.available ? "text-slate-500" : "text-rose-700"}">${esc(availability.detail)}</p>
           <div class="mt-4 flex justify-end gap-2">
-            ${hasTherapist ? `<button class="btn-teal px-3 py-2 text-sm" data-quick-confirm-selection="${esc(selection.id)}">快速確認</button>` : `<button class="btn-teal px-3 py-2 text-sm" data-line-selection-query="${esc(selection.id)}">查可接師傅</button>`}
+            ${hasTherapist ? `<button class="btn-teal px-3 py-2 text-sm${availability.available ? "" : " opacity-50"}" data-quick-confirm-selection="${esc(selection.id)}"${availability.available ? "" : " disabled"}>快速確認</button>` : `<button class="btn-teal px-3 py-2 text-sm" data-line-selection-query="${esc(selection.id)}">查可接師傅</button>`}
             <button class="btn-light px-3 py-2 text-sm" data-create-from-selection="${esc(selection.id)}">${hasTherapist ? "編輯建立" : "手動建立"}</button>
             <button class="rounded-xl bg-slate-100 px-3 py-2 text-sm font-black text-slate-600" data-reject-selection="${esc(selection.id)}">略過</button>
           </div>
@@ -3842,7 +4072,7 @@ function renderAppointmentListPage(appts) {
 
 function appointmentInlineEditorHtml(appt, scope, record = {}) {
   const currentRecord = Object.keys(record).length ? record : (appointmentRecord(appt) || {});
-  const serviceOptions = [`<option value="">自訂/其他項目</option>`].concat(Object.entries(COURSE_CATALOG).map(([key, course]) => `<option value="${key}" ${appt.service === key ? "selected" : ""}>${esc(course.name)} (${money(course.price)})</option>`)).join("");
+  const serviceOptions = [`<option value="">自訂/其他項目</option>`].concat(activeCourses().map(([key, course]) => `<option value="${key}" ${appt.service === key ? "selected" : ""}>${esc(course.name)} (${money(course.price)})</option>`)).join("");
   const scopeTitle = { basic: "編輯基本資訊", customer: "編輯顧客資訊", financial: "編輯帳務資訊", all: "編輯預約" }[scope] || "編輯預約";
   const hasScope = (name) => scope === "all" || scope === name;
   const hidden = (name, value) => `<input type="hidden" name="${name}" value="${esc(value ?? "")}">`;
@@ -3865,9 +4095,13 @@ function appointmentInlineEditorHtml(appt, scope, record = {}) {
     .filter(([name, value]) => !visibleFields.has(name) && (name !== "isCompleted" || value === "on"))
     .map(([name, value]) => hidden(name, value))
     .join("");
-  const basicFields = `<div><label class="label">預約日期</label><input name="date" type="date" class="input" value="${esc(appt.date || todayKey())}"></div><div><label class="label">預約時間</label><input name="time" type="time" class="input" value="${esc(appt.time || "")}"></div><div><label class="label">指定按摩師</label><select name="therapistId" class="input">${Object.keys(db.therapists).map((id) => `<option value="${esc(id)}" ${id === appt.therapistId ? "selected" : ""}>${esc(therapistName(id))}</option>`).join("")}</select></div><div><label class="label">工作室安排</label><select name="room" class="input"><option value="R" ${appt.room === "R" ? "selected" : ""}>Royal (R房)</option><option value="T" ${appt.room === "T" ? "selected" : ""}>Tiffany (T房)</option><option value="OUT" ${appt.room === "OUT" ? "selected" : ""}>外出</option></select></div><div><label class="label">預約建立狀態</label><select name="bookingStage" class="input">${bookingStageOptions(appt.bookingStage || (String(appt.isCompleted) === "true" ? "completed" : "confirmed"))}</select></div><div><label class="label">服務課程</label><select name="service" class="input">${serviceOptions}</select></div><div><label class="label">預估時長</label><input name="duration" type="number" min="10" step="10" class="input" value="${esc(appt.duration || 60)}"></div><div><label class="label">應收金額</label><input name="price" type="number" class="input" value="${esc(appt.price || 0)}"></div>`;
+  const currentStage = normalizeBookingStage(appt.bookingStage || (String(appt.isCompleted) === "true" ? "completed" : "confirmed"), appt);
+  const stageOverrideFields = currentUser?.role === "admin" ? `<div class="md:col-span-2 rounded-xl border border-amber-200 bg-amber-50 p-4"><label class="flex items-center gap-3 font-black text-amber-950"><input name="allowStageOverride" type="checkbox" value="true" data-stage-override> 開啟進階狀態調整</label><p class="mt-2 text-xs font-bold text-amber-800">僅供補登、取消後復原或資料修正；仍會檢查目前資料版本，且必須留下原因。</p><textarea name="stageOverrideReason" class="input mt-3 hidden min-h-20" data-stage-override-reason placeholder="請填寫狀態調整原因（至少 5 個字）"></textarea></div>` : "";
+  const configuredRooms = activeRooms();
+  const roomOptions = (appt.room && !configuredRooms.some(([code]) => code === appt.room) ? [[appt.room, { name: `${roomName(appt.room)}（歷史）` }], ...configuredRooms] : configuredRooms).map(([code, room]) => `<option value="${esc(code)}" ${appt.room === code ? "selected" : ""}>${esc(room.name)}</option>`).join("") || `<option value="${esc(appt.room || "R")}">${esc(roomName(appt.room || "R"))}</option>`;
+  const basicFields = `<div><label class="label">預約日期</label><input name="date" type="date" class="input" value="${esc(appt.date || todayKey())}"></div><div><label class="label">預約時間</label><input name="time" type="time" class="input" value="${esc(appt.time || "")}"></div><div><label class="label">指定按摩師</label><select name="therapistId" class="input">${Object.keys(db.therapists).map((id) => `<option value="${esc(id)}" ${id === appt.therapistId ? "selected" : ""}>${esc(therapistName(id))}</option>`).join("")}</select></div><div><label class="label">工作室安排</label><select name="room" class="input">${roomOptions}</select></div><div><label class="label">預約進度</label><select name="bookingStage" class="input" aria-describedby="bookingStageHelp" data-booking-stage>${bookingStageOptions(currentStage, currentStage, false)}</select><p id="bookingStageHelp" class="appointment-inline-help">${currentUser?.role === "admin" ? "一般編輯只能推進合法下一步；管理員開啟下方進階調整後，才可處理補登、取消後復原或其他例外。" : "只能保留目前階段或推進到合法下一步。"}</p></div><div class="md:col-span-2">${stageOverrideFields}</div><div><label class="label">服務課程</label><select name="service" class="input">${serviceOptions}</select></div><div><label class="label">預估時長</label><input name="duration" type="number" min="10" step="10" class="input" value="${esc(appt.duration || 60)}"></div><div><label class="label">應收金額</label><input name="price" type="number" class="input" value="${esc(appt.price || 0)}"></div>`;
   const customerFields = `<div><label class="label">聯絡方式</label><input name="phone" class="input" value="${esc(appt.phone || "")}"></div><div><label class="label">顧客姓名 <span class="text-slate-400">(選填)</span></label><input name="customerName" class="input" value="${esc(appt.customerName || "")}" placeholder="未填則顯示顧客編碼"></div><div class="md:col-span-2"><label class="label">本次備註</label><textarea name="notes" class="input min-h-24" placeholder="例如：客人偏好、特殊需求、櫃檯交接事項">${esc(appt.notes || "")}</textarea></div><div class="md:col-span-2"><label class="label">服務紀錄／顧客反饋</label><textarea name="recordNotes" class="input min-h-28">${esc(currentRecord.notes || "")}</textarea></div>`;
-  const completionFields = scope === "all" ? `<label class="flex items-center gap-3 rounded-xl border p-4 font-black md:col-span-2"><input name="isCompleted" type="checkbox" ${String(appt.isCompleted) === "true" ? "checked" : ""}> 標記為已完成</label>` : "";
+  const completionFields = scope === "all" && currentStage === "service_report" ? `<label class="flex items-center gap-3 rounded-xl border p-4 font-black md:col-span-2"><input name="isCompleted" type="checkbox"> 標記為已完成（會推進到服務完成）</label>` : "";
   const financialFields = `<div><label class="label">服務金額</label><input name="price" type="number" min="0" class="input" value="${esc(appt.price || 0)}"></div><div><label class="label">應回帳款</label><input name="remittanceDue" type="number" min="0" class="input" value="${esc(appt.remittanceDue || remittanceDueFor(appt))}"><p class="appointment-inline-help">依現有分潤帶入，可依實際帳務調整。</p></div><div class="appointment-financial-derived"><span class="label">師傅抽成</span><strong>${money(therapistCutFor(appt))}</strong><p>依目前服務課程計算；請由基本資訊變更課程。</p></div><div><label class="label">實際回款</label><input name="collectedPrice" type="number" min="0" class="input" value="${esc(appt.collectedPrice || currentRecord.collectedPrice || "")}"></div><div><label class="label">回款方式</label><select name="remittanceMethod" class="input" data-remittance-method><option value="">尚未選擇</option><option value="現金回帳" ${appt.remittanceMethod === "現金回帳" ? "selected" : ""}>現金</option><option value="轉帳" ${appt.remittanceMethod === "轉帳" ? "selected" : ""}>轉帳</option></select></div><div><label class="label">回款備註 <span class="text-slate-400">(選填)</span></label><input name="remittanceNote" class="input" value="${esc(appt.remittanceNote || "")}" placeholder="例如：收款人、日期或交接說明"></div><div class="md:col-span-2" data-remittance-transfer-details${appt.remittanceMethod === "轉帳" ? "" : " hidden"}><label class="label">轉帳帳戶末五碼</label><input name="remittanceAccountLast5" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" class="input" value="${esc(appt.remittanceAccountLast5 || "")}" placeholder="請填入 5 碼"><p class="appointment-inline-help">選擇轉帳時必填；只保留帳戶末五碼供核對。</p></div>`;
   return `<form id="appointmentDetailForm" class="appointment-detail-form appointment-inline-editor appointment-inline-editor--${esc(scope)}">
       <div class="appointment-inline-editor-heading"><div><span class="ops-section-kicker">${esc(scopeTitle)}</span><p>只會更新這個區塊；其他預約資料保持不變。</p></div></div>
@@ -3894,19 +4128,18 @@ function renderAppointmentDetailView(appt, allAppts) {
     appt.remittanceMethod === "轉帳" && appt.remittanceAccountLast5 ? `帳戶末五碼：${esc(appt.remittanceAccountLast5)}` : "",
     appt.remittanceNote ? `備註：${esc(appt.remittanceNote)}` : ""
   ].filter(Boolean).join("<br>");
-  const basicContent = editScope === "basic" || editScope === "all" ? appointmentInlineEditorHtml(appt, editScope === "all" ? "all" : "basic", record) : `<div class="appointment-info-grid">${item("預約時間", `${esc(appt.date)}<br>${esc(appt.time)} → ${esc(end)}`)}${item("按摩師", esc(therapistName(appt.therapistId)))}${item("工作室", esc(room))}${item("服務", esc(courseName(appt.service)))}${item("時長", `${esc(String(appt.duration || 60))} 分鐘`)}${item("應收金額", money(appt.price))}</div>`;
+  const basicContent = editScope === "basic" || editScope === "all" ? appointmentInlineEditorHtml(appt, editScope === "all" ? "all" : "basic", record) : `<div class="appointment-info-grid appointment-info-grid--supplemental">${item("應收金額", money(appt.price))}${item("預約備註", esc(appt.notes || "尚無備註"))}</div>`;
   const customerContent = editScope === "customer" ? appointmentInlineEditorHtml(appt, "customer", record) : `<div class="appointment-info-grid">${item("顧客", esc(customerCode))}${item("顧客稱呼", esc(appt.customerName || "尚未設定"))}${item("聯絡方式", esc(appt.phone || "尚未設定"))}</div>`;
   const financialContent = editScope === "financial" ? appointmentInlineEditorHtml(appt, "financial", record) : `<div class="appointment-financial-grid">${item("服務金額", money(appt.price))}${item("應回帳款", money(storeAmount))}${item("師傅抽成", money(cut))}${item("實際回款", `${appt.collectedPrice ? money(appt.collectedPrice) : "尚未填寫"}${remittanceDetail ? `<small class="appointment-remittance-detail">${remittanceDetail}</small>` : ""}`)}</div><p class="appointment-financial-check">${storeAmount + cut === Number(appt.price || 0) ? "✓ 金額驗算正確" : "⚠ 分潤金額與服務金額不一致"}</p>`;
   return `<div class="appointment-detail-layout"><section class="appointment-detail-view">
-    ${bookingMobileNextActionHtml(appt)}
     <header class="appointment-detail-header appointment-detail-hero">
-      <button id="backToAppointmentListBtn" type="button" class="appointment-back appointment-back-icon" aria-label="返回預約列表" title="返回預約列表">${iconHtml("arrow-left")}<span class="sr-only">返回預約列表</span></button>
-      <details class="appointment-more"><summary aria-label="更多預約操作" title="更多預約操作"><svg aria-hidden="true" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m0 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16m-4.5 6.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3m4.5 0a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3m4.5 0a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3"/></svg><span class="sr-only">更多預約操作</span></summary><div class="appointment-more-menu" role="menu" aria-label="預約操作"><button type="button" role="menuitem" data-edit-appointment data-edit-section="all">編輯預約</button><button data-delete-appt="${esc(appt.id)}" type="button" role="menuitem" class="appointment-delete-btn">刪除資料</button></div></details>
-      <div class="appointment-hero-main"><section class="appointment-identity-card"><span class="ops-section-kicker">預約詳情</span><h3>${esc(customerCode)}</h3><p class="appointment-secondary-id" title="${esc(appt.id)}">${esc(appt.id)}</p></section><section class="appointment-hero-summary"><div class="appointment-hero-schedule"><p class="appointment-header-line appointment-header-date">${esc(appt.date)}</p><p class="appointment-header-line appointment-header-time">${esc(appt.time)} ➡︎ ${esc(end)}</p></div><div class="appointment-hero-assignment"><p class="appointment-header-line appointment-header-therapist">${esc(therapistName(appt.therapistId))}</p><p class="appointment-header-line appointment-header-room">${esc(room)}</p></div><p class="appointment-header-line appointment-header-service">${esc(courseName(appt.service))} · ${esc(String(appt.duration || 60))} 分鐘 · ${money(appt.price)}</p></section></div>
+
+      <div class="appointment-hero-main"><section class="appointment-identity-card"><span class="ops-section-kicker">預約詳情</span><h3>${esc(customerCode)}</h3><p class="appointment-secondary-id" title="${esc(appt.id)}">${esc(appt.id)}</p></section><section class="appointment-hero-summary"><div class="appointment-hero-schedule appointment-hero-card"><span class="appointment-hero-card-label">預約時間</span><p class="appointment-header-line appointment-header-date">${esc(appt.date)}</p><p class="appointment-header-line appointment-header-time">${esc(appt.time)} ➡︎ ${esc(end)}</p></div><div class="appointment-hero-assignment appointment-hero-card"><span class="appointment-hero-card-label">服務人員／場地</span><div class="appointment-hero-assignment-values"><p class="appointment-header-line appointment-header-therapist">${esc(therapistName(appt.therapistId))}</p><p class="appointment-header-line appointment-header-room">${esc(room)}</p></div></div><div class="appointment-hero-service appointment-hero-card"><span class="appointment-hero-card-label">服務內容</span><p class="appointment-header-line appointment-header-service">${esc(courseName(appt.service))} · ${esc(String(appt.duration || 60))} 分鐘 · ${money(appt.price)}</p></div></section></div>
+      <div class="appointment-hero-todo">${bookingMobileNextActionHtml(appt)}</div>
       ${bookingStageRailHtml(appt.bookingStage || "confirmed")}
     </header>
     ${bookingPrimaryActionHtml(appt)}
-    <section id="appointmentInformationCard" class="appointment-card appointment-information-card"><div class="appointment-card-heading"><div><span class="ops-section-kicker">預約資訊</span><h4>基本安排</h4></div>${editScope === "all" ? "" : editButton("basic", "基本資訊")}</div>${basicContent}${editScope === "all" ? "" : `<hr><div class="appointment-section-heading"><span class="ops-section-kicker">顧客資訊</span>${editScope === "customer" ? "" : editButton("customer", "顧客資訊")}</div>${customerContent}<hr><div class="appointment-notes-grid"><section class="appointment-detail-subsection"><span class="ops-section-kicker">本次備註</span><p>${esc(appt.notes || "尚無備註")}</p></section><section class="appointment-detail-subsection"><span class="ops-section-kicker">服務紀錄／顧客反饋</span><p>${esc(record.notes || "尚無服務紀錄")}</p></section></div>`}</section>
+    <section id="appointmentInformationCard" class="appointment-card appointment-information-card"><div class="appointment-card-heading"><div><h4>補充資訊</h4></div>${editScope === "all" ? "" : editButton("basic", "基本資訊")}</div>${basicContent}${editScope === "all" ? "" : `<hr><div class="appointment-section-heading"><span class="ops-section-kicker">顧客</span>${editScope === "customer" ? "" : editButton("customer", "顧客資訊")}</div>${customerContent}<hr><div class="appointment-notes-grid"><section class="appointment-detail-subsection"><span class="ops-section-kicker">服務紀錄</span><p>${esc(record.notes || "可稍後補" )}</p></section></div>`}</section>
     ${editScope === "all" ? "" : `<section id="appointmentFinancialCard" class="appointment-card appointment-financial-card"><div class="appointment-section-heading"><span class="ops-section-kicker">財務</span>${editScope === "financial" ? "" : editButton("financial", "帳務資訊")}</div>${financialContent}</section>`}
     ${editScope ? "" : bookingMobileActionDockHtml(appt)}
   </section></div>`;
@@ -3928,7 +4161,7 @@ async function saveAppointmentDetailForm(form) {
     duration: Number(data.duration || 60),
     price: Number(data.price || 0),
     bookingStage: normalizeBookingStage(data.bookingStage || old.bookingStage || "confirmed", old),
-    isCompleted: data.isCompleted === "on" || data.bookingStage === "completed",
+    isCompleted: data.isCompleted === "on" || data.bookingStage === "completed" || (normalizeBookingStage(old.bookingStage, old) === "pre_notice" && String(data.collectedPrice || "").trim() !== ""),
     remittanceDue: String(data.remittanceDue || "").trim(),
     collectedPrice: data.collectedPrice || "",
     remittanceMethod: String(data.remittanceMethod || "").trim(),
@@ -3938,6 +4171,7 @@ async function saveAppointmentDetailForm(form) {
     customerName: String(data.customerName || "").trim(),
     notes: String(data.notes || "").trim()
   };
+  next.expectedBookingStage = normalizeBookingStage(old.bookingStage, old);
   const err = form.querySelector("#appointmentDetailError");
   if (next.isCompleted) next.bookingStage = "completed";
   if (next.remittanceMethod === "轉帳" && !/^\d{5}$/.test(next.remittanceAccountLast5)) {
@@ -4286,6 +4520,9 @@ function drawScheduleTable() {
     const hasAnomaly = currentScheduleViewDates.some((d) => scheduleValueIsAnomalous((db.schedules[id] || {})[d.key]));
     return matchesName && (!scheduleAnomalyOnly || hasAnomaly);
   });
+  const hoursByTherapist = therapistIds.map((id) => ({ id, ...therapistScheduledHours(id) }));
+  const totalScheduledMinutes = hoursByTherapist.reduce((total, item) => total + item.minutes, 0);
+  $("scheduleHoursSummary").innerHTML = hoursByTherapist.length ? `<div class="flex flex-wrap items-baseline justify-between gap-2"><div><span class="page-kicker">區間統計</span><h4 class="mt-1 text-base font-black">指定區間排班時數</h4></div><strong class="text-sm text-teal-700">合計 ${formatScheduledHours(totalScheduledMinutes)}</strong></div><div class="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">${hoursByTherapist.map((item) => `<div class="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2"><div class="flex items-center justify-between gap-3"><strong class="truncate text-sm">${esc(therapistName(item.id))}</strong><span class="shrink-0 text-sm font-black text-teal-700">${formatScheduledHours(item.minutes)}</span></div><p class="mt-1 text-xs font-bold text-slate-500">${item.workingDays} 個排班日</p></div>`).join("")}</div>` : `<p class="text-sm font-bold text-slate-400">沒有符合條件的人員可計算。</p>`;
   $("scheduleHeader").innerHTML = `<th class="sticky left-0 z-20 bg-slate-50">人員</th>` + currentScheduleViewDates.map((d) => `<th data-date-key="${esc(d.key)}" class="sticky top-0 z-10 ${d.isWeekend ? "text-rose-600" : ""} ${d.key === todayKey() ? "bg-teal-50 text-teal-700" : "bg-slate-50"}">${esc(d.displayShort)}<small>${esc(d.displayFull.split(" ")[1] || "")}</small></th>`).join("");
   $("scheduleRows").innerHTML = therapistIds.map((id) => `<tr><td class="sticky left-0 z-10 bg-white"><strong>${esc(therapistName(id))}</strong><button class="schedule-bulk-edit" data-edit-schedule="${id}" title="批次修改">${iconHtml("calendar-range")}</button></td>${currentScheduleViewDates.map((d) => { const shift=(db.schedules[id] || {})[d.key] || "休假"; const anomaly=scheduleValueIsAnomalous(shift); return `<td data-date-key="${esc(d.key)}" class="${isWorking(shift) ? "is-working" : "is-off"} ${d.isWeekend ? "is-weekend" : ""} ${d.key === todayKey() ? "is-today" : ""} ${anomaly ? "is-anomaly" : ""}"><button data-edit-shift="${esc(id)}" data-date="${esc(d.key)}" title="編輯 ${esc(therapistName(id))} ${esc(d.displayFull)}">${esc(shift)}</button></td>`; }).join("")}</tr>`).join("") || `<tr><td colspan="${currentScheduleViewDates.length + 1}" class="py-10 text-center font-bold text-slate-400">沒有符合條件的人員</td></tr>`;
   $("scheduleRows").querySelectorAll("[data-edit-schedule]").forEach((btn) => btn.onclick = () => openScheduleModal(btn.dataset.editSchedule));
@@ -4357,9 +4594,9 @@ function normalizeShift(value) {
 
 function exportScheduleCSV() {
   if (!currentScheduleViewDates.length) drawScheduleTable();
-  let csv = "\uFEFF按摩師姓名," + currentScheduleViewDates.map((d) => `"${d.displayFull}"`).join(",") + "\n";
+  let csv = "\uFEFF按摩師姓名," + currentScheduleViewDates.map((d) => `"${d.displayFull}"`).join(",") + ",指定區間排班時數\n";
   Object.entries(db.therapists).forEach(([id, t]) => {
-    csv += `"${therapistName(id)}",` + currentScheduleViewDates.map((d) => `"${(db.schedules[id] || {})[d.key] || "休假"}"`).join(",") + "\n";
+    csv += `"${therapistName(id)}",` + currentScheduleViewDates.map((d) => `"${(db.schedules[id] || {})[d.key] || "休假"}"`).join(",") + `,"${formatScheduledHours(therapistScheduledHours(id).minutes)}"\n`;
   });
   downloadCSV(csv, `排班總表_${scheduleFilterStart}_至_${scheduleFilterEnd}.csv`);
 }
@@ -4637,6 +4874,8 @@ function renderPersonnel() {
         <div class="workbench-actions"><div class="date-range-chip">${iconHtml("calendar-range")}<span>${esc(scheduleFilterStart)} 至 ${esc(scheduleFilterEnd)}</span></div><button id="exportScheduleBtn" class="btn-teal">${iconHtml("download")}匯出</button></div>
       </div>
       <div class="schedule-filter-bar"><label>${iconHtml("search")}<input id="scheduleSearchInput" value="${esc(scheduleSearchQuery)}" placeholder="搜尋人員姓名或編號"></label><button id="scheduleAnomalyBtn" class="${scheduleAnomalyOnly ? "active" : ""}">${iconHtml("triangle-alert")}只看異常</button><span>異常包含格式錯誤或無法辨識的班別</span></div>
+      <section id="scheduleHoursSummary" class="border-y border-slate-100 bg-white p-4" aria-live="polite"></section>
+      <p class="schedule-mobile-scroll-hint" aria-hidden="true">左右滑動班表可查看其他日期</p>
       <div class="schedule-table-wrap table-wrap rounded-none border-0" data-date-scroll><table><thead><tr id="scheduleHeader"></tr></thead><tbody id="scheduleRows"></tbody></table></div>
     </div>`;
   const adminPanel = `
@@ -5013,6 +5252,68 @@ function exportReportCSV() {
   downloadCSV(csv, `報表_${activeReportPanel}_${start}_至_${end}.csv`);
 }
 
+async function saveOperationsConfig(form) {
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const current = operationsConfigStore();
+  const newCourseCode = String(raw.newCourseCode || "").trim().toUpperCase();
+  const newRoomCode = String(raw.newRoomCode || "").trim().toUpperCase();
+  if (newCourseCode && (!/^[A-Z0-9_-]{2,32}$/.test(newCourseCode) || current.courses.some((course) => course.code === newCourseCode))) return showSnackbar("新課程 code 必須唯一，且只可使用英數、_ 或 -");
+  if (newRoomCode && (!/^[A-Z0-9_-]{1,32}$/.test(newRoomCode) || current.rooms.some((room) => room.code === newRoomCode))) return showSnackbar("新場地 code 必須唯一，且只可使用英數、_ 或 -");
+  const courses = current.courses.map((course) => ({
+    ...course,
+    name: String(raw[`courseName_${course.code}`] || course.name).trim(),
+    duration: Number(raw[`courseDuration_${course.code}`] || course.duration),
+    price: Number(raw[`coursePrice_${course.code}`] || course.price),
+    therapistCut: Number(raw[`courseCut_${course.code}`] || course.therapistCut), order: Number(raw[`courseOrder_${course.code}`] || course.order),
+    enabled: raw[`courseEnabled_${course.code}`] === "on"
+  }));
+  if (newCourseCode) courses.push({ code: newCourseCode, name: String(raw.newCourseName || newCourseCode).trim(), duration: Math.max(10, Number(raw.newCourseDuration || 60)), price: Math.max(0, Number(raw.newCoursePrice || 0)), therapistCut: Math.max(0, Number(raw.newCourseCut || 0)), order: Number(raw.newCourseOrder || (courses.length + 1) * 10), enabled: raw.newCourseEnabled === "on" });
+  const rooms = current.rooms.map((room) => ({
+    ...room,
+    name: String(raw[`roomName_${room.code}`] || room.name).trim(),
+    order: Number(raw[`roomOrder_${room.code}`] || room.order),
+    enabled: raw[`roomEnabled_${room.code}`] === "on"
+  }));
+  if (newRoomCode) rooms.push({ code: newRoomCode, name: String(raw.newRoomName || newRoomCode).trim(), external: raw.newRoomExternal === "on", order: Number(raw.newRoomOrder || (rooms.length + 1) * 10), enabled: raw.newRoomEnabled === "on" });
+  const next = normalizeOperationsConfig({ ...current, courses, rooms, noticeTemplates: { therapist: String(raw.therapistTemplate || ""), customer: String(raw.customerTemplate || "") }, updatedAt: new Date().toISOString() });
+  const previous = db.customers[OPERATIONS_CONFIG_KEY];
+  db.customers[OPERATIONS_CONFIG_KEY] = { name: "營運全域設定", notes: JSON.stringify(next), records: [{ at: new Date().toISOString(), actorId: currentUser?.id || "admin", action: "save_operations_config", summary: `課程 ${next.courses.length}、場地 ${next.rooms.length}` }] };
+  db.operationsConfig = applyOperationsConfig(next);
+  const saved = await saveCloudActions([{ action: "saveCustomer", data: { phone: OPERATIONS_CONFIG_KEY, ...db.customers[OPERATIONS_CONFIG_KEY] } }], "營運設定已儲存", { verifyCloud: (cloudDb) => String(cloudDb.customers?.[OPERATIONS_CONFIG_KEY]?.notes || "") === String(db.customers[OPERATIONS_CONFIG_KEY].notes) });
+  if (!saved) {
+    if (previous) db.customers[OPERATIONS_CONFIG_KEY] = previous; else delete db.customers[OPERATIONS_CONFIG_KEY];
+    db.operationsConfig = applyOperationsConfig(operationsConfigStore());
+    return;
+  }
+  renderAll();
+}
+
+function systemStructureRows() {
+  const system = systemRecordStats();
+  return [
+    ["users／therapists", Object.keys(db.therapists).length, "帳號與人員", "高"], ["schedules", Object.keys(db.schedules).length, "班表", "中"],
+    ["customers", Object.keys(db.customers).filter((key) => !isSystemCustomerKey(key)).length, "顧客主檔", "高"], ["appointments", Object.keys(db.appointments).length, "預約", "高"],
+    ["service records", Object.values(db.customers).reduce((sum, customer) => sum + (customer.records || []).length, 0), "服務紀錄", "高"], ["system records", system.total, "設定／metadata", "中"],
+    ["mutations", "—", "後端 mutation journal", "中"], ["audit log", adminLoginRecords(999).length + frontdeskLoginRecords(999).length, "登入與維運稽核", "高"], ["migration runs", "—", "SQL 遷移驗證", "中"]
+  ];
+}
+
+async function refreshSystemHealth() {
+  const button = $("systemHealthRefreshBtn");
+  if (button) { button.disabled = true; button.textContent = "檢查中…"; }
+  try {
+    const { response, payload } = await fetchApiJson("/api/system-health?check=1", {}, 7000);
+    if (!response.ok || !payload?.success) throw new Error(payload?.error || "health_check_unavailable");
+    systemHealthSnapshot = payload;
+    renderSystem();
+    showSnackbar("健康檢查已更新");
+  } catch {
+    systemHealthSnapshot = { status: "unavailable", checkedAt: new Date().toISOString(), components: [{ name: "資料來源", status: "unavailable", errorCategory: "browser_api_unavailable", latencyMs: null }] };
+    renderSystem();
+    showSnackbar("健康檢查暫時無法完成");
+  }
+}
+
 function renderSystem() {
   const section = $("view-system");
   if (!section) return;
@@ -5054,6 +5355,7 @@ function renderSystem() {
   </div>` : "";
   const systemTabs = [
     { key: "status", label: "系統狀態", icon: "activity" },
+    { key: "settings", label: "營運設定", icon: "sliders-horizontal" },
     { key: "data", label: "資料安全", icon: "database-backup" },
     { key: "audit", label: "稽核紀錄", icon: "list-checks" },
     { key: "integrations", label: "整合測試", icon: "plug" }
@@ -5061,7 +5363,7 @@ function renderSystem() {
   const systemTabsHtml = systemTabs.map((item) => `<button type="button" role="tab" data-system-panel="${item.key}" class="system-tab${activeSystemPanel === item.key ? " active" : ""}" aria-selected="${activeSystemPanel === item.key}">${iconHtml(item.icon)}<span>${item.label}</span></button>`).join("");
   const actionRow = ({ id = "", title, desc, icon, tone = "normal", href = "" }) => {
     const classes = `system-action-row${tone === "danger" ? " border-rose-200 bg-rose-50/40" : ""}`;
-    const content = `<span class="system-action-copy"><span class="system-action-icon">${iconHtml(icon)}</span><span><strong>${esc(title)}</strong><small>${esc(desc)}</small></span></span>${iconHtml("chevron-right")}`;
+    const content = `<span class="system-action-copy"><span class="system-action-icon">${iconHtml(icon)}</span><span><strong>${esc(title)}</strong>${desc ? `<small>${esc(desc)}</small>` : ""}</span></span>${iconHtml("chevron-right")}`;
     return href ? `<a class="${classes}" href="${esc(href)}" target="_blank" rel="noopener">${content}</a>` : `<button type="button" id="${id}" class="${classes} w-full text-left">${content}</button>`;
   };
   const syncLabel = meta.pending ? "需要確認" : meta.lastSync ? "雲端已讀取" : "尚未更新";
@@ -5069,23 +5371,19 @@ function renderSystem() {
   const lastSyncLabel = meta.lastSync ? backupLabelTime(meta.lastSync) : "尚無紀錄";
 
   let panelHtml = "";
-  if (activeSystemPanel === "data") {
+  if (activeSystemPanel === "settings") {
+    const config = operationsConfigStore();
+    const courseRows = config.courses.sort((a, b) => a.order - b.order).map((course) => `<tr><td class="font-mono font-black">${esc(course.code)}</td><td><input class="input min-w-40" name="courseName_${esc(course.code)}" value="${esc(course.name)}"></td><td><input class="input w-20" type="number" min="0" name="courseOrder_${esc(course.code)}" value="${esc(course.order)}" aria-label="${esc(course.code)} 排序"></td><td><input class="input w-24" type="number" min="10" step="10" name="courseDuration_${esc(course.code)}" value="${esc(course.duration)}"></td><td><input class="input w-28" type="number" min="0" name="coursePrice_${esc(course.code)}" value="${esc(course.price)}"></td><td><input class="input w-28" type="number" min="0" name="courseCut_${esc(course.code)}" value="${esc(course.therapistCut)}"></td><td class="text-center"><label class="inline-flex items-center gap-2 text-xs font-black text-slate-600"><input type="checkbox" name="courseEnabled_${esc(course.code)}" ${course.enabled ? "checked" : ""} aria-label="啟用 ${esc(course.code)}"><span>${course.enabled ? "啟用中" : "已停用"}</span></label></td></tr>`).join("");
+    const roomRows = config.rooms.sort((a, b) => a.order - b.order).map((room) => `<tr><td class="font-mono font-black">${esc(room.code)}</td><td><input class="input min-w-40" name="roomName_${esc(room.code)}" value="${esc(room.name)}"></td><td><input class="input w-20" type="number" min="0" name="roomOrder_${esc(room.code)}" value="${esc(room.order)}" aria-label="${esc(room.code)} 排序"></td><td>${room.external ? "外出服務" : "店內場地"}</td><td class="text-center"><label class="inline-flex items-center gap-2 text-xs font-black text-slate-600"><input type="checkbox" name="roomEnabled_${esc(room.code)}" ${room.enabled ? "checked" : ""} aria-label="啟用 ${esc(room.code)}"><span>${room.enabled ? "啟用中" : "已停用"}</span></label></td></tr>`).join("");
+    panelHtml = `<form id="operationsConfigForm" class="space-y-5"><div class="card p-5"><div class="mb-4 border-b pb-4"><span class="badge bg-teal-50 text-teal-700">新預約預設</span><h3 class="mt-2 text-lg font-black">課程與抽成</h3><p class="mt-1 text-xs font-bold text-slate-500">排序數字小的先顯示。取消啟用後，新預約不能選擇；既有預約金額與時長不會變動，歷史報表也保持不變。為保留歷史辨識，課程不提供刪除。</p></div>${responsiveTableHtml(["Code", "名稱", "排序", "時長", "售價", "師傅抽成", "狀態"], courseRows, 7)}<div class="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-6"><input class="input" name="newCourseCode" placeholder="新 code"><input class="input" name="newCourseName" placeholder="新課程名稱"><input class="input" type="number" name="newCourseOrder" placeholder="排序"><input class="input" type="number" name="newCourseDuration" placeholder="時長"><input class="input" type="number" name="newCoursePrice" placeholder="售價"><input class="input" type="number" name="newCourseCut" placeholder="抽成"></div><label class="mt-2 inline-flex items-center gap-2 text-xs font-bold text-slate-600"><input type="checkbox" name="newCourseEnabled" checked>啟用新課程</label></div><div class="card p-5"><div class="mb-4 border-b pb-4"><span class="badge bg-indigo-50 text-indigo-700">排程與指派</span><h3 class="mt-2 text-lg font-black">場地設定</h3><p class="mt-1 text-xs font-bold text-slate-500">排序數字小的先顯示。停用場地不可被新預約選擇；既有預約保留原 room code。為保留歷史辨識，場地不提供刪除。</p></div>${responsiveTableHtml(["Code", "顯示名稱", "排序", "類型", "狀態"], roomRows, 5)}<div class="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4"><input class="input" name="newRoomCode" placeholder="新 code"><input class="input" name="newRoomName" placeholder="新場地名稱"><input class="input" type="number" name="newRoomOrder" placeholder="排序"><label class="input flex items-center gap-2"><input type="checkbox" name="newRoomExternal">外出服務</label></div><label class="mt-2 inline-flex items-center gap-2 text-xs font-bold text-slate-600"><input type="checkbox" name="newRoomEnabled" checked>啟用新場地</label></div><div class="card p-5"><div class="mb-4 border-b pb-4"><span class="badge bg-violet-50 text-violet-700">全域預設</span><h3 class="mt-2 text-lg font-black">行前通知範本</h3><p class="mt-1 text-xs font-bold text-slate-500">可用 token：{{dateTime}}、{{service}}、{{price}}、{{remittanceDue}}、{{therapist}}、{{room}}。單筆通知仍可在送出前臨時編輯。</p></div><div class="grid gap-4 lg:grid-cols-2"><label class="label">給師傅<textarea class="input mt-2 min-h-40 whitespace-pre-wrap" name="therapistTemplate">${esc(config.noticeTemplates.therapist)}</textarea></label><label class="label">給顧客<textarea class="input mt-2 min-h-40 whitespace-pre-wrap" name="customerTemplate">${esc(config.noticeTemplates.customer)}</textarea></label></div></div><footer class="card flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"><p class="text-xs font-bold text-slate-500">儲存會一併套用本頁的課程、場地與通知預設；既有預約不會被覆寫。</p><button class="btn-teal shrink-0">儲存本頁營運設定</button></footer></form>`;
+  } else if (activeSystemPanel === "data") {
     panelHtml = `
       <div class="system-panel-grid">
         <div class="card p-5">
-          <div class="mb-4 border-b pb-4"><span class="badge bg-teal-50 text-teal-700">必要</span><h3 class="mt-2 text-lg font-black">備份與復原</h3><p class="mt-1 text-xs font-bold text-slate-500">先備份，再查看修改紀錄；只有雲端資料確定異常時才使用強制回寫。</p></div>
+          <div class="mb-4 border-b pb-4"><h3 class="text-lg font-black">備份與復原</h3></div>
           <div class="system-action-list">
             ${actionRow({ id: "systemDownloadBackupBtn", title: "下載完整備份", desc: "匯出目前所有預約、顧客、人事與班表資料。", icon: "download" })}
             ${actionRow({ id: "systemOpenHistoryBtn", title: "修改紀錄與復原", desc: "查看快照，下載單一版本或復原到指定時間。", icon: "history" })}
-          </div>
-        </div>
-        <div class="card p-5">
-          <div class="mb-4 border-b pb-4"><span class="badge bg-slate-100 text-slate-700">功能分工</span><h3 class="mt-2 text-lg font-black">哪些功能該在這裡</h3></div>
-          <div class="space-y-3 text-sm font-bold text-slate-600">
-            <p><span class="mr-2 text-teal-700">必要</span>重新讀取、完整備份、修改紀錄。</p>
-            <p><span class="mr-2 text-indigo-700">需要時</span>登入稽核、大門密碼歷程與資料復原。</p>
-            <p><span class="mr-2 text-amber-700">附加</span>LINE 模擬與外部流程測試。</p>
-            <p><span class="mr-2 text-rose-700">高風險</span>把目前畫面資料強制覆寫回雲端。</p>
           </div>
         </div>
       </div>
@@ -5097,7 +5395,7 @@ function renderSystem() {
   } else if (activeSystemPanel === "audit") {
     panelHtml = `
       <div class="card p-5">
-        <div class="mb-5 flex flex-col justify-between gap-3 border-b pb-4 sm:flex-row sm:items-center"><div><span class="badge bg-indigo-50 text-indigo-700">需要時</span><h3 class="mt-2 text-lg font-black">登入稽核</h3><p class="mt-1 text-xs font-bold text-slate-500">用於確認帳號、時間、來源與使用裝置，不參與日常預約流程。</p></div><div class="flex gap-2"><span class="badge bg-slate-100 text-slate-700">後台 ${loginRows.length}</span><span class="badge bg-teal-50 text-teal-700">前台 ${frontdeskRows.length}</span></div></div>
+        <div class="mb-5 flex flex-col justify-between gap-3 border-b pb-4 sm:flex-row sm:items-center"><div><h3 class="text-lg font-black">登入稽核</h3></div><div class="flex gap-2"><span class="badge bg-slate-100 text-slate-700">後台 ${loginRows.length}</span><span class="badge bg-teal-50 text-teal-700">前台 ${frontdeskRows.length}</span></div></div>
         <div class="grid gap-6 xl:grid-cols-2">
           <div><h4 class="mb-3 font-black">後台管理登入</h4>${responsiveTableHtml(["時間", "管理員", "來源", "裝置"], loginTableRows, 4)}</div>
           <div><h4 class="mb-3 font-black">前台師傅登入</h4>${responsiveTableHtml(["時間", "師傅", "來源", "裝置"], frontdeskTableRows, 4)}</div>
@@ -5109,19 +5407,20 @@ function renderSystem() {
       <div class="system-panel-grid">
         ${lineTrialPanelHtml()}
         <div class="card p-5">
-          <div class="mb-4 border-b pb-4"><span class="badge bg-amber-50 text-amber-700">附加功能</span><h3 class="mt-2 text-lg font-black">外部入口與測試</h3><p class="mt-1 text-xs font-bold text-slate-500">測試工具與正式營運分開，避免測試資料混入預約流程。</p></div>
+          <div class="mb-4 border-b pb-4"><h3 class="text-lg font-black">外部入口</h3></div>
           <div class="system-action-list">
             ${actionRow({ href: `./frontdesk.html?v=${encodeURIComponent(APP_VERSION)}`, title: "開啟前台師傅系統", desc: "驗證師傅登入、排班與服務回報。", icon: "external-link" })}
+            ${actionRow({ href: PUBLIC_CUSTOMER_BOOKING_URL, title: "開啟公開顧客預約頁", desc: "固定公開連結；顧客送出後由店家確認。", icon: "external-link" })}
             ${actionRow({ id: "systemGoBookingBtn", title: "前往預約系統建立客選", desc: "客選連結必須從可接師傅名單建立，不在系統頁直接產生。", icon: "calendar-check" })}
           </div>
         </div>
       </div>
-      <div class="card p-5"><div class="grid gap-4 md:grid-cols-3"><div><span class="badge bg-teal-50 text-teal-700">正式入口</span><h4 class="mt-2 font-black">前台師傅系統</h4><p class="mt-1 text-xs font-bold text-slate-500">個人班表、人事資料與服務回報。</p></div><div><span class="badge bg-slate-100 text-slate-700">由預約產生</span><h4 class="mt-2 font-black">顧客客選頁</h4><p class="mt-1 text-xs font-bold text-slate-500">只呈現後台勾選的可接師傅。</p></div><div><span class="badge bg-amber-50 text-amber-700">測試用途</span><h4 class="mt-2 font-black">LINE 模擬</h4><p class="mt-1 text-xs font-bold text-slate-500">目前只測試訊息轉待辦，不取代正式 LINE API。</p></div></div></div>`;
+      <div class="card p-5"><div class="mb-4 flex flex-col justify-between gap-3 border-b pb-4 sm:flex-row sm:items-center"><div><span class="badge bg-slate-100 text-slate-700">進頁快照</span><h3 class="mt-2 text-lg font-black">資料來源健康</h3><p class="mt-1 text-xs font-bold text-slate-500">進頁不會主動探測；僅在管理員手動重新檢查時連線。</p></div><button id="systemHealthRefreshBtn" class="btn-teal shrink-0">重新檢查</button></div><div class="grid gap-4 md:grid-cols-3"><div><span class="badge bg-teal-50 text-teal-700">${esc(systemHealthSnapshot?.status || "not_checked")}</span><h4 class="mt-2 font-black">${esc(systemHealthSnapshot?.dataSource || meta.source || "apps-script")}</h4><p class="mt-1 text-xs font-bold text-slate-500">${systemHealthSnapshot?.checkedAt ? `檢查於 ${esc(backupLabelTime(systemHealthSnapshot.checkedAt))}` : "尚未手動檢查"}</p></div>${(systemHealthSnapshot?.components || [{ name: "Apps Script／SQL", status: "not_checked" }]).map((item) => `<div><span class="badge bg-slate-100 text-slate-700">${esc(item.status)}</span><h4 class="mt-2 font-black">${esc(item.name)}</h4><p class="mt-1 text-xs font-bold text-slate-500">${item.latencyMs == null ? "尚未量測延遲" : `${esc(item.latencyMs)} ms`}${item.errorCategory ? ` · ${esc(item.errorCategory)}` : ""}</p></div>`).join("")}</div></div>`;
   } else {
     panelHtml = `
       <div class="system-panel-grid">
         <div class="card p-5">
-          <div class="mb-4 flex flex-col justify-between gap-3 border-b pb-4 sm:flex-row sm:items-start"><div><span class="badge bg-teal-50 text-teal-700">必要</span><h3 class="mt-2 text-lg font-black">雲端資料狀態</h3><p class="mt-1 text-xs font-bold text-slate-500">這裡只回答兩件事：目前讀到多少資料，以及最後一次何時成功更新。</p></div><span class="system-status-chip ${syncTone}">${iconHtml(meta.pending ? "triangle-alert" : "circle-check")} ${esc(syncLabel)}</span></div>
+          <div class="mb-4 flex flex-col justify-between gap-3 border-b pb-4 sm:flex-row sm:items-start"><div><h3 class="text-lg font-black">資料狀態</h3></div><span class="system-status-chip ${syncTone}">${iconHtml(meta.pending ? "triangle-alert" : "circle-check")} ${esc(syncLabel)}</span></div>
           <div class="system-summary-grid">
             ${metric("按摩師", stats.therapists)}
             ${metric("預約", stats.appointments, "text-teal-700")}
@@ -5131,7 +5430,7 @@ function renderSystem() {
           <div class="mt-4 rounded-xl border bg-slate-50 p-4"><p class="text-xs font-black text-slate-500">上次成功更新</p><p class="mt-2 font-mono text-base font-black text-slate-800">${esc(lastSyncLabel)}</p></div>
         </div>
         <div class="card p-5">
-          <div class="mb-4 border-b pb-4"><span class="badge bg-slate-100 text-slate-700">下一步</span><h3 class="mt-2 text-lg font-black">現在要做什麼</h3><p class="mt-1 text-xs font-bold text-slate-500">一般使用只需要重新讀取；備份與復原放在資料安全。</p></div>
+          <div class="mb-4 border-b pb-4"><h3 class="text-lg font-black">快速操作</h3></div>
           <div class="system-action-list">
             ${actionRow({ id: "systemRefreshDataBtn", title: "重新讀取雲端資料", desc: "放棄快取顯示，再抓一次最新資料。", icon: "refresh-cw" })}
             ${actionRow({ id: "systemGoDataBtn", title: "備份或復原資料", desc: "下載完整備份、查看快照與修改紀錄。", icon: "shield-check" })}
@@ -5144,12 +5443,13 @@ function renderSystem() {
         <textarea id="systemNoteText" class="input min-h-40 resize-y leading-relaxed" placeholder="例如：下次部署後要測試前台登入、客選連結、預約狀態回寫...">${esc(noteStore.notes || "")}</textarea>
         <div class="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><p class="text-xs font-bold text-slate-500">儲存成功後會寫入雲端，其他裝置重新讀取即可看到。</p><button id="systemSaveNoteBtn" class="btn-teal shrink-0">儲存備忘</button></div>
         ${noteRecordHtml}
-      </div>`;
+      </div>
+      <div class="card p-5"><div class="mb-4 flex flex-col justify-between gap-3 border-b pb-4 sm:flex-row sm:items-center"><div><span class="badge bg-slate-100 text-slate-700">安全結構摘要</span><h3 class="mt-2 text-lg font-black">資料庫與資料集</h3><p class="mt-1 text-xs font-bold text-slate-500">只顯示責任、筆數與敏感等級；不顯示資料列、連線字串或憑證。</p></div><span class="badge bg-teal-50 text-teal-700">${esc(meta.source || "cloud")}</span></div>${responsiveTableHtml(["資料集", "筆數", "責任", "敏感等級"], systemStructureRows().map((row) => `<tr>${row.map((value, index) => `<td class="${index === 0 ? "font-mono font-black" : "font-bold text-slate-600"}">${esc(String(value))}</td>`).join("")}</tr>`).join(""), 4)}</div>`;
   }
 
   section.innerHTML = `<div class="system-page">
-    <div class="card system-command">
-      <div class="system-command-copy"><span class="badge bg-slate-100 text-slate-700">系統維護</span><h3>系統與資料管理</h3><p>日常先看狀態；備份、稽核與測試各自收進獨立工作區。</p></div>
+      <div class="card system-command">
+      <div class="system-command-copy"><h3>系統</h3></div>
       <div class="system-status-line"><span class="system-status-chip ${syncTone}">${iconHtml(meta.pending ? "triangle-alert" : "circle-check")} ${esc(syncLabel)}</span><span class="system-status-chip">${iconHtml("clock-3")} ${esc(lastSyncLabel)}</span><span class="system-status-chip">${esc(APP_VERSION)}</span></div>
     </div>
     <nav class="system-tabs" role="tablist" aria-label="系統工作區">${systemTabsHtml}</nav>
@@ -5169,11 +5469,14 @@ function renderSystem() {
   bindClick("systemRefreshDataBtn", refreshDashboardData);
   bindClick("systemGoDataBtn", () => { activeSystemPanel = "data"; renderSystem(); });
   bindClick("systemGoAuditBtn", () => { activeSystemPanel = "audit"; renderSystem(); });
+  bindClick("systemHealthRefreshBtn", refreshSystemHealth);
   bindClick("systemGoBookingBtn", () => switchTab("dispatch", { focus: "query" }));
   bindClick("systemUploadLocalBtn", () => confirmAction("強制回寫雲端", "此操作可能覆蓋其他裝置的新資料。請確認已先下載完整備份。", uploadLocalDbToCloud));
   bindClick("systemOpenHistoryBtn", openChangeHistoryModal);
   bindClick("systemDownloadBackupBtn", downloadCurrentBackup);
   bindClick("systemSaveNoteBtn", saveSystemNote);
+  const operationsConfigForm = $("operationsConfigForm");
+  if (operationsConfigForm) operationsConfigForm.onsubmit = (event) => { event.preventDefault(); confirmAction("儲存本頁營運設定？", "這會一併更新課程、場地與通知預設。既有預約不會被覆寫；不再使用的課程或場地請停用，不可刪除。", () => saveOperationsConfig(event.currentTarget), "確認儲存"); };
   bindClick("openLineTrialBtn", openLineTrialModal);
   section.querySelectorAll("[data-download-backup]").forEach((button) => button.onclick = () => downloadBackupEntry(button.dataset.downloadBackup));
   hydrateResponsiveTables(section);
@@ -5708,6 +6011,12 @@ function bindEvents() {
     if (mobileTabButton) {
       event.preventDefault();
       switchTab(mobileTabButton.dataset.mobileTab, { clearAppointment: mobileTabButton.dataset.mobileTab === "dispatch" });
+      return;
+    }
+    const mobileMoreButton = closestFromEvent(event, "[data-mobile-more]");
+    if (mobileMoreButton) {
+      event.preventDefault();
+      openMobileMoreMenu();
       return;
     }
     const jumpButton = closestFromEvent(event, "[data-jump-tab]");

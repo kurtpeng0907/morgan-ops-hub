@@ -121,6 +121,7 @@ async function bootstrap(identity, requestedDate) {
             (${role} = 'admin' AND key LIKE 'SYS_THERAPIST_PROFILE_%')
             OR (${role} = 'therapist' AND key = ${`SYS_THERAPIST_PROFILE_${actorId}`})
             OR (${role} = 'admin' AND key LIKE 'SYS_APPROVAL_%')
+            OR key = 'SYS_OPERATIONS_CONFIG'
             OR (key LIKE 'SYS_APPT_META_%' AND substring(key from 15) IN (
               SELECT id FROM appointments WHERE date = ${date}::date AND (${role} = 'admin' OR therapist_id = ${actorId})
             ))
@@ -362,8 +363,130 @@ async function fullData(identity) {
   return { data: { therapists, schedules, admins, appointments, customers }, meta: { partial: false, source: "neon-postgres", generatedAt: new Date().toISOString() } };
 }
 
+// This unauthenticated lookup is deliberately limited to one requested
+// therapist's shift labels. It never returns appointments or customer data.
+async function publicTherapistSchedule(therapistId, fromValue, toValue) {
+  const requestedId = String(therapistId || "").trim();
+  const from = dateKey(fromValue);
+  const to = dateKey(toValue || from);
+  const rangeDays = from && to ? Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000) : NaN;
+  if (!requestedId || !from || !to || from > to || !Number.isInteger(rangeDays) || rangeDays > 62) {
+    throw Object.assign(new Error("invalid_schedule_query"), { code: "validation_error" });
+  }
+  const sql = sqlClient();
+  const therapistRows = await sql`
+    SELECT therapist_id, display_name
+    FROM therapists
+    WHERE active = true
+      AND (
+        therapist_id = ${requestedId}
+        OR regexp_replace(therapist_id, '^0+', '') = regexp_replace(${requestedId}, '^0+', '')
+      )
+    ORDER BY therapist_id
+    LIMIT 2
+  `;
+  if (therapistRows.length !== 1) {
+    throw Object.assign(new Error("therapist_not_found"), { code: "not_found" });
+  }
+  const therapist = therapistRows[0];
+  const scheduleRows = await sql`
+    SELECT date, shift
+    FROM schedules
+    WHERE therapist_id = ${String(therapist.therapist_id)}
+      AND date BETWEEN ${from}::date AND ${to}::date
+    ORDER BY date
+  `;
+  return {
+    therapist: { id: String(therapist.therapist_id), name: String(therapist.display_name || therapist.therapist_id) },
+    schedules: Object.fromEntries(scheduleRows.map((row) => [sqlDate(row.date), String(row.shift || "")])),
+    from,
+    to
+  };
+}
+
+function publicTherapistProfile(row, profileRows) {
+  let profile = {};
+  try { profile = JSON.parse(profileRows[String(row.therapist_id)]?.notes || "{}"); } catch {}
+  return {
+    name: String(profile.nickname || profile.name || row.display_name || row.therapist_id),
+    nickname: String(profile.nickname || profile.name || row.display_name || row.therapist_id),
+    photoUrl: String(profile.photoUrl || ""),
+    specialties: String(profile.specialties || profile.bio || "").slice(0, 180)
+  };
+}
+
+// Public data is deliberately a narrow projection. It is never shared with a browser
+// until publicSnapshot() filters it to the requested date, course and time.
+async function publicBookingData(requestedDate) {
+  const sql = sqlClient();
+  const date = dateKey(requestedDate);
+  const [therapistRows, scheduleRows, appointmentRows, systemRows] = await sql.transaction([
+    sql`SELECT therapist_id, display_name FROM therapists WHERE active = true ORDER BY therapist_id`,
+    sql`SELECT therapist_id, date, shift FROM schedules WHERE date = ${date}::date ORDER BY therapist_id`,
+    sql`SELECT id, date, time, therapist_id, service, duration, room FROM appointments WHERE date = ${date}::date ORDER BY time, id`,
+    sql`SELECT key, name, notes, records FROM system_records
+        WHERE key = 'SYS_OPERATIONS_CONFIG'
+          OR key LIKE 'SYS_THERAPIST_PROFILE_%'
+          OR key LIKE 'SYS_CLIENT_SELECTION_PUB-%'`
+  ], { readOnly: true });
+  const profileRows = Object.fromEntries(systemRows.filter((row) => String(row.key).startsWith("SYS_THERAPIST_PROFILE_")).map((row) => [String(row.key).slice("SYS_THERAPIST_PROFILE_".length), row]));
+  const therapists = Object.fromEntries(therapistRows.map((row) => [String(row.therapist_id), publicTherapistProfile(row, profileRows)]));
+  const schedules = {};
+  for (const row of scheduleRows) (schedules[String(row.therapist_id)] ||= {})[sqlDate(row.date)] = String(row.shift || "");
+  const appointments = Object.fromEntries(appointmentRows.map((row) => [String(row.id), { id: String(row.id), date: sqlDate(row.date), time: String(row.time || "").slice(0, 5), therapistId: String(row.therapist_id), service: String(row.service || ""), duration: Number(row.duration || 60), room: String(row.room || "R") }]));
+  const customers = Object.fromEntries(systemRows.filter((row) => String(row.key) === "SYS_OPERATIONS_CONFIG" || String(row.key).startsWith("SYS_CLIENT_SELECTION_PUB-")).map((row) => [String(row.key), safeSystemRecord(row)]));
+  return { data: { therapists, schedules, appointments, customers }, meta: { source: "neon-postgres", date } };
+}
+
+async function submitPublicBooking(selection) {
+  const sql = sqlClient();
+  const recordKey = `SYS_CLIENT_SELECTION_${String(selection.id)}`;
+  // `mutations` is the idempotency authority. A repeat request returns the same
+  // verified selection and does not create another demand record.
+  const existing = await sql`SELECT status, result FROM mutations WHERE mutation_id = ${String(selection.id)} LIMIT 1`;
+  if (existing[0]) {
+    if (String(existing[0].status) !== "verified") throw Object.assign(new Error("mutation_incomplete"), { code: "public_booking_unavailable" });
+    return { verified: true, selection: existing[0].result?.selection || selection, duplicate: true };
+  }
+  // A unique system-record key is a lightweight reservation compatible with the
+  // legacy metadata store. It serializes concurrent public requests for the
+  // same therapist/date/time without exposing an SQL console or changing
+  // appointment semantics before the admin confirms it.
+  const slotKey = `SYS_PUBLIC_BOOKING_SLOT_${String(selection.date).replace(/-/g, "")}_${String(selection.time).replace(/:/g, "")}_${String(selection.selectedTherapistId)}`;
+  const reservation = await sql`
+    INSERT INTO system_records(key, name, notes, records, updated_at)
+    VALUES (${slotKey}, 'public-booking-slot', ${JSON.stringify({ selectionId: selection.id, status: "pending", date: selection.date, time: selection.time, therapistId: selection.selectedTherapistId })}, '[]'::jsonb, now())
+    ON CONFLICT (key) DO NOTHING
+    RETURNING key
+  `;
+  if (!reservation[0]) throw Object.assign(new Error("booking_conflict"), { code: "booking_conflict" });
+  const result = { selection: { id: selection.id, status: "pending" }, actorType: "customer_public", readBack: "verified" };
+  try {
+    await sql.transaction([
+      sql`INSERT INTO mutations(mutation_id, actor_id, status, result, updated_at)
+          VALUES (${String(selection.id)}, 'customer_public', 'pending', ${JSON.stringify({ action: "public_booking_request" })}::jsonb, now())`,
+      sql`INSERT INTO system_records(key, name, notes, records, updated_at)
+          VALUES (${recordKey}, ${`pending-${selection.customerName || selection.customerContact}-${selection.selectedTherapistName}`}, ${JSON.stringify(selection)}, '[]'::jsonb, now())
+          ON CONFLICT (key) DO NOTHING`,
+      sql`UPDATE mutations SET status = 'verified', result = ${JSON.stringify(result)}::jsonb, updated_at = now()
+          WHERE mutation_id = ${String(selection.id)}`,
+      sql`INSERT INTO audit_log(actor_id, action, entity_type, entity_id, mutation_id, metadata)
+          VALUES ('customer_public', 'public_booking_request', 'client_selection', ${String(selection.id)}, ${String(selection.id)},
+            ${JSON.stringify({ before: "none", after: "pending", date: selection.date, time: selection.time, service: selection.service, therapistId: selection.selectedTherapistId })}::jsonb)`
+    ]);
+  } catch (error) {
+    await sql`DELETE FROM system_records WHERE key = ${slotKey} AND notes::jsonb ->> 'selectionId' = ${String(selection.id)}`;
+    throw error;
+  }
+  const readBack = await sql`SELECT notes FROM system_records WHERE key = ${recordKey} LIMIT 1`;
+  let stored = null;
+  try { stored = JSON.parse(readBack[0]?.notes || "{}"); } catch {}
+  if (stored?.id !== selection.id || stored?.status !== "pending") throw Object.assign(new Error("read_back_mismatch"), { code: "read_back_mismatch" });
+  return { verified: true, selection };
+}
+
 module.exports = {
   authenticateAndBootstrap, bootstrap, customerRecords, listAppointments, listSchedules, listCustomers, report,
   mutationStatus, applyMutation, fullData, appointmentShape, serviceRecordShape,
-  decodeCursor, protectPins
+  decodeCursor, protectPins, publicBookingData, submitPublicBooking, publicTherapistSchedule
 };

@@ -507,7 +507,11 @@ function saveClientSelectionSubmission(data) {
   const selection = {
     id: String(data.id),
     status: 'pending',
-    source: 'public-client-selection',
+    // Keep the existing client-selection default while retaining the distinct
+    // public booking source. Both remain pending requests for admin review.
+    source: String(data.source || 'public-client-selection'),
+    actorType: String(data.actorType || 'customer_public'),
+    internalReminderStatus: String(data.internalReminderStatus || 'not_configured'),
     date: normalizeDate_(data.date),
     time: normalizeTime_(data.time),
     service: String(data.service || ''),
@@ -521,6 +525,22 @@ function saveClientSelectionSubmission(data) {
     createdAt: String(data.createdAt || new Date().toISOString()),
     updatedAt: new Date().toISOString()
   };
+  // The public endpoint has already checked availability. This second check is
+  // deliberately performed while doPost holds ScriptLock, so two different
+  // browsers cannot create pending public demands for the same therapist slot.
+  if (selection.source === 'public-booking') {
+    const reservationKey = 'SYS_PUBLIC_BOOKING_SLOT_' + selection.date.replace(/-/g, '') + '_' + selection.time.replace(/:/g, '') + '_' + selection.selectedTherapistId;
+    const existingReservation = findSheetRow_(SHEET_CUSTOMERS, reservationKey);
+    if (existingReservation && existingReservation[2]) {
+      try {
+        const existing = JSON.parse(existingReservation[2] || '{}');
+        if (String(existing.selectionId || '') !== selection.id) throw new Error('booking_conflict');
+      } catch (err) {
+        if (String(err).indexOf('booking_conflict') >= 0) throw err;
+      }
+    }
+    saveCustomer({ phone: reservationKey, name: 'public-booking-slot', notes: JSON.stringify({ selectionId: selection.id, status: 'pending', date: selection.date, time: selection.time, therapistId: selection.selectedTherapistId }), records: [] });
+  }
   saveCustomer({
     phone: key,
     name: '待確認-' + (selection.customerName || selection.customerContact || '客選') + '-' + selection.selectedTherapistName,

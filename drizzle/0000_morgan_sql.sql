@@ -187,6 +187,18 @@ BEGIN
     v_appointment_id := coalesce(p_data->>'appId', p_data->>'id', '');
     v_therapist_id := coalesce(p_data->>'therapistId', '');
     IF p_actor_role <> 'admin' AND v_therapist_id <> p_actor_id THEN RAISE EXCEPTION 'forbidden'; END IF;
+    IF coalesce(p_data->>'expectedBookingStage', '') <> '' AND EXISTS (SELECT 1 FROM appointments WHERE id = v_appointment_id) THEN
+      IF (SELECT booking_stage FROM appointments WHERE id = v_appointment_id) <> p_data->>'expectedBookingStage' THEN RAISE EXCEPTION 'booking_conflict'; END IF;
+      IF p_data->>'allowStageOverride' IS DISTINCT FROM 'true' AND p_data->>'bookingStage' IS DISTINCT FROM p_data->>'expectedBookingStage' AND NOT (
+        (p_data->>'expectedBookingStage' = 'inquiry' AND p_data->>'bookingStage' IN ('candidate_sent','cancelled')) OR
+        (p_data->>'expectedBookingStage' = 'candidate_sent' AND p_data->>'bookingStage' IN ('therapist_match','cancelled')) OR
+        (p_data->>'expectedBookingStage' = 'therapist_match' AND p_data->>'bookingStage' IN ('customer_confirm','cancelled')) OR
+        (p_data->>'expectedBookingStage' = 'customer_confirm' AND p_data->>'bookingStage' IN ('confirmed','cancelled')) OR
+        (p_data->>'expectedBookingStage' = 'confirmed' AND p_data->>'bookingStage' IN ('pre_notice','cancelled')) OR
+        (p_data->>'expectedBookingStage' = 'pre_notice' AND p_data->>'bookingStage' IN ('service_report','cancelled')) OR
+        (p_data->>'expectedBookingStage' = 'service_report' AND p_data->>'bookingStage' IN ('completed','cancelled'))
+      ) THEN RAISE EXCEPTION 'invalid_booking_transition'; END IF;
+    END IF;
     v_key := coalesce(p_data->>'phone', '');
     IF v_key <> '' THEN
       INSERT INTO customers(customer_key_legacy, name, updated_at)
@@ -337,7 +349,7 @@ BEGIN
   );
   UPDATE mutations SET status = 'verified', result = v_result, updated_at = now() WHERE mutation_id = p_mutation_id;
   INSERT INTO audit_log(actor_id, action, entity_type, entity_id, mutation_id, metadata)
-  VALUES (p_actor_id, p_action, 'mutation', p_mutation_id, p_mutation_id, jsonb_build_object('changedCount', jsonb_array_length(v_changed)));
+  VALUES (p_actor_id, p_action, 'mutation', p_mutation_id, p_mutation_id, jsonb_build_object('changedCount', jsonb_array_length(v_changed), 'stageOverrideReason', NULLIF(p_data->>'stageOverrideReason', '')));
   RETURN v_result;
 END;
 $$;

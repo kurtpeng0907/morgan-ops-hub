@@ -2,9 +2,11 @@
 
 const { callAppsScript } = require("./_lib/apps-script");
 const { dataSourceMode } = require("./_lib/database");
-const { requestId, readJson, sendJson, logRequest, methodNotAllowed } = require("./_lib/http");
+const { requestId, readJson, sendJson, logRequest, methodNotAllowed, errorPayload } = require("./_lib/http");
 const { verifySession } = require("./_lib/session");
 const sqlRepository = require("./_lib/sql-repository");
+const { assertActionAllowed } = require("./_lib/policy");
+const { assertBookingTransition } = require("./_lib/domain-contracts");
 
 const ALLOWED_ACTIONS = new Set([
   "batch", "saveSchedule", "addTherapist", "updatePin", "deleteTherapist",
@@ -47,6 +49,33 @@ function therapistOwnsWrite(session, action, data) {
   });
 }
 
+function validateBookingCommands(session, action, data) {
+  const items = action === "batch" ? (Array.isArray(data?.actions) ? data.actions : []) : [{ action, data }];
+  for (const item of items) {
+    if (String(item?.action || "") !== "addAppointment") continue;
+    const itemData = item.data || {};
+    const expected = String(itemData.expectedBookingStage || "").trim();
+    const next = String(itemData.bookingStage || "").trim();
+    const override = String(itemData.allowStageOverride || "") === "true";
+    if (override) {
+      if (session.role !== "admin") {
+        const error = new Error("booking_override_forbidden");
+        error.code = "forbidden";
+        throw error;
+      }
+      if (String(itemData.stageOverrideReason || "").trim().length < 5) {
+        const error = new Error("booking_override_reason_required");
+        error.code = "invalid_booking_override";
+        throw error;
+      }
+      continue;
+    }
+    // Existing legacy callers may omit the optimistic concurrency field. New UI writes it.
+    if (!expected || !next || expected === next) continue;
+    assertBookingTransition({ from: expected, to: next, role: session.role });
+  }
+}
+
 module.exports = async function handler(req, res) {
   if (req.method !== "POST") return methodNotAllowed(res, ["POST"]);
   const id = requestId(req);
@@ -58,11 +87,13 @@ module.exports = async function handler(req, res) {
     const body = readJson(req);
     const action = String(body.action || "");
     mutationId = String(body.mutationId || "").trim();
-    if (!ALLOWED_ACTIONS.has(action)) return sendJson(res, 400, { success: false, error: "unsupported_action", requestId: id });
+    if (!ALLOWED_ACTIONS.has(action)) return sendJson(res, 400, errorPayload(Object.assign(new Error("unsupported_action"), { code: "unsupported_action" }), id));
+    assertActionAllowed(session.role, action);
+    validateBookingCommands(session, action, body.data || {});
     if (session.role !== "admin" && !therapistOwnsWrite(session, action, body.data || {})) {
       return sendJson(res, 403, { success: false, error: "forbidden", requestId: id });
     }
-    if (mutationId.length < 6 || mutationId.length > 120) return sendJson(res, 400, { success: false, error: "invalid_mutation_id", requestId: id });
+    if (mutationId.length < 6 || mutationId.length > 120) return sendJson(res, 400, errorPayload(Object.assign(new Error("invalid_mutation_id"), { code: "invalid_mutation_id" }), id));
     if (dataSourceMode() === "sql") {
       const sqlStartedAt = Date.now();
       const result = await sqlRepository.applyMutation(session, mutationId, action, body.data || {});
@@ -84,10 +115,17 @@ module.exports = async function handler(req, res) {
   } catch (error) {
     const busy = error.code === "busy" || /busy|資料庫忙碌/.test(error.message);
     const forbidden = error.code === "forbidden" || /forbidden/.test(error.message);
-    const status = forbidden ? 403 : (busy ? 409 : 502);
+    const conflict = error.code === "booking_conflict" || /booking_conflict/.test(error.message);
+    const invalidTransition = error.code === "invalid_booking_transition" || /invalid_booking_transition/.test(error.message);
+    const invalidOverride = error.code === "invalid_booking_override" || /booking_override_reason_required/.test(error.message);
+    const status = forbidden ? 403 : (invalidTransition || invalidOverride ? 400 : (conflict || busy ? 409 : 502));
     logRequest({ id, route: "/api/cloud", status, startedAt, error: error.message });
-    return sendJson(res, status, { success: false, error: forbidden ? "forbidden" : (busy ? "busy" : "cloud_write_failed"), retryable: busy, mutationId, requestId: id });
+    const normalizedError = conflict ? Object.assign(error, { code: "booking_conflict" })
+      : (invalidTransition ? Object.assign(error, { code: "invalid_booking_transition" })
+        : (invalidOverride ? Object.assign(error, { code: "invalid_booking_override" }) : error));
+    return sendJson(res, status, errorPayload(normalizedError, id, { retryable: busy || conflict, mutationId }));
   }
 };
 
 module.exports.therapistOwnsWrite = therapistOwnsWrite;
+module.exports.validateBookingCommands = validateBookingCommands;

@@ -14,14 +14,255 @@ const customerRecordsHandler = require("../api/customer-records");
 const sqlReadHandler = require("../api/sql-read");
 const lineDailyHandler = require("../api/cron/line-daily");
 const lineWebhook = require("../api/line/webhook");
-const { therapistOwnsWrite } = cloudHandler;
+const systemHealthHandler = require("../api/system-health");
+const publicBookingHandler = require("../api/public-booking");
+const publicScheduleHandler = require("../api/public-schedule");
+const { safeErrorCategory } = systemHealthHandler;
+const { therapistOwnsWrite, validateBookingCommands } = cloudHandler;
 const { createSession, verifySession } = require("../api/_lib/session");
 const sqlRepository = require("../api/_lib/sql-repository");
 const { transform } = require("../scripts/_lib/transform-sheets");
 const { projectSelectedDay, digest } = require("../api/_lib/shadow");
+const { canTransition, assertBookingTransition } = require("../api/_lib/domain-contracts");
+const { isActionAllowed } = require("../api/_lib/policy");
+const { publicSnapshot, validateSubmission } = require("../api/_lib/public-booking");
 const { readFileSync } = require("node:fs");
 const { resolve } = require("node:path");
 const { Readable } = require("node:stream");
+
+test("booking contract separates customer selection from confirmed booking", () => {
+  assert.equal(canTransition("therapist_match", "customer_confirm"), true);
+  assert.equal(canTransition("customer_confirm", "confirmed"), true);
+  assert.equal(canTransition("therapist_match", "confirmed"), false);
+  assert.throws(() => assertBookingTransition({ from: "therapist_match", to: "confirmed", role: "admin" }), /invalid_booking_transition/);
+  assert.throws(() => assertBookingTransition({ from: "confirmed", to: "pre_notice", role: "therapist" }), /booking_transition_forbidden/);
+});
+
+test("role policy allows only scoped action families", () => {
+  assert.equal(isActionAllowed("admin", "deleteCustomer"), true);
+  assert.equal(isActionAllowed("therapist", "saveServiceRecord"), true);
+  assert.equal(isActionAllowed("therapist", "deleteCustomer"), false);
+  assert.equal(isActionAllowed("customer", "saveCustomer"), false);
+});
+
+test("booking commands reject skipped stages and preserve legacy omitted expectations", () => {
+  assert.throws(() => validateBookingCommands({ role: "admin" }, "addAppointment", {
+    expectedBookingStage: "therapist_match", bookingStage: "confirmed"
+  }), /invalid_booking_transition/);
+  assert.doesNotThrow(() => validateBookingCommands({ role: "admin" }, "addAppointment", {
+    bookingStage: "confirmed"
+  }));
+  assert.throws(() => validateBookingCommands({ role: "therapist" }, "addAppointment", {
+    expectedBookingStage: "confirmed", bookingStage: "pre_notice"
+  }), /booking_transition_forbidden/);
+});
+
+test("only admins may use a booking stage override and must provide a reason", () => {
+  assert.throws(() => validateBookingCommands({ role: "therapist" }, "addAppointment", {
+    expectedBookingStage: "confirmed", bookingStage: "completed", allowStageOverride: "true", stageOverrideReason: "補登"
+  }), /booking_override_forbidden/);
+  assert.throws(() => validateBookingCommands({ role: "admin" }, "addAppointment", {
+    expectedBookingStage: "confirmed", bookingStage: "completed", allowStageOverride: "true", stageOverrideReason: "修正"
+  }), /booking_override_reason_required/);
+  assert.doesNotThrow(() => validateBookingCommands({ role: "admin" }, "addAppointment", {
+    expectedBookingStage: "confirmed", bookingStage: "completed", allowStageOverride: "true", stageOverrideReason: "補登服務完成資料"
+  }));
+});
+
+test("customer selection keeps a stable id for retry deduplication", () => {
+  const source = readFileSync(resolve(__dirname, "../client-selection.html"), "utf8");
+  assert.match(source, /const submissionId = query\.selectionId \|\| `SEL-/);
+  assert.match(source, /const id = submissionId;/);
+});
+
+test("public booking only projects enabled courses, slots and minimal therapist details", () => {
+  const today = "2030-01-02";
+  const data = {
+    therapists: { "001": { name: "公開師傅", photoUrl: "https://example.test/a.jpg", specialties: "精油按摩", pin: "0007" } },
+    schedules: { "001": { [today]: "11:00-22:00" } }, appointments: {},
+    customers: { SYS_OPERATIONS_CONFIG: { notes: JSON.stringify({ courses: [{ code: "A60", name: "A 60", duration: 60, price: 1800, enabled: true }, { code: "OLD", name: "停用", duration: 60, price: 1, enabled: false }], rooms: [{ code: "R", enabled: true }] }) } }
+  };
+  const snapshot = publicSnapshot(data, { date: today, service: "A60", time: "11:00" });
+  assert.deepEqual(snapshot.courses.map((item) => item.code), ["A60"]);
+  assert.equal(snapshot.therapists[0].id, "001");
+  assert.equal(snapshot.therapists[0].name, "公開師傅");
+  assert.equal(Object.hasOwn(snapshot.therapists[0], "pin"), false);
+  assert.ok(snapshot.slots.includes("11:00"));
+});
+
+test("public booking validates a stable request id and reserves a pending confirmation request", () => {
+  const next = new Date(); next.setDate(next.getDate() + 1);
+  const future = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
+  const data = { therapists: { "001": { name: "公開師傅" } }, schedules: { "001": { [future]: "11:00-22:00" } }, appointments: {}, customers: {} };
+  const selection = validateSubmission(data, { requestId: "PUB-12345678", date: future, time: "11:00", service: "A60", therapistId: "001", customerContact: "0900000000" });
+  assert.equal(selection.status, "pending");
+  assert.equal(selection.actorType, "customer_public");
+  assert.equal(selection.selectedTherapistId, "001");
+  assert.throws(() => validateSubmission(data, { requestId: "bad", date: future, time: "11:00", service: "A60", therapistId: "001", customerContact: "0900000000" }), /invalid_request_id/);
+});
+
+test("public booking page is a fixed API-only confirmation-request flow", () => {
+  const source = readFileSync(resolve(__dirname, "../customer-booking.html"), "utf8");
+  assert.match(source, /\/api\/public-booking/);
+  assert.match(source, /已送出預約需求/);
+  assert.match(source, /尚未成立正式預約/);
+  assert.match(source, /正在確認可用性/);
+  assert.doesNotMatch(source, /script\.google\.com/);
+});
+
+test("Apps Script preserves the distinct public-booking source inside the legacy selection record", () => {
+  const source = readFileSync(resolve(__dirname, "../apps-script-secure-Code.gs"), "utf8");
+  assert.match(source, /source: String\(data\.source \|\| 'public-client-selection'\)/);
+  assert.match(source, /actorType: String\(data\.actorType \|\| 'customer_public'\)/);
+  assert.match(source, /SYS_PUBLIC_BOOKING_SLOT_/);
+  assert.match(source, /throw new Error\('booking_conflict'\)/);
+});
+
+test("public booking API writes a pending demand and verifies it by a server read-back", async () => {
+  const next = new Date(); next.setDate(next.getDate() + 1);
+  const date = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
+  const db = { therapists: { "001": { name: "公開師傅" } }, schedules: { "001": { [date]: "11:00-22:00" } }, appointments: {}, customers: {} };
+  const originalFetch = global.fetch;
+  global.fetch = async (_url, options = {}) => {
+    const request = JSON.parse(options.body || "{}");
+    if (request.action === "submitClientSelection") db.customers[`SYS_CLIENT_SELECTION_${request.data.id}`] = { notes: JSON.stringify(request.data) };
+    return new Response(JSON.stringify({ success: true, data: db, verified: true }), { status: 200 });
+  };
+  const headers = {};
+  const response = { setHeader(key, value) { headers[key] = value; }, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+  try {
+    await publicBookingHandler({ method: "POST", headers: {}, body: { requestId: "PUB-98765432", date, time: "11:00", service: "A60", therapistId: "001", customerContact: "0900000000" }, query: {} }, response);
+    assert.equal(response.statusCode, 201);
+    assert.equal(response.payload.success, true);
+    assert.equal(response.payload.verified, true);
+    assert.equal(JSON.parse(db.customers["SYS_CLIENT_SELECTION_PUB-98765432"].notes).status, "pending");
+    const retry = { setHeader() {}, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+    await publicBookingHandler({ method: "POST", headers: {}, body: { requestId: "PUB-98765432", date, time: "11:00", service: "A60", therapistId: "001", customerContact: "0900000000" }, query: {} }, retry);
+    assert.equal(retry.statusCode, 200);
+    assert.equal(retry.payload.duplicate, true);
+  } finally { global.fetch = originalFetch; }
+});
+
+test("SQL public booking reserves a therapist slot through a unique legacy system record", () => {
+  const source = readFileSync(resolve(__dirname, "../api/_lib/sql-repository.js"), "utf8");
+  assert.match(source, /SYS_PUBLIC_BOOKING_SLOT_/);
+  assert.match(source, /ON CONFLICT \(key\) DO NOTHING/);
+  assert.match(source, /new Error\("booking_conflict"\)/);
+});
+
+test("customer selection page blocks expired links before and during submission", () => {
+  const source = readFileSync(resolve(__dirname, "../client-selection.html"), "utf8");
+  assert.match(source, /function isSelectionExpired\(date, time\)/);
+  assert.match(source, /if \(isSelectionExpired\(query\.date, query\.time\)\)/);
+  assert.match(source, /showUnavailableSelection\("這筆客選連結已超過預約時段/);
+});
+
+test("customer selection rejects a link without date or time before fetching candidates", () => {
+  const source = readFileSync(resolve(__dirname, "../client-selection.html"), "utf8");
+  const invalidLinkCheck = source.indexOf('if (!query.date || !query.time)');
+  const loadingStart = source.indexOf("showCandidateLoading();");
+  assert.ok(invalidLinkCheck >= 0);
+  assert.ok(loadingStart > invalidLinkCheck);
+  assert.match(source, /缺少日期或時間參數/);
+  assert.match(source, /selectionFormCard"\)\.classList\.add\("hidden"\)/);
+});
+
+test("customer selection hides the contact form when no candidate can be arranged", () => {
+  const source = readFileSync(resolve(__dirname, "../client-selection.html"), "utf8");
+  assert.match(source, /function showNoCandidateState\(\)/);
+  assert.match(source, /目前無可安排的師傅/);
+  assert.match(source, /selectionFormCard"\)\.classList\.add\("hidden"\)/);
+  assert.match(source, /showNoCandidateState\(\);/);
+});
+
+test("customer selection revalidates candidate availability immediately before submit", () => {
+  const source = readFileSync(resolve(__dirname, "../client-selection.html"), "utf8");
+  assert.match(source, /async function refreshCandidateAvailability\(\)/);
+  assert.match(source, /const stillAvailable = await refreshCandidateAvailability\(\)/);
+  assert.match(source, /這位師傅的時段剛剛已變更/);
+});
+
+test("admin client-selection queue exposes availability and guards quick confirmation", () => {
+  const source = readFileSync(resolve(__dirname, "../app.js"), "utf8");
+  assert.match(source, /function clientSelectionAvailability\(selection = \{\}\)/);
+  assert.match(source, /const availability = clientSelectionAvailability\(selection\)/);
+  assert.match(source, /const availability = clientSelectionAvailability\(selection\);\n  if \(!availability\.available\)/);
+});
+
+test("quick client selection confirmation requires both appointment and selection read-back", () => {
+  const source = readFileSync(resolve(__dirname, "../app.js"), "utf8");
+  assert.match(source, /function clientSelectionConfirmationVerified\(selectionId, appointmentId, cloudDb\)/);
+  assert.match(source, /requireReadBack: true/);
+  assert.match(source, /selection\.status === "confirmed"/);
+  assert.match(source, /appointment\.selectionId === selectionId/);
+});
+
+test("pre-notice action opens an editable notice editor before completion", () => {
+  const source = readFileSync(resolve(__dirname, "../app.js"), "utf8");
+  assert.match(source, /function openNoticeEditorModal\(appt\)/);
+  assert.match(source, /id="noticeEditorTherapist"/);
+  assert.match(source, /id="copyTherapistNoticeBtn"/);
+  assert.match(source, /id="copyAndCompleteNoticeBtn"/);
+  assert.match(source, /openNoticeEditorModal\(appt\)/);
+});
+
+test("service result focuses payment and leaves service notes optional", () => {
+  const source = readFileSync(resolve(__dirname, "../app.js"), "utf8");
+  assert.match(source, /data-focus-service-result/);
+  assert.match(source, /const payment = form\?\.querySelector\('\[name="collectedPrice"\]/);
+  assert.match(source, /const notes = form\?\.querySelector\('\[name="recordNotes"\]/);
+  assert.match(source, /normalizeBookingStage\(old\.bookingStage, old\) === "pre_notice" && String\(data\.collectedPrice \|\| ""\)\.trim\(\) !== ""/);
+  assert.match(source, /帳務已完成，待補服務紀錄/);
+});
+
+test("therapist and customer notices share the same editable panel layout", () => {
+  const source = readFileSync(resolve(__dirname, "../app.js"), "utf8");
+  assert.match(source, /給師傅的通知內容/);
+  assert.match(source, /給顧客的通知內容/);
+  assert.match(source, /noticeEditorCustomer.*min-h-40/);
+  assert.doesNotMatch(source, /<details class=\\"rounded-xl border border-slate-200 bg-slate-50 p-3\\"><summary[^>]*>顧客通知/);
+});
+
+test("mobile layout constrains modal and appointment content to viewport", () => {
+  const source = readFileSync(resolve(__dirname, "../styles.css"), "utf8");
+  assert.match(source, /#modalRoot \.modal-backdrop \{ width:100vw; max-width:100vw; padding:0; overflow:hidden; \}/);
+  assert.match(source, /#modalRoot \.modal textarea \{ display:block; width:100%; min-width:0; max-width:100%;/);
+  assert.match(source, /#view-dispatch \.appointment-detail-view,\n  #view-dispatch \.appointment-detail-layout/);
+});
+
+test("mobile navigation consolidates accounting and system under an explicit more action", () => {
+  const source = readFileSync(resolve(__dirname, "../app.js"), "utf8");
+  assert.match(source, /const mobilePrimary = ADMIN_NAV_ITEMS\.filter/);
+  assert.match(source, /data-mobile-more/);
+  assert.match(source, /function openMobileMoreMenu\(\)/);
+  assert.match(source, /const mobileMoreButton = closestFromEvent\(event, "\[data-mobile-more\]"\)/);
+});
+
+test("personnel schedule calculates each therapist's selected-range working hours", () => {
+  const source = readFileSync(resolve(__dirname, "../app.js"), "utf8");
+  assert.match(source, /function shiftScheduledMinutes\(shift = ""\)/);
+  assert.match(source, /function therapistScheduledHours\(id, dates = currentScheduleViewDates\)/);
+  assert.match(source, /指定區間排班時數/);
+  assert.match(source, /合計 \$\{formatScheduledHours\(totalScheduledMinutes\)\}/);
+  assert.match(source, /指定區間排班時數\\n/);
+});
+
+test("mobile personnel schedule keeps five navigation slots and contains its wide matrix", () => {
+  const script = readFileSync(resolve(__dirname, "../app.js"), "utf8");
+  const styles = readFileSync(resolve(__dirname, "../styles.css"), "utf8");
+  assert.match(script, /schedule-mobile-scroll-hint/);
+  assert.match(styles, /#mobileBottomNav \{ grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/);
+  assert.match(styles, /#view-personnel \.schedule-table-wrap \{ width:100%; max-width:100%; overscroll-behavior-x:contain; \}/);
+  assert.match(styles, /#view-personnel \.schedule-filter-bar > span \{ display:none; \}/);
+  assert.equal(styles.lastIndexOf("#mobileBottomNav { grid-template-columns:repeat(5,minmax(0,1fr))"), styles.lastIndexOf("#mobileBottomNav { grid-template-columns:"));
+});
+
+test("booking detail keeps operational facts in the hero and limits the supplemental card", () => {
+  const source = readFileSync(resolve(__dirname, "../app.js"), "utf8");
+  assert.match(source, /appointment-info-grid--supplemental/);
+  assert.match(source, /<h4>補充資訊<\/h4>/);
+  assert.match(source, /服務紀錄<\/span><p>\$\{esc\(record\.notes \|\| "可稍後補"/);
+});
 
 function responseMock() {
   return {
@@ -70,6 +311,44 @@ test("bootstrap endpoint requires a valid session", async () => {
   await bootstrapHandler({ method: "GET", headers: {}, query: {} }, res);
   assert.equal(res.statusCode, 401);
   assert.equal(res.body.error, "unauthorized");
+});
+
+test("system health is admin-only and classifies errors without exposing connection details", async () => {
+  assert.equal(safeErrorCategory({ code: "database_not_configured", message: "DATABASE_URL is not configured" }), "not_configured");
+  assert.equal(safeErrorCategory({ message: "request timeout" }), "timeout");
+  const therapist = createSession({ id: "002", name: "測試師傅", role: "therapist" });
+  const forbidden = responseMock();
+  await systemHealthHandler({ method: "GET", headers: { cookie: `morgan_session=${encodeURIComponent(therapist.token)}` }, query: {} }, forbidden);
+  assert.equal(forbidden.statusCode, 403);
+  const admin = createSession({ id: "admin", name: "管理員", role: "admin" });
+  const allowed = responseMock();
+  await systemHealthHandler({ method: "GET", headers: { cookie: `morgan_session=${encodeURIComponent(admin.token)}` }, query: {} }, allowed);
+  assert.equal(allowed.statusCode, 200);
+  assert.equal(allowed.body.success, true);
+  assert.equal(allowed.body.status, "not_checked");
+  assert.equal(allowed.body.components.some((item) => item.name === "LINE／Cron" && item.status === "not_configured"), true);
+  assert.equal(JSON.stringify(allowed.body).includes("DATABASE_URL"), false);
+});
+
+test("operations config is shared by admin, frontdesk, and customer selection without replacing legacy defaults", () => {
+  const admin = readFileSync(resolve(__dirname, "../app.js"), "utf8");
+  const frontdesk = readFileSync(resolve(__dirname, "../frontdesk.html"), "utf8");
+  const selection = readFileSync(resolve(__dirname, "../client-selection.html"), "utf8");
+  assert.match(admin, /const OPERATIONS_CONFIG_KEY = "SYS_OPERATIONS_CONFIG"/);
+  assert.match(admin, /function activeCourses\(\)/);
+  assert.match(frontdesk, /function applyOperationsConfigFromDb\(\)/);
+  assert.match(selection, /const OPERATIONS_CONFIG_KEY = "SYS_OPERATIONS_CONFIG"/);
+  assert.match(selection, /config\.courses\.forEach/);
+  assert.match(admin, /既有預約金額與時長不會變動/);
+});
+
+test("operations settings make ordering, disabling, and confirmation explicit without deleting legacy codes", () => {
+  const source = readFileSync(resolve(__dirname, "../app.js"), "utf8");
+  assert.match(source, /排序數字小的先顯示/);
+  assert.match(source, /不提供刪除/);
+  assert.match(source, /儲存本頁營運設定/);
+  assert.match(source, /confirmAction\("儲存本頁營運設定？"/);
+  assert.match(source, /取消啟用後，新預約不能選擇/);
 });
 
 test("LINE webhook signature verification accepts only the original signed payload", () => {
@@ -307,6 +586,43 @@ test("SQL outage is labeled so the browser does not fall back to Apps Script", a
   }
 });
 
+test("public frontdesk schedule is SQL-only and exposes only the requested therapist's shifts", async () => {
+  const originalMode = process.env.MORGAN_DATA_SOURCE;
+  const originalMethod = sqlRepository.publicTherapistSchedule;
+  process.env.MORGAN_DATA_SOURCE = "sql";
+  sqlRepository.publicTherapistSchedule = async (therapistId, from, to) => ({
+    therapist: { id: "002", name: "測試師傅" }, schedules: { "2026-08-10": "13:00-21:00" }, from, to, requested: therapistId
+  });
+  try {
+    const res = responseMock();
+    await publicScheduleHandler({ method: "GET", headers: {}, query: { therapistId: "2", from: "2026-08-01", to: "2026-08-31" } }, res);
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body.therapist, { id: "002", name: "測試師傅" });
+    assert.deepEqual(res.body.schedules, { "2026-08-10": "13:00-21:00" });
+    assert.equal(Object.hasOwn(res.body, "appointments"), false);
+    assert.equal(Object.hasOwn(res.body, "customers"), false);
+    assert.match(res.headers["server-timing"], /^sql;dur=/);
+  } finally {
+    sqlRepository.publicTherapistSchedule = originalMethod;
+    process.env.MORGAN_DATA_SOURCE = originalMode;
+  }
+});
+
+test("public frontdesk schedule keeps an explicit bounded date range", () => {
+  const source = readFileSync(resolve(__dirname, "../api/_lib/sql-repository.js"), "utf8");
+  assert.match(source, /rangeDays > 62/);
+  assert.match(source, /It never returns appointments or customer data/);
+});
+
+test("frontdesk stays on scoped SQL APIs and never falls back to Apps Script or admin full-data", () => {
+  const source = readFileSync(resolve(__dirname, "../frontdesk.html"), "utf8");
+  assert.match(source, /\/api\/public-schedule/);
+  assert.match(source, /\/api\/schedules\?from=/);
+  assert.match(source, /\/api\/appointments\?from=/);
+  assert.doesNotMatch(source, /script\.google\.com/);
+  assert.doesNotMatch(source, /\/api\/full-data/);
+});
+
 test("browser enables fast API on Preview and explicitly blocks SQL fallback", () => {
   const source = readFileSync(resolve(__dirname, "../app.js"), "utf8");
   assert.match(source, /FAST_API_ENABLED = URL_OPTIONS\.get\("fastApi"\) === "1" \|\| !LOCAL_TEST_MODE/);
@@ -339,6 +655,15 @@ test("customer selection links always use the public Morgan origin", () => {
   const source = readFileSync(resolve(__dirname, "../app.js"), "utf8");
   assert.match(source, /PUBLIC_CLIENT_SELECTION_ORIGIN\s*=\s*"https:\/\/morgan-ops-hub\.vercel\.app"/);
   assert.match(source, /new URL\("\/client-selection\.html", PUBLIC_CLIENT_SELECTION_ORIGIN\)/);
+});
+
+test("customer selection makes a slow candidate read visible before the response returns", () => {
+  const source = readFileSync(resolve(__dirname, "../client-selection.html"), "utf8");
+  assert.match(source, /正在讀取可選師傅/);
+  assert.match(source, /function showCandidateLoading\(\)/);
+  assert.match(source, /showCandidateLoading\(\);/);
+  assert.match(source, /aria-busy="true"/);
+  assert.match(source, /prefers-reduced-motion: reduce/);
 });
 
 test("shadow comparison projects legacy 30-day data to the selected-day SQL contract", () => {

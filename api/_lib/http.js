@@ -43,4 +43,9 @@ function methodNotAllowed(res, methods) {
   return sendJson(res, 405, { success: false, error: "method_not_allowed" });
 }
 
-module.exports = { requestId, readJson, sendJson, logRequest, methodNotAllowed };
+function errorPayload(error, requestIdValue, extra = {}) {
+  const code = String(error?.code || "internal_error");
+  return { success: false, error: code, requestId: requestIdValue, ...extra };
+}
+
+module.exports = { requestId, readJson, sendJson, logRequest, methodNotAllowed, errorPayload };

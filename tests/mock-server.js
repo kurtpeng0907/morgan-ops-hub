@@ -9,6 +9,7 @@ process.env.MORGAN_GATEWAY_SECRET ||= "local-gateway-secret-at-least-24-chars";
 process.env.MORGAN_APPS_SCRIPT_URL = "https://mock.local/apps-script";
 
 const nativeFetch = global.fetch;
+const mockPort = Number(process.env.MORGAN_MOCK_PORT || 4174);
 const today = new Date().toISOString().slice(0, 10);
 const mockDb = {
   therapists: {
@@ -55,6 +56,14 @@ global.fetch = async function mockAwareFetch(url, options = {}) {
     return new Response(JSON.stringify({ success: true, data, meta: { partial: true, cache: "hit", generatedAt: new Date().toISOString() } }), { status: 200 });
   }
   if (request.action === "fullData") return new Response(JSON.stringify({ success: true, data: mockDb, meta: { partial: false, generatedAt: new Date().toISOString() } }), { status: 200 });
+  if (request.action === "submitClientSelection") {
+    const item = request.data || {};
+    mockDb.customers[`SYS_CLIENT_SELECTION_${item.id}`] = {
+      name: `pending-${item.customerName || item.customerContact || "公開預約"}-${item.selectedTherapistName || ""}`,
+      notes: JSON.stringify(item), records: []
+    };
+    return new Response(JSON.stringify({ success: true, verified: true, mutationId: request.mutationId || item.id }), { status: 200 });
+  }
   if (request.action === "customerRecords") return new Response(JSON.stringify({ success: true, records: mockDb.customers["TEST-001"].records || [], nextCursor: null, total: 0 }), { status: 200 });
   if (request.action === "mutationStatus") return new Response(JSON.stringify({ success: true, found: true, status: "verified", result: { verified: true } }), { status: 200 });
   if (request.action === "serviceRecordsAudit") return new Response(JSON.stringify({ success: true, legacyRecords: 0, modernRecords: 0, mismatchCount: 0 }), { status: 200 });
@@ -71,6 +80,8 @@ const handlers = {
   "/api/service-records-audit": require("../api/service-records-audit"),
   "/api/logout": require("../api/logout"),
   "/api/performance": require("../api/performance")
+  ,"/api/public-booking": require("../api/public-booking")
+  ,"/api/public-schedule": require("../api/public-schedule")
 };
 
 function contentType(file) {
@@ -94,7 +105,7 @@ function responseAdapter(res) {
 }
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, "http://127.0.0.1:4174");
+  const url = new URL(req.url, `http://127.0.0.1:${mockPort}`);
   if (handlers[url.pathname]) {
     req.query = Object.fromEntries(url.searchParams.entries());
     req.body = await parseBody(req);
@@ -111,4 +122,4 @@ const server = http.createServer(async (req, res) => {
   fs.createReadStream(file).pipe(res);
 });
 
-server.listen(4174, "127.0.0.1", () => console.log("Mock Morgan server: http://127.0.0.1:4174"));
+server.listen(mockPort, "127.0.0.1", () => console.log(`Mock Morgan server: http://127.0.0.1:${mockPort}`));

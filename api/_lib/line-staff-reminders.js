@@ -143,4 +143,20 @@ async function sendUpcomingAlerts(now = new Date()) {
   return { sent };
 }
 
-module.exports = { bindStaffGroup, replyLine, sendDailyBrief, sendUpcomingAlerts, taipeiDate, taipeiMinute };
+// A public request is an internal operational event, not a customer broadcast.
+// Failure is intentionally non-blocking: the verified pending request remains in
+// the admin queue even when LINE has not been configured.
+async function sendPublicBookingAlert(selection) {
+  const groupId = await boundGroupId();
+  if (!groupId) return { sent: false, reason: "recipient_not_bound" };
+  if (!String(process.env.LINE_CHANNEL_ACCESS_TOKEN || "").trim()) return { sent: false, reason: "line_not_configured" };
+  await pushLine(groupId, [
+    "🗓️ 公開預約需求待確認",
+    `${String(selection.date || "")} ${String(selection.time || "").slice(0, 5)}｜${String(selection.service || "")}`,
+    `偏好師傅：${String(selection.selectedTherapistName || selection.selectedTherapistId || "未指定")}`,
+    `顧客：${String(selection.customerName || "未留姓名")}｜${String(selection.customerContact || "")}`
+  ].join("\n"));
+  return { sent: true };
+}
+
+module.exports = { bindStaffGroup, replyLine, sendDailyBrief, sendUpcomingAlerts, sendPublicBookingAlert, taipeiDate, taipeiMinute };

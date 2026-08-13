@@ -37,8 +37,18 @@
     .selected .candidate-select { border-color: var(--teal); }
     .selection-form-card { padding: 24px; }
     .selection-form-card h2 { color: var(--ink); }
+    .selection-loading { display: grid; min-height: 260px; place-items: center; border-style: dashed; background: linear-gradient(135deg, #fff, var(--teal-soft)); text-align: center; }
+    .selection-loading-content { display: grid; justify-items: center; gap: 12px; }
+    .selection-loading-spinner { width: 36px; height: 36px; border: 4px solid #cce5df; border-top-color: var(--teal); border-radius: 999px; animation: selection-spin .8s linear infinite; }
+    .selection-loading strong { font-size: 18px; font-weight: 900; }
+    .selection-loading p { color: var(--muted); font-size: 14px; font-weight: 700; }
+    .selection-unavailable { display: grid; gap: 10px; align-content: center; min-height: 260px; text-align: center; }
+    .selection-unavailable strong { font-size: 20px; font-weight: 900; }
+    .selection-unavailable p { color: var(--muted); font-size: 14px; font-weight: 700; line-height: 1.6; }
     .privacy-note { border-top: 1px solid var(--line); margin-top: 20px; padding-top: 16px; color: var(--muted); font-size: 12px; font-weight: 700; line-height: 1.7; }
     #submitBtn:disabled { cursor: not-allowed; background: #d8e1df; color: #71807c; }
+    @keyframes selection-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .selection-loading-spinner { animation: none; } }
     @media (min-width: 768px) {
       .selection-hero { grid-template-columns: minmax(0, 1fr) minmax(250px, 330px); align-items: end; padding: 32px; }
       .selection-summary { border-top: 0; border-left: 1px solid var(--line); padding: 0 0 0 24px; }
@@ -52,14 +62,13 @@
       <div>
         <div class="selection-brand"><span class="selection-brand-mark">M</span> MORGAN SPA</div>
         <h1>選擇偏好的服務師傅</h1>
-        <p class="mt-3 text-sm font-bold leading-relaxed">選擇後，店家會再確認師傅、工作室與最終預約安排。</p>
+        <p class="mt-3 text-sm font-bold leading-relaxed">送出選擇後由店家確認安排。</p>
       </div>
       <div class="selection-summary" aria-live="polite">
         <div class="selection-summary-item">
           <span class="selection-summary-label">本次預約</span>
           <p id="selectionMeta" class="selection-summary-value">讀取可選名單中...</p>
         </div>
-        <p class="text-xs font-bold leading-relaxed">請從下方可選師傅中選擇一位，再留下聯絡方式。</p>
       </div>
     </section>
 
@@ -68,14 +77,20 @@
     <section class="grid gap-5 lg:grid-cols-[1fr_320px]">
       <div>
         <div class="section-heading">
-          <div><p class="section-eyebrow">可選師傅</p><h2>選擇一位服務師傅</h2></div>
-          <p class="text-sm font-bold text-slate-500">選擇後仍由店家確認安排</p>
+          <div><h2>選擇師傅</h2></div>
         </div>
-        <div id="candidateList" class="grid gap-4 md:grid-cols-2"></div>
+        <div id="candidateList" class="grid gap-4 md:grid-cols-2" aria-live="polite" aria-busy="true">
+          <section class="selection-loading card p-8 md:col-span-2">
+            <div class="selection-loading-content">
+              <span class="selection-loading-spinner" aria-hidden="true"></span>
+              <strong>正在讀取可選師傅</strong>
+              <p>正在確認這個時段的可安排名單，請稍候。</p>
+            </div>
+          </section>
+        </div>
       </div>
-      <aside class="selection-form-card card h-fit lg:sticky lg:top-6">
+      <aside id="selectionFormCard" class="selection-form-card card h-fit lg:sticky lg:top-6">
         <h2 class="text-lg font-black">留下聯絡資料</h2>
-        <p class="mt-1 text-sm font-bold leading-relaxed text-slate-500">送出後店家會確認時段與房間，再正式建立預約。</p>
         <form id="selectionForm" class="mt-5 space-y-4">
           <div>
             <label class="mb-1 block text-xs font-black text-slate-500">顧客姓名 <span class="text-slate-400">(選填)</span></label>
@@ -92,14 +107,14 @@
           <button id="submitBtn" class="btn btn-primary w-full" disabled>先選擇一位師傅</button>
           <p id="formMsg" class="hidden text-sm font-black"></p>
         </form>
-        <p class="privacy-note">我們僅使用您的聯絡資料進行本次預約確認，不會在此頁直接完成扣款或正式建立預約。</p>
+        <p class="privacy-note">資料僅用於本次預約確認；送出不代表正式預約已成立。</p>
       </aside>
     </section>
   </main>
 
   <script>
     const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiTI5Z8c76YNlcPMYWyR17HGaU4QvzHJm32nWeCHsnaknVx/exec";
-    const COURSE_CATALOG = {
+    const DEFAULT_COURSE_CATALOG = {
       A60: { name: "A課程 60分", duration: 60, price: 1800 },
       C120: { name: "C課程 120分", duration: 120, price: 2800 },
       C90: { name: "C課程 90分", duration: 90, price: 2500 },
@@ -108,6 +123,8 @@
       OUT_DAY: { name: "外出 (22:00前)", duration: 120, price: 3200 },
       OUT_NIGHT: { name: "外出 (22:00後)", duration: 120, price: 3500 }
     };
+    let COURSE_CATALOG = { ...DEFAULT_COURSE_CATALOG };
+    const OPERATIONS_CONFIG_KEY = "SYS_OPERATIONS_CONFIG";
     const params = new URLSearchParams(window.location.search);
     const query = {
       selectionId: params.get("selection") || params.get("id") || "",
@@ -122,6 +139,9 @@
     const AFTER_MIDNIGHT_CUTOFF = 5 * 60;
     let db = { therapists: {}, schedules: {}, appointments: {}, customers: {} };
     let selectedTherapistId = "";
+    // Keep one id for the lifetime of this page so retries update the same
+    // selection record instead of creating duplicate pending selections.
+    const submissionId = query.selectionId || `SEL-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 
     const $ = (id) => document.getElementById(id);
     const esc = (value = "") => String(value ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
@@ -182,6 +202,18 @@
       raw.appointments ||= {};
       raw.customers ||= {};
       raw.clientSelections ||= {};
+      try {
+        const config = JSON.parse(raw.customers[OPERATIONS_CONFIG_KEY]?.notes || "{}");
+        if (Array.isArray(config.courses)) {
+          const next = { ...DEFAULT_COURSE_CATALOG };
+          config.courses.forEach((course) => {
+            const code = String(course?.code || "").trim();
+            if (!code) return;
+            next[code] = { name: String(course.name || code), duration: Math.max(10, Number(course.duration || 60)), price: Math.max(0, Number(course.price || 0)), enabled: course.enabled !== false };
+          });
+          COURSE_CATALOG = next;
+        }
+      } catch {}
       Object.entries(raw.customers).forEach(([key, customer]) => {
         if (!key.startsWith(CLIENT_SELECTION_PREFIX)) return;
         try {
@@ -204,6 +236,36 @@
       return raw;
     }
 
+    function isSelectionExpired(date, time) {
+      const normalizedDate = normalizeDate(date);
+      const normalizedTime = normalizeTime(time);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate) || !/^\d{2}:\d{2}$/.test(normalizedTime)) return false;
+      const deadline = new Date(`${normalizedDate}T${normalizedTime}:00`);
+      return Number.isFinite(deadline.getTime()) && deadline.getTime() <= Date.now();
+    }
+
+    function showUnavailableSelection(message) {
+      $("noticeBox").className = "card mb-5 p-5 text-center font-black text-amber-700";
+      $("noticeBox").textContent = message;
+      $("selectionForm").classList.add("hidden");
+      $("selectionFormCard").classList.add("hidden");
+      $("candidateList").setAttribute("aria-busy", "false");
+      $("candidateList").innerHTML = "";
+      return false;
+    }
+
+    function showCandidateLoading() {
+      $("selectionFormCard").classList.add("hidden");
+      $("candidateList").setAttribute("aria-busy", "true");
+      $("candidateList").innerHTML = `<section class="selection-loading card p-8 md:col-span-2"><div class="selection-loading-content"><span class="selection-loading-spinner" aria-hidden="true"></span><strong>正在讀取可選師傅</strong><p>正在確認這個時段的可安排名單，請稍候。</p></div></section>`;
+    }
+
+    function showNoCandidateState() {
+      selectedTherapistId = "";
+      $("candidateList").innerHTML = `<section class="selection-unavailable card p-8 md:col-span-2"><strong>目前無可安排的師傅</strong><p>此時段暫時無法安排，請聯繫店家重新確認時間。</p></section>`;
+      $("selectionFormCard").classList.add("hidden");
+    }
+
     function applySelectionFromRecord() {
       if (!query.selectionId) return true;
       const selection = db.clientSelections?.[query.selectionId];
@@ -213,15 +275,14 @@
         return false;
       }
       if (["confirmed", "rejected", "cancelled"].includes(selection.status)) {
-        $("noticeBox").className = "card mb-5 p-5 text-center font-black text-amber-700";
-        $("noticeBox").textContent = "這筆客選連結已處理，如需調整請聯繫店家。";
-        return false;
+        return showUnavailableSelection("這筆客選連結已處理，如需調整請聯繫店家。");
       }
       query.date = selection.date || query.date;
       query.time = String(selection.time || query.time || "").slice(0, 5);
       query.service = selection.service || query.service;
       query.therapistIds = Array.isArray(selection.therapistIds) ? selection.therapistIds : [];
       query.limit = Number(selection.limit || query.limit || 5);
+      if (isSelectionExpired(query.date, query.time)) return showUnavailableSelection("這筆客選連結已超過預約時段，請向店家索取新的連結。");
       return true;
     }
 
@@ -269,10 +330,12 @@
 
     function renderCandidates(candidates) {
       const list = $("candidateList");
+      list.setAttribute("aria-busy", "false");
       if (!candidates.length) {
-        list.innerHTML = `<div class="card p-8 text-center font-black text-slate-500 md:col-span-2">此連結目前沒有可選師傅，請聯繫店家協助安排。</div>`;
+        showNoCandidateState();
         return;
       }
+      $("selectionFormCard").classList.remove("hidden");
       list.innerHTML = candidates.map(({ id, profile, shift }) => {
         const name = therapistName(id);
         return `<article class="candidate-card card" data-card="${esc(id)}">
@@ -309,10 +372,35 @@
       });
     }
 
+    async function refreshCandidateAvailability() {
+      const freshUrl = new URL(API_URL);
+      freshUrl.searchParams.set("mode", "clientSelection");
+      freshUrl.searchParams.set("selection", query.selectionId || submissionId);
+      freshUrl.searchParams.set("date", query.date);
+      freshUrl.searchParams.set("time", query.time);
+      freshUrl.searchParams.set("service", query.service);
+      freshUrl.searchParams.set("t", Date.now());
+      const response = await fetch(freshUrl.toString(), { cache: "no-store" });
+      if (!response.ok) throw new Error(`availability_http_${response.status}`);
+      const freshDb = normalizeDb(await response.json());
+      const previousDb = db;
+      db = freshDb;
+      const freshCandidates = availableCandidates();
+      if (!freshCandidates.some((candidate) => candidate.id === selectedTherapistId)) {
+        db = previousDb;
+        return false;
+      }
+      return true;
+    }
+
     async function submitSelection(event) {
       event.preventDefault();
       const msg = $("formMsg");
       if (!selectedTherapistId) return;
+      if (isSelectionExpired(query.date, query.time)) {
+        showUnavailableSelection("這筆客選連結已超過預約時段，無法送出選擇。");
+        return;
+      }
       const contact = $("customerContact").value.trim();
       if (!contact) {
         msg.textContent = "請留下聯絡方式，方便店家確認。";
@@ -320,9 +408,25 @@
         msg.classList.remove("hidden");
         return;
       }
+      try {
+        const stillAvailable = await refreshCandidateAvailability();
+        if (!stillAvailable) {
+          selectedTherapistId = "";
+          renderCandidates(availableCandidates());
+          msg.textContent = "這位師傅的時段剛剛已變更，請重新選擇目前可用的師傅。";
+          msg.className = "text-sm font-black text-amber-700";
+          msg.classList.remove("hidden");
+          return;
+        }
+      } catch (error) {
+        msg.textContent = "無法重新確認目前可選名單，請稍後再試。";
+        msg.className = "text-sm font-black text-rose-600";
+        msg.classList.remove("hidden");
+        return;
+      }
       $("submitBtn").disabled = true;
       $("submitBtn").textContent = "送出中...";
-      const id = query.selectionId || `SEL-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+      const id = submissionId;
       const selection = {
         id,
         status: "pending",
@@ -372,7 +476,7 @@
           } catch (e) {}
         }
         if (!confirmed) throw new Error("雲端尚未確認客選資料");
-        $("selectionForm").innerHTML = `<div class="rounded-2xl bg-teal-50 p-5 text-teal-800"><h2 class="text-lg font-black">已送出選擇</h2><p class="mt-2 text-sm font-bold">店家確認時段、房間與預約後，會再與您聯繫。</p></div>`;
+        $("selectionForm").innerHTML = `<div class="rounded-2xl bg-teal-50 p-5 text-teal-800"><h2 class="text-lg font-black">已送出選擇</h2><p class="mt-2 text-sm font-bold">等待店家確認。</p></div>`;
         document.querySelectorAll("[data-select]").forEach((button) => button.disabled = true);
       } catch (error) {
         msg.textContent = "送出失敗，請稍後再試或直接聯繫店家。";
@@ -385,6 +489,16 @@
 
     async function boot() {
       try {
+        if (!query.date || !query.time) {
+          $("selectionMeta").textContent = `未指定日期 未指定時間 · ${courseName(query.service)}`;
+          $("noticeBox").className = "card mb-5 p-5 text-center font-black text-rose-600";
+          $("noticeBox").textContent = "缺少日期或時間參數，請使用店家提供的連結。";
+          $("selectionFormCard").classList.add("hidden");
+          $("candidateList").setAttribute("aria-busy", "false");
+          $("candidateList").innerHTML = "";
+          return;
+        }
+        showCandidateLoading();
         const safeUrl = new URL(API_URL);
         safeUrl.searchParams.set("mode", "clientSelection");
         safeUrl.searchParams.set("t", Date.now());
@@ -398,14 +512,15 @@
         db = normalizeDb(await res.json());
         if (!applySelectionFromRecord()) return;
         $("selectionMeta").textContent = `${query.date || "未指定日期"} ${query.time || "未指定時間"} · ${courseName(query.service)}${query.therapistIds.length ? ` · 店家精選 ${query.therapistIds.length} 位` : ""}`;
-        if (!query.date || !query.time) {
-          $("noticeBox").className = "card mb-5 p-5 text-center font-black text-rose-600";
-          $("noticeBox").textContent = "缺少日期或時間參數，請使用店家提供的連結。";
+        if (isSelectionExpired(query.date, query.time)) {
+          showUnavailableSelection("這筆客選連結已超過預約時段，請向店家索取新的連結。");
           return;
         }
         renderCandidates(availableCandidates());
       } catch (error) {
+        $("candidateList").setAttribute("aria-busy", "false");
         $("candidateList").innerHTML = `<div class="card p-8 text-center font-black text-rose-600 md:col-span-2">無法讀取可選名單，請稍後再試。</div>`;
+        $("selectionFormCard").classList.add("hidden");
       }
     }
 
