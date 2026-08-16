@@ -4686,9 +4686,12 @@ function renderPersonnel() {
         <div class="workbench-actions"><div class="date-range-chip">${iconHtml("calendar-range")}<span>${esc(scheduleFilterStart)} 至 ${esc(scheduleFilterEnd)}</span></div><button id="exportScheduleBtn" class="btn-teal">${iconHtml("download")}匯出</button></div>
       </div>
       <div class="schedule-filter-bar"><label>${iconHtml("search")}<input id="scheduleSearchInput" value="${esc(scheduleSearchQuery)}" placeholder="搜尋人員姓名或編號"></label><button id="scheduleAnomalyBtn" class="${scheduleAnomalyOnly ? "active" : ""}">${iconHtml("triangle-alert")}只看異常</button><span>異常包含格式錯誤或無法辨識的班別</span></div>
-      <section id="scheduleHoursSummary" class="border-y border-slate-100 bg-white p-4" aria-live="polite"></section>
       <p class="schedule-mobile-scroll-hint" aria-hidden="true">左右滑動班表可查看其他日期</p>
       <div class="schedule-table-wrap table-wrap rounded-none border-0" data-date-scroll><table><thead><tr id="scheduleHeader"></tr></thead><tbody id="scheduleRows"></tbody></table></div>
+      <details id="scheduleHoursDetails" class="schedule-hours-details border-t border-slate-100 bg-white">
+        <summary><span>區間統計</span><strong>查看指定區間排班時數</strong></summary>
+        <section id="scheduleHoursSummary" class="p-4" aria-live="polite"></section>
+      </details>
     </div>`;
   const adminPanel = `
     <div class="workbench-panel card overflow-hidden">

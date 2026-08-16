@@ -2455,6 +2455,27 @@ tr:hover td { background:#f8fafc; }
   #view-personnel .schedule-table-wrap td:not(:first-child) { width:92px; min-width:92px; }
 }
 
+.schedule-hours-details > summary {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  min-height:56px;
+  padding:14px 18px;
+  cursor:pointer;
+  list-style:none;
+  color:#137d75;
+  font-weight:900;
+}
+.schedule-hours-details > summary::-webkit-details-marker { display:none; }
+.schedule-hours-details > summary::after { content:"⌄"; color:#64748b; font-size:18px; transition:transform .18s ease; }
+.schedule-hours-details[open] > summary::after { transform:rotate(180deg); }
+.schedule-hours-details > summary strong { color:#64748b; font-size:12px; font-weight:800; }
+@media (max-width:760px) {
+  .schedule-hours-details > summary { padding:12px; }
+  .schedule-hours-details > summary strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+}
+
 @media (max-width:390px) {
   #view-dispatch .appointment-hero-main { grid-template-columns:160px minmax(0,1fr); gap:0 8px; }
   #view-dispatch .appointment-identity-card { width:160px; padding-inline:11px; }

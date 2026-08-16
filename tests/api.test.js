@@ -350,6 +350,8 @@ test("personnel schedule calculates each therapist's selected-range working hour
   assert.match(source, /指定區間排班時數/);
   assert.match(source, /合計 \$\{formatScheduledHours\(totalScheduledMinutes\)\}/);
   assert.match(source, /指定區間排班時數\\n/);
+  assert.match(source, /schedule-table-wrap[\s\S]*?<details id="scheduleHoursDetails"/);
+  assert.match(source, /<details id="scheduleHoursDetails"/);
 });
 
 test("mobile personnel schedule keeps five navigation slots and contains its wide matrix", () => {
