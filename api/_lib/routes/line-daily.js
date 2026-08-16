@@ -1,6 +1,6 @@
 "use strict";
-const { sendDailyBrief } = require("../_lib/line-staff-reminders");
-const { requestId, sendJson, logRequest, methodNotAllowed } = require("../_lib/http");
+const { sendDailyBrief } = require("../line-staff-reminders");
+const { requestId, sendJson, logRequest, methodNotAllowed } = require("../http");
 
 function authorized(req) { return String(req.headers?.authorization || "") === `Bearer ${String(process.env.LINE_CRON_SECRET || "")}` && Boolean(process.env.LINE_CRON_SECRET); }
 module.exports = async function handler(req, res) {

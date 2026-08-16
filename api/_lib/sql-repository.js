@@ -121,6 +121,10 @@ async function bootstrap(identity, requestedDate) {
             (${role} = 'admin' AND key LIKE 'SYS_THERAPIST_PROFILE_%')
             OR (${role} = 'therapist' AND key = ${`SYS_THERAPIST_PROFILE_${actorId}`})
             OR (${role} = 'admin' AND key LIKE 'SYS_APPROVAL_%')
+            OR (
+              ${role} = 'therapist' AND key LIKE 'SYS_APPROVAL_%'
+              AND CASE WHEN left(ltrim(notes), 1) = '{' THEN notes::jsonb ->> 'therapistId' ELSE NULL END = ${actorId}
+            )
             OR key = 'SYS_OPERATIONS_CONFIG'
             OR (key LIKE 'SYS_APPT_META_%' AND substring(key from 15) IN (
               SELECT id FROM appointments WHERE date = ${date}::date AND (${role} = 'admin' OR therapist_id = ${actorId})

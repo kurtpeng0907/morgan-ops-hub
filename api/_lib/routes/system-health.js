@@ -1,9 +1,9 @@
 "use strict";
 
-const { callAppsScript } = require("./_lib/apps-script");
-const { dataSourceMode, sqlClient } = require("./_lib/database");
-const { requestId, sendJson, logRequest, methodNotAllowed } = require("./_lib/http");
-const { verifySession } = require("./_lib/session");
+const { callAppsScript } = require("../apps-script");
+const { dataSourceMode, sqlClient } = require("../database");
+const { requestId, sendJson, logRequest, methodNotAllowed } = require("../http");
+const { verifySession } = require("../session");
 
 function safeErrorCategory(error) {
   const code = String(error?.code || "").toLowerCase();

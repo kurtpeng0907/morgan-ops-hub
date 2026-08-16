@@ -5,7 +5,7 @@ const { join } = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const roots = ["api", "scripts", "tests"];
-const files = ["app.js", "drizzle.config.js"];
+const files = ["app.js", "app-api.js", "app-booking.js", "app-booking-view.js", "app-core.js", "drizzle.config.js"];
 
 function collect(path) {
   for (const entry of readdirSync(path)) {

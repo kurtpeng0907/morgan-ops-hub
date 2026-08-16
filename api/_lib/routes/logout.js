@@ -1,7 +1,7 @@
 "use strict";
 
-const { sendJson, methodNotAllowed } = require("./_lib/http");
-const { clearSessionCookie } = require("./_lib/session");
+const { sendJson, methodNotAllowed } = require("../http");
+const { clearSessionCookie } = require("../session");
 
 module.exports = async function handler(req, res) {
   if (req.method !== "POST") return methodNotAllowed(res, ["POST"]);

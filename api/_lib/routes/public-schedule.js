@@ -1,8 +1,8 @@
 "use strict";
 
-const { dataSourceMode } = require("./_lib/database");
-const { requestId, sendJson, logRequest, methodNotAllowed } = require("./_lib/http");
-const sqlRepository = require("./_lib/sql-repository");
+const { dataSourceMode } = require("../database");
+const { requestId, sendJson, logRequest, methodNotAllowed } = require("../http");
+const sqlRepository = require("../sql-repository");
 
 module.exports = async function handler(req, res) {
   if (req.method !== "GET") return methodNotAllowed(res, ["GET"]);

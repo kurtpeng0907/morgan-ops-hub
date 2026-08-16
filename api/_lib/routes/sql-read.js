@@ -1,9 +1,9 @@
 "use strict";
 
-const { requestId, sendJson, logRequest, methodNotAllowed } = require("./_lib/http");
-const { verifySession } = require("./_lib/session");
-const { dataSourceMode } = require("./_lib/database");
-const sqlRepository = require("./_lib/sql-repository");
+const { requestId, sendJson, logRequest, methodNotAllowed } = require("../http");
+const { verifySession } = require("../session");
+const { dataSourceMode } = require("../database");
+const sqlRepository = require("../sql-repository");
 
 const ROUTES = {
   appointments: {

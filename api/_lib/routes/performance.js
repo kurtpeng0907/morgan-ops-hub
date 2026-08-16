@@ -1,6 +1,6 @@
 "use strict";
 
-const { requestId, readJson, sendJson, methodNotAllowed } = require("./_lib/http");
+const { requestId, readJson, sendJson, methodNotAllowed } = require("../http");
 
 const ALLOWED_METRICS = new Set([
   "page_load", "bootstrap_to_data", "login_to_bootstrap", "login_to_first_view",

@@ -7,16 +7,16 @@ process.env.MORGAN_SESSION_SECRET = "test-session-secret-that-is-at-least-32-cha
 process.env.MORGAN_GATEWAY_SECRET = "test-gateway-secret-at-least-24-chars";
 process.env.MORGAN_APPS_SCRIPT_URL = "https://example.test/apps-script";
 
-const sessionHandler = require("../api/session");
-const bootstrapHandler = require("../api/bootstrap");
-const cloudHandler = require("../api/cloud");
-const customerRecordsHandler = require("../api/customer-records");
-const sqlReadHandler = require("../api/sql-read");
-const lineDailyHandler = require("../api/cron/line-daily");
-const lineWebhook = require("../api/line/webhook");
-const systemHealthHandler = require("../api/system-health");
-const publicBookingHandler = require("../api/public-booking");
-const publicScheduleHandler = require("../api/public-schedule");
+const sessionHandler = require("../api/_lib/routes/session");
+const bootstrapHandler = require("../api/_lib/routes/bootstrap");
+const cloudHandler = require("../api/_lib/routes/cloud");
+const customerRecordsHandler = require("../api/_lib/routes/customer-records");
+const sqlReadHandler = require("../api/_lib/routes/sql-read");
+const lineDailyHandler = require("../api/_lib/routes/line-daily");
+const lineWebhook = require("../api/_lib/routes/line-webhook");
+const systemHealthHandler = require("../api/_lib/routes/system-health");
+const publicBookingHandler = require("../api/_lib/routes/public-booking");
+const publicScheduleHandler = require("../api/_lib/routes/public-schedule");
 const { safeErrorCategory } = systemHealthHandler;
 const { therapistOwnsWrite, validateBookingCommands } = cloudHandler;
 const { createSession, verifySession } = require("../api/_lib/session");
@@ -29,6 +29,110 @@ const { publicSnapshot, validateSubmission } = require("../api/_lib/public-booki
 const { readFileSync } = require("node:fs");
 const { resolve } = require("node:path");
 const { Readable } = require("node:stream");
+const appCore = require("../app-core");
+const appApi = require("../app-api");
+const appBooking = require("../app-booking");
+const appBookingViews = require("../app-booking-view");
+
+test("browser domain helpers preserve leading-zero IDs and normalize legacy date/time values", () => {
+  assert.equal(appCore.cleanPin("'0007"), "0007");
+  assert.equal(appCore.sheetText("0007"), "'0007");
+  assert.equal(appCore.pinMatches("'0007", "7"), true);
+  assert.equal(appCore.normalizeDateField("2030/1/2"), "2030-01-02");
+  assert.equal(appCore.normalizeTimeField(0.5), "12:00");
+  assert.equal(appCore.minsToTime(appCore.timeToMinutes("23:45")), "23:45");
+});
+
+test("operations page loads the shared browser helpers before the main application", () => {
+  const source = readFileSync(resolve(__dirname, "../index.html"), "utf8");
+  assert.ok(source.indexOf('src="./app-core.js') < source.indexOf('src="./app.js'));
+  assert.ok(source.indexOf('src="./app-api.js') < source.indexOf('src="./app.js'));
+  assert.ok(source.indexOf('src="./app-booking.js') < source.indexOf('src="./app.js'));
+  assert.ok(source.indexOf('src="./app-booking-view.js') < source.indexOf('src="./app.js'));
+  assert.match(readFileSync(resolve(__dirname, "../app.js"), "utf8"), /window\.MorganAppCore/);
+  assert.match(readFileSync(resolve(__dirname, "../app.js"), "utf8"), /window\.MorganAppApi/);
+  assert.match(readFileSync(resolve(__dirname, "../app.js"), "utf8"), /window\.MorganBooking/);
+});
+
+test("booking renderer fragments preserve escaped booking content", () => {
+  const card = appBookingViews.bookingCardHtml({
+    appointment: { id: "A<1", date: "2030-01-02", time: "10:00", bookingStage: "confirmed", phone: "P", customerName: "<客>", therapistId: "001", service: "A60", room: "R", price: 1800 },
+    nextActionMeta: () => ({ label: "完成行前通知" }), stageClass: () => "ok", stageLabel: () => "已確認", customerDisplay: () => "<客>", therapistName: () => "師傅", courseName: () => "A60", money: (value) => `$${value}`, esc: (value) => String(value).replace(/</g, "&lt;")
+  });
+  assert.match(card, /data-open-appt="A&lt;1"/);
+  assert.match(card, /&lt;客>/);
+  const board = appBookingViews.bookingStageBoardHtml({
+    appointments: [{ id: "first", bookingStage: "confirmed" }, { id: "done", bookingStage: "completed" }],
+    nextActionMeta: (appointment) => appointment.id === "first" ? { key: "pre_notice" } : { key: "complete" },
+    urgencyValue: () => 0, renderCard: (appointment) => `<article>${appointment.id}</article>`
+  });
+  assert.match(board, /待行前通知/);
+  assert.match(board, /first/);
+  assert.doesNotMatch(board, /done<\/article>/);
+  const rail = appBookingViews.bookingStageRailHtml({ currentStage: "confirmed", workflow: [{ label: "建立" }, { label: "通知" }], workflowIndex: () => 1, esc: (value) => value });
+  assert.match(rail, /建立/);
+  assert.match(rail, /aria-current="step"/);
+});
+
+test("browser booking helpers retain the existing workflow and safe fallback stage", () => {
+  assert.equal(appBooking.normalizeBookingStage("", { isCompleted: true }), "completed");
+  assert.equal(appBooking.normalizeBookingStage("unknown", {}), "confirmed");
+  assert.equal(appBooking.BOOKING_STAGE_NEXT.confirmed[0], "pre_notice");
+  assert.equal(appBooking.bookingWorkflowIndex("therapist_match"), 0);
+  assert.equal(appBooking.bookingWorkflowIndex("completed"), 4);
+  assert.equal(appBooking.isBookingConfirmed({ bookingStage: "pre_notice" }), true);
+  assert.equal(appBooking.isBookingUnconfirmed({ bookingStage: "customer_confirm" }), true);
+  assert.equal(appBooking.bookingNextActionMeta({ bookingStage: "completed" }, {}).key, "payment_record");
+  assert.equal(appBooking.bookingNextActionMeta({ bookingStage: "completed", collectedPrice: "100" }, { notes: "" }).reminder, true);
+  assert.ok(appBooking.bookingUrgencyValue({ date: "2030-01-01", time: "10:00" }) < appBooking.bookingUrgencyValue({ date: "2030-01-02", time: "10:00" }));
+  const list = appBooking.buildBookingListModel({
+    appointments: [
+      { id: "day-confirmed", date: "2030-01-02", bookingStage: "confirmed" },
+      { id: "month-followup", date: "2030-01-03", bookingStage: "completed", isCompleted: true, collectedPrice: "100" },
+      { id: "outside", date: "2030-02-01", bookingStage: "inquiry" }
+    ],
+    monthDateKeys: ["2030-01-02", "2030-01-03"], activeDate: "2030-01-02", scope: "month",
+    recordForAppointment: () => ({ notes: "" })
+  });
+  assert.equal(list.monthAppointments.length, 2);
+  assert.equal(list.dayAppointments[0].id, "day-confirmed");
+  assert.equal(list.visibleConfirmed.length, 2);
+  assert.equal(list.visibleFollowup[0].id, "month-followup");
+  const detail = appBooking.buildBookingDetailModel({
+    appointment: { time: "23:30", duration: 90, room: "OUT" },
+    course: { therapistCut: 1600 }, remittanceDue: 1200, editMode: true, editSection: "financial"
+  });
+  assert.equal(detail.endTime, "01:00");
+  assert.equal(detail.roomLabel, "外出");
+  assert.equal(detail.therapistCut, 1600);
+  assert.equal(detail.editScope, "financial");
+});
+
+test("browser API transport uses same-origin no-store requests and clears its timeout", async () => {
+  const originalFetch = global.fetch;
+  const originalSetTimeout = global.setTimeout;
+  const originalClearTimeout = global.clearTimeout;
+  const timeout = {};
+  let cleared = false;
+  global.setTimeout = () => timeout;
+  global.clearTimeout = (value) => { cleared = value === timeout; };
+  global.fetch = async (_url, options) => {
+    assert.equal(options.credentials, "same-origin");
+    assert.equal(options.cache, "no-store");
+    assert.ok(options.signal);
+    return new Response(JSON.stringify({ success: true }), { status: 200 });
+  };
+  try {
+    const result = await appApi.fetchJson("/api/example", {}, 123);
+    assert.equal(result.response.status, 200);
+    assert.deepEqual(result.payload, { success: true });
+    assert.equal(cleared, true);
+  } finally {
+    global.fetch = originalFetch;
+    global.setTimeout = originalSetTimeout;
+    global.clearTimeout = originalClearTimeout;
+  }
+});
 
 test("booking contract separates customer selection from confirmed booking", () => {
   assert.equal(canTransition("therapist_match", "customer_confirm"), true);
@@ -208,11 +312,12 @@ test("pre-notice action opens an editable notice editor before completion", () =
 
 test("service result focuses payment and leaves service notes optional", () => {
   const source = readFileSync(resolve(__dirname, "../app.js"), "utf8");
+  const bookingSource = readFileSync(resolve(__dirname, "../app-booking.js"), "utf8");
   assert.match(source, /data-focus-service-result/);
   assert.match(source, /const payment = form\?\.querySelector\('\[name="collectedPrice"\]/);
   assert.match(source, /const notes = form\?\.querySelector\('\[name="recordNotes"\]/);
   assert.match(source, /normalizeBookingStage\(old\.bookingStage, old\) === "pre_notice" && String\(data\.collectedPrice \|\| ""\)\.trim\(\) !== ""/);
-  assert.match(source, /帳務已完成，待補服務紀錄/);
+  assert.match(bookingSource, /帳務已完成，待補服務紀錄/);
 });
 
 test("therapist and customer notices share the same editable panel layout", () => {
@@ -693,13 +798,15 @@ test("shadow comparison projects legacy 30-day data to the selected-day SQL cont
   assert.equal(digest({ b: 1, a: 2 }), digest({ a: 2, b: 1 }));
 });
 
-test("consolidated SQL read router keeps paginated endpoints behind one Vercel function", async () => {
+test("consolidated Vercel routers preserve existing URLs behind three function entries", async () => {
   const res = responseMock();
   await sqlReadHandler({ method: "GET", headers: {}, query: { route: "appointments" } }, res);
   assert.equal(res.statusCode, 401);
   const config = JSON.parse(readFileSync(resolve(__dirname, "../vercel.json"), "utf8"));
-  assert.equal(config.rewrites.length, 4);
-  assert.equal(config.rewrites.find((item) => item.source === "/api/appointments").destination, "/api/sql-read?route=appointments");
+  assert.equal(config.rewrites.find((item) => item.source === "/api/appointments").destination, "/api/ops?endpoint=sql-read&route=appointments");
+  assert.equal(config.rewrites.find((item) => item.source === "/api/cloud").destination, "/api/ops?endpoint=cloud");
+  assert.equal(config.rewrites.find((item) => item.source === "/api/public-booking").destination, "/api/public?endpoint=public-booking");
+  assert.equal(config.rewrites.find((item) => item.source === "/api/line/webhook").destination, "/api/line?endpoint=webhook");
 });
 
 test("Vercel schedules LINE daily digest at 09:00 Taiwan and checks upcoming reminders every 15 minutes", () => {

@@ -1,5 +1,9 @@
 "use strict";
 
+const { cleanPin, sheetText, pinMatches, timeToMinutes, minsToTime, toDateKey, normalizeDateField, normalizeTimeField } = window.MorganAppCore;
+const { fetchJson: fetchApiJson } = window.MorganAppApi;
+const { BOOKING_STAGES, BOOKING_WORKFLOW, BOOKING_STAGE_NEXT, isKnownBookingStage, normalizeBookingStage, bookingWorkflowIndex, isBookingConfirmed, isBookingUnconfirmed, bookingNextActionMeta: bookingNextActionMetaForRecord, bookingUrgencyValue, buildBookingListModel, buildBookingDetailModel } = window.MorganBooking;
+
 const API_URL = "https://script.google.com/macros/s/AKfycbxm7aWFLVk0XeTLV39LnaiTI5Z8c76YNlcPMYWyR17HGaU4QvzHJm32nWeCHsnaknVx/exec";
 const APP_VERSION = "MSOT4.0-neon-sql";
 const CLOUD_READ_TIMEOUT_MS = 20000;
@@ -137,45 +141,6 @@ const therapistWritePayload = (id, therapist = {}) => {
   };
 };
 const isSystemCustomerKey = (key = "") => String(key).startsWith("SYS_");
-const cleanPin = (value = "") => String(value ?? "").replace(/^'/, "").trim();
-const sheetText = (value = "") => {
-  const text = cleanPin(value);
-  return /^0\d+/.test(text) ? `'${text}` : text;
-};
-const pinMatches = (stored, entered) => {
-  const storedText = cleanPin(stored);
-  const enteredText = cleanPin(entered);
-  if (storedText === enteredText) return true;
-  if (/^\d+$/.test(storedText) && /^\d+$/.test(enteredText)) {
-    return storedText.replace(/^0+/, "") === enteredText.replace(/^0+/, "");
-  }
-  return false;
-};
-const timeToMinutes = (value = "00:00") => {
-  const [h = 0, m = 0] = String(value).split(":").map(Number);
-  return h * 60 + m;
-};
-const minsToTime = (mins) => `${String(Math.floor(mins / 60) % 24).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
-
-function normalizeDateField(value = "") {
-  if (!value) return "";
-  const text = String(value).trim();
-  const direct = text.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
-  if (direct) return `${direct[1]}-${String(direct[2]).padStart(2, "0")}-${String(direct[3]).padStart(2, "0")}`;
-  const parsed = new Date(text);
-  return Number.isNaN(parsed.getTime()) ? text : toDateKey(parsed);
-}
-
-function normalizeTimeField(value = "") {
-  if (value === null || value === undefined || value === "") return "";
-  if (typeof value === "number" && value >= 0 && value < 1) {
-    return minsToTime(Math.round(value * 24 * 60));
-  }
-  const text = String(value).trim();
-  const match = text.match(/\b(\d{1,2}):(\d{2})(?::\d{2})?\b/);
-  if (match) return `${String(match[1]).padStart(2, "0")}:${match[2]}`;
-  return text;
-}
 
 const THERAPIST_PROFILE_DEFAULTS = {
   nickname: "",
@@ -205,39 +170,7 @@ const clientSelectionKey = (id) => `${CLIENT_SELECTION_PREFIX}${id}`;
 const appointmentMetaKey = (id) => `${APPOINTMENT_META_PREFIX}${id}`;
 const approvalTypeLabel = (type) => ({ profile: "人事資料", schedule: "班表", password: "密碼" }[type] || type);
 const approvalStatusLabel = (status) => ({ pending: "待審核", approved: "已核可", rejected: "已退回" }[status] || status);
-const BOOKING_STAGES = [
-  { key: "inquiry", label: "詢問中", icon: "message-circle-question" },
-  { key: "candidate_sent", label: "已給客選", icon: "send" },
-  { key: "therapist_match", label: "師傅媒合中", icon: "users" },
-  { key: "customer_confirm", label: "待顧客確認", icon: "badge-help" },
-  { key: "confirmed", label: "已確認預約", icon: "badge-check" },
-  { key: "pre_notice", label: "行前通知完成", icon: "bell-ring" },
-  { key: "completed", label: "服務完成", icon: "circle-check-big" }
-];
-const BOOKING_WORKFLOW = [
-  { key: "create", label: "建立", icon: "calendar-plus", stages: ["inquiry", "candidate_sent", "therapist_match"] },
-  { key: "confirm", label: "待確認", icon: "badge-check", stages: ["customer_confirm"] },
-  { key: "notice", label: "行前通知", icon: "send", stages: ["confirmed"] },
-  { key: "service_report", label: "服務回報", icon: "clipboard-pen-line", stages: ["pre_notice"] },
-  { key: "accounting", label: "回帳及紀錄", icon: "wallet-cards", stages: ["completed"] }
-];
 const bookingStageLabel = (stage) => BOOKING_STAGES.find((item) => item.key === stage)?.label || "已確認預約";
-const BOOKING_STAGE_NEXT = Object.freeze({
-  inquiry: ["candidate_sent"],
-  candidate_sent: ["therapist_match"],
-  therapist_match: ["customer_confirm"],
-  customer_confirm: ["confirmed"],
-  confirmed: ["pre_notice"],
-  pre_notice: ["service_report"],
-  service_report: ["completed"],
-  completed: [],
-  cancelled: []
-});
-const bookingWorkflowIndex = (stage = "confirmed") => {
-  const normalized = normalizeBookingStage(stage);
-  const index = BOOKING_WORKFLOW.findIndex((phase) => phase.stages.includes(normalized));
-  return index >= 0 ? index : 2;
-};
 const bookingStageClass = (stage) => ({
   inquiry: "bg-slate-100 text-slate-600",
   candidate_sent: "bg-cyan-50 text-cyan-700",
@@ -257,16 +190,6 @@ const bookingStageEditOptions = (current = "confirmed") => {
   const allowed = new Set([normalized, ...(BOOKING_STAGE_NEXT[normalized] || [])]);
   return BOOKING_STAGES.filter((item) => allowed.has(item.key)).map((item) => `<option value="${item.key}" ${item.key === normalized ? "selected" : ""}>${item.label}${item.key === normalized ? "（目前）" : "（下一步）"}</option>`).join("");
 };
-const isBookingConfirmed = (appt = {}) => ["confirmed", "pre_notice", "completed"].includes(appt.bookingStage) || String(appt.isCompleted) === "true";
-const isBookingUnconfirmed = (appt = {}) => !isBookingConfirmed(appt);
-const isKnownBookingStage = (stage = "") => BOOKING_STAGES.some((item) => item.key === stage);
-
-function normalizeBookingStage(stage = "", appt = {}) {
-  const value = String(stage || "").trim();
-  if (isKnownBookingStage(value)) return value;
-  return String(appt.isCompleted) === "true" || appt.isCompleted === true ? "completed" : "confirmed";
-}
-
 function appointmentMetaFromAppointment(appt = {}) {
   const id = appt.id || appt.appId;
   if (!id) return null;
@@ -420,10 +343,6 @@ function customerDisplay(phone = "", fallbackName = "") {
   const code = customer?.code || "未建檔";
   const name = String(customer?.name || fallbackName || "").trim();
   return name ? `${code} ${name}` : code;
-}
-
-function toDateKey(date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function seedDatabase() {
@@ -820,24 +739,6 @@ async function loadCustomerRecords(customerKey, options = {}) {
   } while (options.all && cursor !== null && records.length < 5000);
   if (db.customers[customerKey]) db.customers[customerKey].records = records;
   return records;
-}
-
-async function fetchApiJson(url, options = {}, timeoutMs = FAST_API_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, {
-      credentials: "same-origin",
-      cache: "no-store",
-      ...options,
-      signal: controller.signal
-    });
-    let payload = null;
-    try { payload = await response.json(); } catch {}
-    return { response, payload };
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 function applyFastCloudData(payload) {
@@ -3533,33 +3434,7 @@ function appointmentRecord(appt) {
 }
 
 function bookingNextActionMeta(appt = {}) {
-  const stage = normalizeBookingStage(appt.bookingStage, appt);
-  const record = appointmentRecord(appt) || {};
-  const hasCollectedPrice = String(appt.collectedPrice || record.collectedPrice || "").trim() !== "";
-  const hasRecordNotes = String(record.notes || "").trim() !== "";
-  if (["inquiry", "candidate_sent", "therapist_match", "customer_confirm"].includes(stage)) {
-    const labels = {
-      inquiry: "整理需求，查時段或給客選",
-      candidate_sent: "等待客人選擇師傅",
-      therapist_match: "確認師傅可接",
-      customer_confirm: "完成顧客確認"
-    };
-    return { key: "match", label: labels[stage], tone: "amber", stage };
-  }
-  if (stage === "confirmed") return { key: "pre_notice", label: "完成行前通知", tone: "violet", stage };
-  if (stage === "pre_notice") return { key: "service_report", label: "填寫服務回報", tone: "indigo", stage };
-  if (stage === "completed" && !hasCollectedPrice) {
-    return { key: "payment_record", label: "補實際回款", tone: "rose", stage };
-  }
-  if (stage === "completed" && !hasRecordNotes) {
-    return { key: "complete", label: "帳務已完成，待補服務紀錄", tone: "teal", stage, reminder: true };
-  }
-  return { key: "complete", label: "已完成，資料完整", tone: "teal", stage };
-}
-
-function bookingUrgencyValue(appt = {}) {
-  const timestamp = new Date(`${appt.date || "9999-12-31"}T${appt.time || "23:59"}:00`).getTime();
-  return Number.isFinite(timestamp) ? timestamp : Number.MAX_SAFE_INTEGER;
+  return bookingNextActionMetaForRecord(appt, appointmentRecord(appt) || {});
 }
 
 function renderDispatch() {
@@ -3795,66 +3670,15 @@ function renderAppointmentDetail() {
 }
 
 function bookingWorkbenchIntroHtml(monthAppts, pendingSelections) {
-  const actionableCount = monthAppts.filter((appt) => bookingNextActionMeta(appt).key !== "complete").length;
-  const tab = (key, icon, label, count = "") => `<button type="button" class="dispatch-view-tab ${activeDispatchPanel === key ? "active" : ""}" data-dispatch-view="${key}" aria-selected="${activeDispatchPanel === key}">${iconHtml(icon)}<span>${label}</span>${count !== "" ? `<b>${count}</b>` : ""}</button>`;
-  return `<section class="card dispatch-command-bar booking-workbench-header">
-    <div class="dispatch-command-main">
-      <div>
-        <span class="ops-section-kicker">預約工作台</span>
-        <h2>先完成今天需要處理的預約</h2>
-        <p>依下一步處理待辦，再查看時段或完整紀錄。</p>
-      </div>
-      <nav class="dispatch-view-tabs" aria-label="預約工作區">
-        ${tab("tasks", "list-checks", "今日待辦", pendingSelections.length + actionableCount)}
-        ${tab("query", "calendar-days", "今日時間表")}
-        ${tab("records", "history", "全部預約", monthAppts.length)}
-      </nav>
-    </div>
-  </section>`;
+  return window.MorganBookingViews.workbenchIntroHtml({ monthAppointments: monthAppts, pendingSelections, activePanel: activeDispatchPanel, nextActionMeta: bookingNextActionMeta, iconHtml });
 }
 
 function bookingCardHtml(appt, tone = "slate") {
-  const nextAction = bookingNextActionMeta(appt);
-  const toneClass = {
-    amber: "border-amber-200 bg-amber-50",
-    teal: "border-teal-200 bg-teal-50",
-    violet: "border-violet-200 bg-violet-50",
-    indigo: "border-indigo-200 bg-indigo-50",
-    rose: "border-rose-200 bg-rose-50",
-    slate: "border-slate-200 bg-white"
-  }[tone] || "border-slate-200 bg-white";
-  return `<button data-open-appt="${esc(appt.id)}" class="w-full rounded-xl border ${toneClass} p-3 text-left transition hover:border-teal-400 hover:bg-teal-50">
-    <div class="flex items-start justify-between gap-3"><span class="font-mono text-sm font-black">${esc(appt.date)} ${esc(appt.time || "--:--")}</span><span class="badge ${bookingStageClass(appt.bookingStage)}">${esc(bookingStageLabel(appt.bookingStage))}</span></div>
-    <div class="mt-2 font-black text-slate-900">${esc(customerDisplay(appt.phone, appt.customerName))}</div>
-    <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs font-bold text-slate-500"><span>${esc(therapistName(appt.therapistId))}</span><span>${esc(courseName(appt.service))}</span><span>${appt.room === "OUT" ? "外出" : `${esc(appt.room || "-")}房`}</span><span>${money(appt.price)}</span></div>
-    <div class="mt-3 rounded-lg bg-white/70 px-3 py-2 text-xs font-black text-slate-700">下一步：${esc(bookingNextAction(appt))}</div>
-  </button>`;
+  return window.MorganBookingViews.bookingCardHtml({ appointment: appt, tone, nextActionMeta: bookingNextActionMeta, stageClass: bookingStageClass, stageLabel: bookingStageLabel, customerDisplay, therapistName, courseName, money, esc });
 }
 
 function bookingStageBoardHtml(monthAppts) {
-  const actionable = monthAppts
-    .map((appt) => ({ appt, action: bookingNextActionMeta(appt) }))
-    .filter((item) => item.action.key !== "complete")
-    .sort((a, b) => bookingUrgencyValue(a.appt) - bookingUrgencyValue(b.appt));
-  const lanes = [
-    { key: "match", title: "待媒合／待確認", desc: "完成客選、媒合與顧客確認", tone: "amber", empty: "目前沒有待媒合或待確認預約" },
-    { key: "pre_notice", title: "待行前通知", desc: "已確認，下一步通知師傅", tone: "violet", empty: "目前沒有待行前通知預約" },
-    { key: "service_report", title: "待服務回報", desc: "通知完成，等待服務結果", tone: "indigo", empty: "目前沒有待服務回報預約" },
-    { key: "payment_record", title: "待回款／補紀錄", desc: "服務完成但資料尚未齊全", tone: "rose", empty: "目前沒有待補資料" }
-  ].map((lane) => ({
-    ...lane,
-    items: actionable.filter((item) => item.action.key === lane.key).map((item) => item.appt)
-  }));
-  return `<div class="mb-3 flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
-    <div><span class="ops-section-kicker">下一步工作看板</span><h3 class="mt-1 text-xl font-black">每筆預約只顯示在一個待辦欄</h3></div>
-    <span class="badge bg-slate-900 text-white">${actionable.length} 筆待處理</span>
-  </div><div id="bookingStageBoard" class="grid scroll-mt-20 gap-4 xl:grid-cols-4">
-    ${lanes.map((lane) => `<section class="card p-4">
-      <div class="mb-3 flex items-start justify-between gap-3"><div><h3 class="font-black">${lane.title}</h3><p class="text-xs font-bold text-slate-500">${lane.desc}</p></div><span class="badge bg-slate-100 text-slate-600">${lane.items.length}</span></div>
-      <div class="space-y-2">${lane.items.slice(0, 6).map((appt) => bookingCardHtml(appt, lane.tone)).join("") || `<p class="rounded-xl bg-slate-50 p-4 text-center text-sm font-bold text-slate-400">${lane.empty}</p>`}</div>
-      ${lane.items.length > 6 ? `<p class="mt-3 text-center text-xs font-black text-slate-400">另有 ${lane.items.length - 6} 筆，請至全部預約查看</p>` : ""}
-    </section>`).join("")}
-  </div>`;
+  return window.MorganBookingViews.bookingStageBoardHtml({ appointments: monthAppts, nextActionMeta: bookingNextActionMeta, urgencyValue: bookingUrgencyValue, renderCard: bookingCardHtml });
 }
 
 function bookingNextAction(appt = {}) {
@@ -3862,22 +3686,7 @@ function bookingNextAction(appt = {}) {
 }
 
 function bookingStageRailHtml(currentStage = "confirmed") {
-  const activeIndex = bookingWorkflowIndex(currentStage);
-  return `<section class="appointment-workflow-rail" aria-label="預約操作流程">
-    <span class="appointment-workflow-title">預約操作流程</span>
-    <div class="appointment-workflow-steps">
-      ${BOOKING_WORKFLOW.map((phase, index) => {
-        const complete = index < activeIndex;
-        const current = index === activeIndex;
-        const state = current ? "進行中" : complete ? "已完成" : "尚未開始";
-        return `<div class="appointment-workflow-step${current ? " is-current" : complete ? " is-complete" : ""}"${current ? ' aria-current="step"' : ""}>
-          <b aria-hidden="true">${complete ? "✓" : current ? "●" : "○"}</b>
-          <strong>${esc(phase.label)}</strong>
-          <small>${state}</small>
-        </div>`;
-      }).join("")}
-    </div>
-  </section>`;
+  return window.MorganBookingViews.bookingStageRailHtml({ currentStage, workflow: BOOKING_WORKFLOW, workflowIndex: bookingWorkflowIndex, esc });
 }
 
 function appointmentEditIconHtml() {
@@ -3986,15 +3795,16 @@ function renderNoticeTemplate(template, appt = {}) {
 }
 
 function renderAppointmentListPage(appts) {
-  const monthSet = new Set(monthDates.map((d) => d.key));
-  const monthAppts = appts.filter((a) => monthSet.has(a.date));
   const pendingSelections = clientSelectionList("pending");
   const activeDate = dispatchQueryState.date || selectedOpsDate || todayKey();
-  const dayAppts = appts.filter((a) => a.date === activeDate);
-  const visibleAppts = appointmentRecordScope === "month" ? monthAppts : dayAppts;
-  const visibleConfirmed = visibleAppts.filter(isBookingConfirmed);
-  const visibleUnconfirmed = visibleAppts.filter(isBookingUnconfirmed);
-  const visibleFollowup = visibleAppts.filter((a) => a.bookingStage === "pre_notice" || (String(a.isCompleted) === "true" && (!String(a.collectedPrice || "").trim() || !String(appointmentRecord(a)?.notes || "").trim())));
+  const { monthAppointments: monthAppts, dayAppointments: dayAppts, visibleAppointments: visibleAppts, visibleConfirmed, visibleUnconfirmed, visibleFollowup } = buildBookingListModel({
+    appointments: appts,
+    monthDateKeys: monthDates.map((date) => date.key),
+    pendingSelections,
+    activeDate,
+    scope: appointmentRecordScope,
+    recordForAppointment: appointmentRecord
+  });
   const listTitle = appointmentRecordScope === "month" ? "完整預約清單" : `${activeDate} 預約清單`;
   const listDesc = appointmentRecordScope === "month" ? "目前顯示本月所有預約；可切回指定日期，避免日常操作資訊過多。" : "依上方日期查看當日全部預約；需要核對時再展開完整清單。";
   const toggleText = appointmentRecordScope === "month" ? "只看當日" : "完整清單";
@@ -4113,15 +3923,17 @@ function appointmentInlineEditorHtml(appt, scope, record = {}) {
 }
 
 function renderAppointmentDetailView(appt, allAppts) {
-  const record = appointmentRecord(appt) || {};
-  const customer = db.customers[appt.phone] || {};
-  const cut = COURSE_CATALOG[appt.service]?.therapistCut || 0;
-  const storeAmount = remittanceDueFor(appt);
+  const { record, customer, therapistCut: cut, remittanceDue: storeAmount, endTime: end, roomLabel: room, editScope } = buildBookingDetailModel({
+    appointment: appt,
+    record: appointmentRecord(appt) || {},
+    customer: db.customers[appt.phone] || {},
+    course: COURSE_CATALOG[appt.service] || {},
+    remittanceDue: remittanceDueFor(appt),
+    editMode: appointmentDetailEditMode,
+    editSection: appointmentDetailEditSection
+  });
   const customerCode = customer.code || customerDisplay(appt.phone, appt.customerName);
   const item = (label, value) => `<div class="appointment-info-item"><span>${label}</span><strong>${value}</strong></div>`;
-  const end = minsToTime(timeToMinutes(appt.time) + Number(appt.duration || 60));
-  const room = appt.room === "OUT" ? "外出" : `${appt.room || "R"}房`;
-  const editScope = appointmentDetailEditMode ? (appointmentDetailEditSection || "all") : "";
   const editButton = (section, label) => `<button type="button" class="appointment-section-edit" data-edit-appointment data-edit-section="${section}" aria-label="編輯${label}" title="編輯${label}">${appointmentEditIconHtml()}<span class="sr-only">編輯${label}</span></button>`;
   const remittanceDetail = [
     appt.remittanceMethod ? `方式：${esc(appt.remittanceMethod === "現金回帳" ? "現金" : appt.remittanceMethod)}` : "",

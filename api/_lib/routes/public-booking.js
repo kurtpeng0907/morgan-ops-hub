@@ -1,11 +1,11 @@
 "use strict";
 
-const { callAppsScript } = require("./_lib/apps-script");
-const { dataSourceMode } = require("./_lib/database");
-const { requestId, readJson, sendJson, logRequest, methodNotAllowed, errorPayload } = require("./_lib/http");
-const sqlRepository = require("./_lib/sql-repository");
-const { sendPublicBookingAlert } = require("./_lib/line-staff-reminders");
-const { publicSnapshot, validateSubmission, selectionRecord } = require("./_lib/public-booking");
+const { callAppsScript } = require("../apps-script");
+const { dataSourceMode } = require("../database");
+const { requestId, readJson, sendJson, logRequest, methodNotAllowed, errorPayload } = require("../http");
+const sqlRepository = require("../sql-repository");
+const { sendPublicBookingAlert } = require("../line-staff-reminders");
+const { publicSnapshot, validateSubmission, selectionRecord } = require("../public-booking");
 
 function existingPublicSelection(data, requestIdValue) {
   const raw = data?.customers?.[`SYS_CLIENT_SELECTION_${String(requestIdValue || "")}`]?.notes;

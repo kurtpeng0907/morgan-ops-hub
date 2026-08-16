@@ -1,12 +1,12 @@
 "use strict";
 
-const { callAppsScript } = require("./_lib/apps-script");
-const { dataSourceMode } = require("./_lib/database");
-const { requestId, readJson, sendJson, logRequest, methodNotAllowed, errorPayload } = require("./_lib/http");
-const { verifySession } = require("./_lib/session");
-const sqlRepository = require("./_lib/sql-repository");
-const { assertActionAllowed } = require("./_lib/policy");
-const { assertBookingTransition } = require("./_lib/domain-contracts");
+const { callAppsScript } = require("../apps-script");
+const { dataSourceMode } = require("../database");
+const { requestId, readJson, sendJson, logRequest, methodNotAllowed, errorPayload } = require("../http");
+const { verifySession } = require("../session");
+const sqlRepository = require("../sql-repository");
+const { assertActionAllowed } = require("../policy");
+const { assertBookingTransition } = require("../domain-contracts");
 
 const ALLOWED_ACTIONS = new Set([
   "batch", "saveSchedule", "addTherapist", "updatePin", "deleteTherapist",

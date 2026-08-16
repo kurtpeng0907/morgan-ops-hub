@@ -1,8 +1,8 @@
 "use strict";
 
 const crypto = require("node:crypto");
-const { bindStaffGroup, replyLine } = require("../_lib/line-staff-reminders");
-const { requestId, sendJson, logRequest, methodNotAllowed } = require("../_lib/http");
+const { bindStaffGroup, replyLine } = require("../line-staff-reminders");
+const { requestId, sendJson, logRequest, methodNotAllowed } = require("../http");
 
 exports.config = { api: { bodyParser: false } };
 

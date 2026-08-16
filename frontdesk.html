@@ -513,7 +513,9 @@
                 id,
                 nickname: displayName,
                 name: displayName,
-                pin: sheetText(therapist.pin || "")
+                // SQL credentials are strings. Do not use the Sheets apostrophe
+                // escape, which changes leading-zero PIN semantics.
+                pin: cleanPin(therapist.pin || "")
             };
         };
         const esc = (value = "") => String(value ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
@@ -522,8 +524,8 @@
             therapist.height ? `${therapist.height}cm` : "",
             therapist.weight ? `${therapist.weight}kg` : ""
         ].filter(Boolean).join(" / ");
-        const ownApprovals = () => Object.values(globalDB.approvals || {})
-            .filter((item) => item.therapistId === currentUserId)
+        const ownApprovals = (type = "") => Object.values(globalDB.approvals || {})
+            .filter((item) => item.therapistId === currentUserId && (!type || item.type === type))
             .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
 
         // 載入最新的課程價格與抽成模型
@@ -856,6 +858,9 @@
 
         async function createApprovalRequest(type, data, before = {}) {
             if (!currentUserId) throw new Error("尚未登入");
+            const existing = ownApprovals(type).find((item) => item.status === "pending"
+                && JSON.stringify(item.data || {}) === JSON.stringify(data || {}));
+            if (existing) return { ...existing, duplicate: true };
             const id = `REQ-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`.toUpperCase();
             const request = {
                 id,
@@ -883,15 +888,20 @@
                 },
                 "送審資料"
             );
-            renderApprovalStatusBlocks();
+            const confirmed = globalDB.approvals?.[id];
+            if (!confirmed || confirmed.therapistId !== currentUserId) {
+                throw new Error("送審資料未能安全讀回");
+            }
+            renderApprovalStatusBlocks(type);
             return request;
         }
 
-        function renderApprovalStatusBlocks() {
-            const list = ownApprovals().slice(0, 8);
+        function renderApprovalStatusBlocks(type = "") {
+            const list = ownApprovals(type).slice(0, 5);
+            const title = type ? `${approvalTypeLabel(type)}狀態` : "審核狀態";
             const html = list.length ? `
                 <div class="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
-                    <h4 class="mb-3 text-sm font-black text-zinc-800">審核狀態</h4>
+                    <h4 class="mb-3 text-sm font-black text-zinc-800">${title}</h4>
                     <div class="space-y-2">${list.map((item) => {
                         const color = item.status === "approved" ? "bg-teal-50 text-teal-700" : item.status === "rejected" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700";
                         return `<div class="flex flex-col justify-between gap-1 rounded-xl bg-white px-4 py-3 text-sm font-bold sm:flex-row sm:items-center">
@@ -902,8 +912,18 @@
                 </div>` : `<div class="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 p-4 text-sm font-bold text-zinc-400">目前沒有送審紀錄。</div>`;
             const profile = document.getElementById('profileApprovalStatus');
             const schedule = document.getElementById('scheduleApprovalStatus');
-            if (profile) profile.innerHTML = html;
-            if (schedule) schedule.innerHTML = html;
+            if (profile && (!type || type === "profile")) profile.innerHTML = type === "profile" ? html : renderApprovalStatusHtml("profile");
+            if (schedule && (!type || type === "schedule")) schedule.innerHTML = type === "schedule" ? html : renderApprovalStatusHtml("schedule");
+        }
+
+        function renderApprovalStatusHtml(type) {
+            const list = ownApprovals(type).slice(0, 5);
+            const title = `${approvalTypeLabel(type)}狀態`;
+            if (!list.length) return `<div class="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 p-4 text-sm font-bold text-zinc-400">目前沒有${approvalTypeLabel(type)}送審紀錄。</div>`;
+            return `<div class="rounded-2xl border border-zinc-200 bg-zinc-50 p-4"><h4 class="mb-3 text-sm font-black text-zinc-800">${title}</h4><div class="space-y-2">${list.map((item) => {
+                const color = item.status === "approved" ? "bg-teal-50 text-teal-700" : item.status === "rejected" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700";
+                return `<div class="flex flex-col justify-between gap-1 rounded-xl bg-white px-4 py-3 text-sm font-bold sm:flex-row sm:items-center"><span>${new Date(item.createdAt).toLocaleString('zh-TW', { hour12: false })}</span><span class="rounded-full px-3 py-1 text-xs ${color}">${approvalStatusLabel(item.status)}</span></div>`;
+            }).join("")}</div></div>`;
         }
 
         // ================= 雙模態視圖切換 =================
@@ -970,8 +990,8 @@
                 const btn = event.currentTarget.querySelector('button');
                 btn.disabled = true; btn.innerText = "送審中...";
                 try {
-                    await createApprovalRequest("profile", collectProfile(event.currentTarget), profile);
-                    showSnackbar("✅ 人事資料變更已送出審核。", "success");
+                    const request = await createApprovalRequest("profile", collectProfile(event.currentTarget), profile);
+                    showSnackbar(request.duplicate ? "ℹ️ 相同人事資料已在待審核，未重複送出。" : "✅ 人事資料變更已送出審核。", request.duplicate ? "info" : "success");
                 } catch(e) {
                     showSnackbar("❌ 送審失敗，請稍後再試。", "error");
                 } finally {
@@ -1024,8 +1044,8 @@
                 if (n === tabName) section.classList.remove('hidden');
                 else section.classList.add('hidden');
             });
-            if(tabName === 'profile') { renderApprovalStatusBlocks(); renderMyProfile(); }
-            if(tabName === 'schedule') renderApprovalStatusBlocks();
+            if(tabName === 'profile') { renderApprovalStatusBlocks("profile"); renderMyProfile(); }
+            if(tabName === 'schedule') renderApprovalStatusBlocks("schedule");
             if(tabName === 'appointments') renderMyAppointments();
         };
 
@@ -1189,8 +1209,8 @@
             try {
                 const before = {};
                 weekDays.forEach(d => { before[d.key] = (globalDB.schedules[currentUserId] || {})[d.key] || "休假"; });
-                await createApprovalRequest("schedule", payloadData, before);
-                showSnackbar("✅ 班表變更已送出審核。", "success");
+                const request = await createApprovalRequest("schedule", payloadData, before);
+                showSnackbar(request.duplicate ? "ℹ️ 相同班表已在待審核，未重複送出。" : "✅ 班表變更已送出審核。", request.duplicate ? "info" : "success");
             } catch (e) {
                 showSnackbar("❌ 送審失敗，請檢查網路連線。", "error");
             } finally {

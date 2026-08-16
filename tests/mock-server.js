@@ -71,17 +71,17 @@ global.fetch = async function mockAwareFetch(url, options = {}) {
 };
 
 const handlers = {
-  "/api/session": require("../api/session"),
-  "/api/bootstrap": require("../api/bootstrap"),
-  "/api/full-data": require("../api/full-data"),
-  "/api/cloud": require("../api/cloud"),
-  "/api/customer-records": require("../api/customer-records"),
-  "/api/mutation-status": require("../api/mutation-status"),
-  "/api/service-records-audit": require("../api/service-records-audit"),
-  "/api/logout": require("../api/logout"),
-  "/api/performance": require("../api/performance")
-  ,"/api/public-booking": require("../api/public-booking")
-  ,"/api/public-schedule": require("../api/public-schedule")
+  "/api/session": require("../api/_lib/routes/session"),
+  "/api/bootstrap": require("../api/_lib/routes/bootstrap"),
+  "/api/full-data": require("../api/_lib/routes/full-data"),
+  "/api/cloud": require("../api/_lib/routes/cloud"),
+  "/api/customer-records": require("../api/_lib/routes/customer-records"),
+  "/api/mutation-status": require("../api/_lib/routes/mutation-status"),
+  "/api/service-records-audit": require("../api/_lib/routes/service-records-audit"),
+  "/api/logout": require("../api/_lib/routes/logout"),
+  "/api/performance": require("../api/_lib/routes/performance")
+  ,"/api/public-booking": require("../api/_lib/routes/public-booking")
+  ,"/api/public-schedule": require("../api/_lib/routes/public-schedule")
 };
 
 function contentType(file) {

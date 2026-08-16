@@ -1,8 +1,8 @@
 "use strict";
 
-const { callAppsScript } = require("./_lib/apps-script");
-const { requestId, sendJson, logRequest, methodNotAllowed } = require("./_lib/http");
-const { verifySession } = require("./_lib/session");
+const { callAppsScript } = require("../apps-script");
+const { requestId, sendJson, logRequest, methodNotAllowed } = require("../http");
+const { verifySession } = require("../session");
 
 module.exports = async function handler(req, res) {
   if (req.method !== "GET") return methodNotAllowed(res, ["GET"]);

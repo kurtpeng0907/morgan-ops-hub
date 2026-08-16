@@ -1,10 +1,10 @@
 "use strict";
 
-const { callAppsScript } = require("./_lib/apps-script");
-const { dataSourceMode } = require("./_lib/database");
-const { requestId, sendJson, logRequest, methodNotAllowed } = require("./_lib/http");
-const { verifySession } = require("./_lib/session");
-const sqlRepository = require("./_lib/sql-repository");
+const { callAppsScript } = require("../apps-script");
+const { dataSourceMode } = require("../database");
+const { requestId, sendJson, logRequest, methodNotAllowed } = require("../http");
+const { verifySession } = require("../session");
+const sqlRepository = require("../sql-repository");
 
 module.exports = async function handler(req, res) {
   if (req.method !== "GET") return methodNotAllowed(res, ["GET"]);
