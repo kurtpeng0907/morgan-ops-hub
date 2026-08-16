@@ -2,7 +2,7 @@
   "regions": ["hkg1"],
   "crons": [
     { "path": "/api/cron/line-daily", "schedule": "0 1 * * *" },
-    { "path": "/api/cron/line-upcoming", "schedule": "*/15 * * * *" }
+    { "path": "/api/cron/line-upcoming", "schedule": "0 2 * * *" }
   ],
   "rewrites": [
     { "source": "/api/session", "destination": "/api/ops?endpoint=session" },

@@ -809,10 +809,10 @@ test("consolidated Vercel routers preserve existing URLs behind three function e
   assert.equal(config.rewrites.find((item) => item.source === "/api/line/webhook").destination, "/api/line?endpoint=webhook");
 });
 
-test("Vercel schedules LINE daily digest at 09:00 Taiwan and checks upcoming reminders every 15 minutes", () => {
+test("Vercel schedules LINE daily digest at 09:00 Taiwan and checks upcoming reminders daily at 10:00 Taiwan", () => {
   const config = JSON.parse(readFileSync(resolve(__dirname, "../vercel.json"), "utf8"));
   assert.deepEqual(config.crons, [
     { path: "/api/cron/line-daily", schedule: "0 1 * * *" },
-    { path: "/api/cron/line-upcoming", schedule: "*/15 * * * *" }
+    { path: "/api/cron/line-upcoming", schedule: "0 2 * * *" }
   ]);
 });
