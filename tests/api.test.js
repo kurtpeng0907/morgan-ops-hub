@@ -724,6 +724,8 @@ test("public frontdesk schedule keeps an explicit bounded date range", () => {
 test("frontdesk stays on scoped SQL APIs and never falls back to Apps Script or admin full-data", () => {
   const source = readFileSync(resolve(__dirname, "../frontdesk.html"), "utf8");
   assert.match(source, /\/api\/public-schedule/);
+  assert.match(source, /const mutationId = String\(payload\?\.mutationId \|\| `FD-/);
+  assert.match(source, /body: JSON\.stringify\(\{ \.\.\.payload, mutationId \}\)/);
   assert.match(source, /\/api\/schedules\?from=/);
   assert.match(source, /\/api\/appointments\?from=/);
   assert.doesNotMatch(source, /script\.google\.com/);

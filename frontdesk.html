@@ -783,12 +783,16 @@
 
         async function postToDatabase(payload) {
             if (fastFrontdeskSession) {
+                // SQL mutations are idempotent only when the browser supplies
+                // one stable mutation ID for the write attempt. Approval
+                // records use this same contract as every other staff write.
+                const mutationId = String(payload?.mutationId || `FD-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`);
                 const res = await fetch('/api/cloud', {
                     method: 'POST',
                     credentials: 'same-origin',
                     cache: 'no-store',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify({ ...payload, mutationId })
                 });
                 const result = await res.json();
                 if (!res.ok || !result.success || result.verified !== true) throw new Error(result.error || '雲端未確認寫入');
