@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Modern Morgan｜預約試作</title>
+<style>
+:root{--paper:#f6f2ea;--paper2:#ece7dd;--ink:#252922;--muted:#70766c;--sage:#9aa78d;--sage2:#dbe1d4;--olive:#57614d;--sand:#d8c8aa;--line:rgba(37,41,34,.13);--white:#fffdf9;--shadow:0 18px 50px rgba(45,50,40,.08)}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--paper);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC","PingFang TC","Helvetica Neue",sans-serif;line-height:1.5}.wrap{width:min(1120px,100%);margin:auto;padding:18px 16px 110px}.topbar{display:flex;align-items:center;justify-content:space-between;padding:10px 2px 20px}.brand{font-weight:800;letter-spacing:.17em;font-size:13px}.prototype{font-size:12px;color:var(--olive);background:var(--sage2);padding:7px 10px;border-radius:999px}.hero{background:linear-gradient(145deg,#f0ece2,#dde3d5);border:1px solid var(--line);border-radius:28px;padding:30px 24px;min-height:260px;display:flex;flex-direction:column;justify-content:flex-end;box-shadow:var(--shadow)}.eyebrow{font-size:12px;letter-spacing:.15em;font-weight:800;color:var(--olive);text-transform:uppercase}.hero h1{font-family:Georgia,"Times New Roman",serif;font-weight:500;font-size:clamp(34px,9vw,62px);line-height:.98;letter-spacing:-.035em;margin:10px 0 16px;max-width:720px}.hero p{margin:0;color:#596154;max-width:600px;font-size:15px}.progress{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:18px 0 22px}.progress span{height:5px;border-radius:999px;background:#d9d6ce}.progress span.on{background:var(--olive)}.section{background:rgba(255,253,249,.82);border:1px solid var(--line);border-radius:24px;padding:22px 18px;margin-top:14px}.sectionHead{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:16px}.sectionHead small{font-size:11px;letter-spacing:.12em;font-weight:800;color:var(--olive)}h2{margin:4px 0 0;font-family:Georgia,"Times New Roman",serif;font-size:27px;font-weight:500;letter-spacing:-.02em}.muted{color:var(--muted);font-size:13px}.grid{display:grid;gap:10px}.needGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.cardBtn{border:1px solid var(--line);background:var(--white);border-radius:18px;padding:17px 15px;text-align:left;color:var(--ink);min-height:94px;transition:.18s ease;cursor:pointer}.cardBtn strong{display:block;font-size:15px;margin-bottom:5px}.cardBtn span{display:block;color:var(--muted);font-size:12px}.cardBtn.selected{background:var(--olive);color:white;border-color:var(--olive);transform:translateY(-1px)}.cardBtn.selected span{color:rgba(255,255,255,.76)}.serviceCard{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;min-height:auto}.serviceMeta{text-align:right}.serviceMeta b{display:block}.serviceMeta small{color:var(--muted)}.dateRow{display:grid;grid-template-columns:1fr;gap:10px}.input{width:100%;border:1px solid var(--line);background:var(--white);border-radius:16px;padding:15px 14px;font:inherit;color:var(--ink);outline:none}.input:focus{border-color:var(--olive);box-shadow:0 0 0 3px rgba(87,97,77,.09)}.slotGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.slot{border:1px solid var(--line);background:var(--white);border-radius:14px;padding:12px 4px;font-weight:700;cursor:pointer}.slot.selected{background:var(--olive);color:white;border-color:var(--olive)}.therapistGrid{display:grid;grid-auto-flow:column;grid-auto-columns:80%;overflow-x:auto;gap:11px;scroll-snap-type:x mandatory;padding-bottom:4px}.therapist{scroll-snap-align:start;border:1px solid var(--line);border-radius:20px;background:var(--white);padding:12px;cursor:pointer}.portrait{height:185px;border-radius:14px;background:linear-gradient(160deg,#cbd2c2,#89957c);display:flex;align-items:flex-end;padding:14px;color:white;font-family:Georgia,"Times New Roman",serif;font-size:28px}.therapist h3{margin:12px 0 4px;font-size:16px}.therapist p{margin:0;color:var(--muted);font-size:12px}.therapist.selected{outline:2px solid var(--olive);outline-offset:-2px}.formGrid{display:grid;gap:10px}.summary{background:var(--sage2);border-radius:18px;padding:16px;margin-top:14px;display:grid;gap:5px}.summary strong{font-size:16px}.ctaBar{position:fixed;left:0;right:0;bottom:0;padding:12px 16px max(12px,env(safe-area-inset-bottom));background:rgba(246,242,234,.92);backdrop-filter:blur(16px);border-top:1px solid var(--line);z-index:20}.ctaInner{width:min(1120px,100%);margin:auto;display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center}.ctaCopy small{display:block;color:var(--muted)}.primary{border:0;border-radius:16px;background:var(--olive);color:white;padding:15px 20px;font-weight:800;font-size:15px;cursor:pointer}.primary:disabled{opacity:.35;cursor:not-allowed}.success{display:none;text-align:center;padding:46px 20px}.success.show{display:block}.successMark{width:58px;height:58px;margin:0 auto 16px;border-radius:50%;display:grid;place-items:center;background:var(--sage2);font-size:24px}.success h2{font-size:34px}.success p{color:var(--muted);max-width:520px;margin:10px auto}.prototypeNote{margin-top:20px;padding:12px 14px;border:1px dashed rgba(87,97,77,.35);border-radius:14px;color:var(--olive);font-size:12px;background:rgba(219,225,212,.35)}
+@media(min-width:760px){.wrap{padding:28px 28px 120px}.hero{min-height:360px;padding:44px}.layout{display:grid;grid-template-columns:1.1fr .9fr;gap:16px}.needGrid{grid-template-columns:repeat(3,1fr)}.slotGrid{grid-template-columns:repeat(6,1fr)}.therapistGrid{grid-auto-flow:unset;grid-template-columns:repeat(3,1fr);overflow:visible}.portrait{height:210px}.section{padding:26px}.ctaBar{padding-left:28px;padding-right:28px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="topbar"><div class="brand">MODERN MORGAN</div><div class="prototype">Prototype · 不寫入正式資料</div></header>
+  <section class="hero">
+    <div class="eyebrow">Modern care for modern men</div>
+    <h1>今天，讓身體慢下來。</h1>
+    <p>從你的狀態出發，找到適合的服務、時間與師傅。這是品牌網站預約流程試作，不會建立正式預約。</p>
+  </section>
+  <div class="progress"><span class="on"></span><span></span><span></span><span></span><span></span></div>
+
+  <section class="section" id="needSection">
+    <div class="sectionHead"><div><small>01 · NEED</small><h2>今天你需要什麼？</h2></div><span class="muted">先從身體感受開始</span></div>
+    <div class="grid needGrid" id="needs"></div>
+  </section>
+
+  <section class="section" id="serviceSection">
+    <div class="sectionHead"><div><small>02 · SERVICE</small><h2>適合你的照護</h2></div><span class="muted">依需求推薦</span></div>
+    <div class="grid" id="services"></div>
+  </section>
+
+  <div class="layout">
+    <section class="section" id="timeSection">
+      <div class="sectionHead"><div><small>03 · TIME</small><h2>選擇日期與時間</h2></div></div>
+      <div class="dateRow"><input class="input" id="date" type="date"><div class="slotGrid" id="slots"></div></div>
+    </section>
+
+    <section class="section" id="therapistSection">
+      <div class="sectionHead"><div><small>04 · THERAPIST</small><h2>選擇服務師傅</h2></div><span class="muted">試作名單</span></div>
+      <div class="therapistGrid" id="therapists"></div>
+    </section>
+  </div>
+
+  <section class="section" id="contactSection">
+    <div class="sectionHead"><div><small>05 · CONTACT</small><h2>留下聯絡方式</h2></div></div>
+    <div class="formGrid">
+      <input class="input" id="name" placeholder="姓名（選填）" autocomplete="name">
+      <input class="input" id="contact" placeholder="手機或 LINE ID（試作，不會送出）" autocomplete="tel">
+      <textarea class="input" id="note" rows="3" placeholder="希望加強的部位、力道或其他需求（選填）"></textarea>
+    </div>
+    <div class="summary" id="summary"><span class="muted">尚未完成選擇</span><strong>請依序選擇需求、服務、時間與師傅</strong></div>
+    <div class="prototypeNote">此頁目前只驗證品牌網站的預約體驗。沒有呼叫 /api/public-booking、沒有寫入 Neon／Apps Script，也沒有串接 LINE。</div>
+  </section>
+
+  <section class="section success" id="success">
+    <div class="successMark">✓</div>
+    <small class="eyebrow">Prototype complete</small>
+    <h2>預約流程試作完成</h2>
+    <p>這只是前台體驗示意，沒有建立任何正式預約，也沒有通知 Morgan 或 LINE。</p>
+    <button class="primary" id="restart">重新體驗</button>
+  </section>
+</div>
+
+<div class="ctaBar" id="ctaBar"><div class="ctaInner"><div class="ctaCopy"><strong id="ctaTitle">開始選擇</strong><small id="ctaSub">完成五個步驟後即可預覽送出狀態</small></div><button class="primary" id="submit" disabled>預覽送出</button></div></div>
+
+<script>
+(()=>{
+const needs=[
+  {id:'relax',title:'想放鬆一下',desc:'舒緩日常累積的緊繃'},
+  {id:'neck',title:'肩頸很緊',desc:'久坐、工作後的肩背疲勞'},
+  {id:'deep',title:'需要深層處理',desc:'偏重力道與較明確的肌群處理'},
+  {id:'recovery',title:'運動後恢復',desc:'活動後的伸展與恢復'},
+  {id:'reset',title:'整體重新整理',desc:'從全身狀態開始慢慢調整'},
+  {id:'unsure',title:'還不知道怎麼選',desc:'先看推薦，再決定'}
+];
+const services=[
+  {id:'C90',title:'深層舒緩 90',desc:'肩背與全身深層處理',mins:90,price:2500,for:['neck','deep','reset']},
+  {id:'A60',title:'全身放鬆 60',desc:'節奏柔和、適合第一次體驗',mins:60,price:1800,for:['relax','unsure']},
+  {id:'REC90',title:'Recovery 90',desc:'伸展、活動度與運動後恢復',mins:90,price:2600,for:['recovery','reset']}
+];
+const therapists=[
+  {id:'N',name:'Noah',tags:'深層舒緩 · 肩背 · 偏重'},
+  {id:'D',name:'迪恩',tags:'全身放鬆 · 穩定節奏'},
+  {id:'H',name:'翰',tags:'Recovery · 伸展 · 運動恢復'}
+];
+const times=['15:00','15:30','16:30','18:00','19:30','20:00','21:00','22:00'];
+const state={need:'',service:'',time:'',therapist:'',date:''};
+const $=id=>document.getElementById(id);
+const fmt=n=>Number(n).toLocaleString('zh-TW');
+function today(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
+function renderNeeds(){ $('needs').innerHTML=needs.map(n=>`<button class="cardBtn ${state.need===n.id?'selected':''}" data-need="${n.id}"><strong>${n.title}</strong><span>${n.desc}</span></button>`).join(''); document.querySelectorAll('[data-need]').forEach(b=>b.onclick=()=>{state.need=b.dataset.need; if(state.service && !services.find(s=>s.id===state.service)?.for.includes(state.need)) state.service=''; renderAll();}); }
+function orderedServices(){return [...services].sort((a,b)=>Number(b.for.includes(state.need))-Number(a.for.includes(state.need)))}
+function renderServices(){ $('services').innerHTML=orderedServices().map(s=>`<button class="cardBtn serviceCard ${state.service===s.id?'selected':''}" data-service="${s.id}"><span><strong>${s.title}</strong><span>${s.desc}${state.need&&s.for.includes(state.need)?' · 為你推薦':''}</span></span><span class="serviceMeta"><b>${s.mins} MIN</b><small>$${fmt(s.price)}</small></span></button>`).join(''); document.querySelectorAll('[data-service]').forEach(b=>b.onclick=()=>{state.service=b.dataset.service;renderAll();}); }
+function renderSlots(){ $('slots').innerHTML=times.map(t=>`<button class="slot ${state.time===t?'selected':''}" data-time="${t}">${t}</button>`).join(''); document.querySelectorAll('[data-time]').forEach(b=>b.onclick=()=>{state.time=b.dataset.time;renderAll();}); }
+function renderTherapists(){ $('therapists').innerHTML=therapists.map(t=>`<article class="therapist ${state.therapist===t.id?'selected':''}" data-therapist="${t.id}"><div class="portrait">${t.name}</div><h3>${t.name}</h3><p>${t.tags}</p></article>`).join(''); document.querySelectorAll('[data-therapist]').forEach(b=>b.onclick=()=>{state.therapist=b.dataset.therapist;renderAll();}); }
+function renderSummary(){const service=services.find(s=>s.id===state.service),therapist=therapists.find(t=>t.id===state.therapist);const complete=state.need&&service&&state.date&&state.time&&therapist; $('summary').innerHTML=complete?`<span class="muted">${state.date} · ${state.time}</span><strong>${service.title}｜${therapist.name}</strong><span class="muted">NT$ ${fmt(service.price)} · ${service.mins} 分鐘</span>`:'<span class="muted">尚未完成選擇</span><strong>請依序選擇需求、服務、時間與師傅</strong>'; $('submit').disabled=!complete; $('ctaTitle').textContent=complete?`${service.title} · ${state.time}`:'開始選擇'; $('ctaSub').textContent=complete?`${therapist.name}｜${state.date}`:'完成五個步驟後即可預覽送出狀態'; const count=[state.need,state.service,state.time,state.therapist,$('contact').value.trim()].filter(Boolean).length; document.querySelectorAll('.progress span').forEach((el,i)=>el.classList.toggle('on',i<Math.max(1,count))); }
+function renderAll(){renderNeeds();renderServices();renderSlots();renderTherapists();renderSummary();}
+$('date').min=today();$('date').value=today();state.date=today();$('date').onchange=e=>{state.date=e.target.value;renderSummary();};$('contact').oninput=renderSummary;$('name').oninput=renderSummary;$('note').oninput=renderSummary;
+$('submit').onclick=()=>{if($('submit').disabled)return;['needSection','serviceSection','timeSection','therapistSection','contactSection'].forEach(id=>$(id).style.display='none');$('success').classList.add('show');$('ctaBar').style.display='none';window.scrollTo({top:0,behavior:'smooth'});};
+$('restart').onclick=()=>{state.need=state.service=state.time=state.therapist='';$('contact').value='';$('name').value='';$('note').value='';['needSection','serviceSection','timeSection','therapistSection','contactSection'].forEach(id=>$(id).style.display='block');$('success').classList.remove('show');$('ctaBar').style.display='block';renderAll();};
+renderAll();
+})();
+</script>
+</body>
+</html>
