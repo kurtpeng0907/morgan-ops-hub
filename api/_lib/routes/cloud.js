@@ -1,7 +1,7 @@
 "use strict";
 
 const { callAppsScript } = require("../apps-script");
-const { dataSourceMode } = require("../database");
+const { dataSourceMode, sqlClient } = require("../database");
 const { requestId, readJson, sendJson, logRequest, methodNotAllowed, errorPayload } = require("../http");
 const { verifySession } = require("../session");
 const sqlRepository = require("../sql-repository");
@@ -22,6 +22,27 @@ function flattenActions(action, data) {
   if (action !== "batch") return [{ action, data: data || {} }];
   const nested = Array.isArray(data?.actions) ? data.actions : [];
   return nested.flatMap((item) => flattenActions(String(item?.action || ""), item?.data || {}));
+}
+
+async function preserveTherapistPins(action, data) {
+  const copy = JSON.parse(JSON.stringify(data || {}));
+  const items = flattenActions(action, copy);
+  const sql = sqlClient();
+  for (const item of items) {
+    if (item.action !== "addTherapist") continue;
+    const itemData = item.data || {};
+    if (String(itemData.pin || "").trim() || itemData.pinHash) continue;
+    const therapistId = String(itemData.id || itemData.therapistId || "").trim();
+    if (!therapistId) continue;
+    const rows = await sql`
+      SELECT pin_hash FROM users
+      WHERE account_id = ${therapistId} AND role = 'therapist'
+      LIMIT 1
+    `;
+    if (rows[0]?.pin_hash) itemData.pinHash = String(rows[0].pin_hash);
+    else itemData.pin = "0000";
+  }
+  return copy;
 }
 
 function therapistOwnsWrite(session, action, data) {
@@ -96,7 +117,8 @@ module.exports = async function handler(req, res) {
     if (mutationId.length < 6 || mutationId.length > 120) return sendJson(res, 400, errorPayload(Object.assign(new Error("invalid_mutation_id"), { code: "invalid_mutation_id" }), id));
     if (dataSourceMode() === "sql") {
       const sqlStartedAt = Date.now();
-      const result = await sqlRepository.applyMutation(session, mutationId, action, body.data || {});
+      const mutationData = await preserveTherapistPins(action, body.data || {});
+      const result = await sqlRepository.applyMutation(session, mutationId, action, mutationData);
       const sqlMs = Date.now() - sqlStartedAt;
       const response = { ...result, requestId: id };
       const bytes = Buffer.byteLength(JSON.stringify(response));
@@ -129,3 +151,4 @@ module.exports = async function handler(req, res) {
 
 module.exports.therapistOwnsWrite = therapistOwnsWrite;
 module.exports.validateBookingCommands = validateBookingCommands;
+module.exports.preserveTherapistPins = preserveTherapistPins;
