@@ -15,6 +15,7 @@ const ALLOWED_ACTIONS = new Set([
 const THERAPIST_ACTIONS = new Set(["batch", "saveSchedule", "addAppointment", "saveCustomer", "saveServiceRecord"]);
 const APPROVAL_PREFIX = "SYS_APPROVAL_";
 const APPOINTMENT_META_PREFIX = "SYS_APPT_META_";
+const PIN_ACTIONS = new Set(["addTherapist", "updatePin", "saveAdmin"]);
 
 function flattenActions(action, data) {
   if (action !== "batch") return [{ action, data: data || {} }];
@@ -25,9 +26,13 @@ function flattenActions(action, data) {
 function withDefaultTherapistPin(action, data) {
   const copy = JSON.parse(JSON.stringify(data || {}));
   flattenActions(action, copy).forEach((item) => {
-    if (item.action !== "addTherapist") return;
     const itemData = item.data || {};
-    if (!String(itemData.pin || "").trim() && !itemData.pinHash) itemData.pin = "0000";
+    if (PIN_ACTIONS.has(item.action) && itemData.pin !== undefined) {
+      itemData.pin = String(itemData.pin || "").replace(/^'/, "").trim();
+    }
+    if (item.action === "addTherapist" && !String(itemData.pin || "").trim() && !itemData.pinHash) {
+      itemData.pin = "0000";
+    }
   });
   return copy;
 }
