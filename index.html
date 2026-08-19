@@ -101,5 +101,22 @@
   <script src="./app.js?v=MSOT4.0-neon-sql-booking-20260811-6"></script>
   <script src="./report-accounting-patch.js?v=MSOT3.1.1-cache-recovery-20260808"></script>
   <script src="./remittance-fields-patch.js?v=MSOT4.0-neon-sql-scoped-edit-20260811-2"></script>
+  <script>
+    (function () {
+      function applyDefaultTherapistPin() {
+        var form = document.getElementById("therapistCreateForm");
+        if (!form) return;
+        var pin = form.elements && form.elements.pin;
+        if (!pin || String(pin.value || "").trim()) return;
+        pin.value = "0000";
+        pin.setAttribute("data-default-pin", "0000");
+        pin.setAttribute("title", "新進師傅預設 PIN 為 0000，可在建立前自行修改");
+      }
+      var root = document.getElementById("modalRoot");
+      if (!root) return;
+      new MutationObserver(applyDefaultTherapistPin).observe(root, { childList: true, subtree: true });
+      applyDefaultTherapistPin();
+    })();
+  </script>
 </body>
 </html>
