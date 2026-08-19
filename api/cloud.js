@@ -22,6 +22,16 @@ function flattenActions(action, data) {
   return nested.flatMap((item) => flattenActions(String(item?.action || ""), item?.data || {}));
 }
 
+function withDefaultTherapistPin(action, data) {
+  const copy = JSON.parse(JSON.stringify(data || {}));
+  flattenActions(action, copy).forEach((item) => {
+    if (item.action !== "addTherapist") return;
+    const itemData = item.data || {};
+    if (!String(itemData.pin || "").trim() && !itemData.pinHash) itemData.pin = "0000";
+  });
+  return copy;
+}
+
 function therapistOwnsWrite(session, action, data) {
   const actorId = String(session.sub);
   const actions = flattenActions(action, data);
@@ -57,22 +67,23 @@ module.exports = async function handler(req, res) {
   try {
     const body = readJson(req);
     const action = String(body.action || "");
+    const actionData = withDefaultTherapistPin(action, body.data || {});
     mutationId = String(body.mutationId || "").trim();
     if (!ALLOWED_ACTIONS.has(action)) return sendJson(res, 400, { success: false, error: "unsupported_action", requestId: id });
-    if (session.role !== "admin" && !therapistOwnsWrite(session, action, body.data || {})) {
+    if (session.role !== "admin" && !therapistOwnsWrite(session, action, actionData)) {
       return sendJson(res, 403, { success: false, error: "forbidden", requestId: id });
     }
     if (mutationId.length < 6 || mutationId.length > 120) return sendJson(res, 400, { success: false, error: "invalid_mutation_id", requestId: id });
     if (dataSourceMode() === "sql") {
       const sqlStartedAt = Date.now();
-      const result = await sqlRepository.applyMutation(session, mutationId, action, body.data || {});
+      const result = await sqlRepository.applyMutation(session, mutationId, action, actionData);
       const sqlMs = Date.now() - sqlStartedAt;
       const response = { ...result, requestId: id };
       const bytes = Buffer.byteLength(JSON.stringify(response));
       logRequest({ id, route: "/api/cloud", status: 200, startedAt, sqlMs, bytes });
       return sendJson(res, 200, response, { "Server-Timing": `sql;dur=${sqlMs}` });
     }
-    const { payload, upstreamMs } = await callAppsScript(action, body.data || {}, {
+    const { payload, upstreamMs } = await callAppsScript(action, actionData, {
       timeoutMs: 15000,
       actor: { id: session.sub, role: session.role },
       mutationId
@@ -91,3 +102,4 @@ module.exports = async function handler(req, res) {
 };
 
 module.exports.therapistOwnsWrite = therapistOwnsWrite;
+module.exports.withDefaultTherapistPin = withDefaultTherapistPin;
