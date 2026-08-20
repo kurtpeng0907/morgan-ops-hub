@@ -24,6 +24,12 @@ async function sourceData(query) {
   return { data: payload.data || payload, upstreamMs };
 }
 
+function requestOpsHubUrl(req) {
+  const host = String(req.headers?.["x-forwarded-host"] || req.headers?.host || "").trim().toLowerCase();
+  if (!/^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.vercel\.app$/.test(host)) return "";
+  return `https://${host}/`;
+}
+
 module.exports = async function handler(req, res) {
   const id = requestId(req); const startedAt = Date.now();
   if (!["GET", "POST"].includes(req.method)) return methodNotAllowed(res, ["GET", "POST"]);
@@ -51,8 +57,6 @@ module.exports = async function handler(req, res) {
     let result;
     if (dataSourceMode() === "sql") {
       result = await sqlRepository.submitPublicBooking(selection);
-      try { result.internalReminder = await sendPublicBookingAlert(selection); }
-      catch (error) { result.internalReminder = { sent: false, reason: String(error.code || "unavailable").slice(0, 80) }; }
     }
     else {
       const write = await callAppsScript("submitClientSelection", selection, { timeoutMs: 15000, actor: { id: "customer_public", role: "customer_public" }, mutationId: selection.id });
@@ -60,6 +64,10 @@ module.exports = async function handler(req, res) {
       const stored = verify.payload?.data?.customers?.[selectionRecord(selection).phone] || verify.payload?.customers?.[selectionRecord(selection).phone];
       if (!stored?.notes || JSON.parse(stored.notes).id !== selection.id) throw Object.assign(new Error("read_back_mismatch"), { code: "read_back_mismatch" });
       result = { verified: write.payload?.verified !== false, selection };
+    }
+    if (result.verified === true) {
+      try { result.internalReminder = await sendPublicBookingAlert(selection, { opsHubUrl: requestOpsHubUrl(req) }); }
+      catch (error) { result.internalReminder = { sent: false, reason: String(error.code || "unavailable").slice(0, 80) }; }
     }
     const response = { success: true, verified: result.verified === true, selection: { id: selection.id, status: "pending" }, requestId: id };
     logRequest({ id, route: "/api/public-booking", status: 201, startedAt, upstreamMs: source.upstreamMs || 0, bytes: Buffer.byteLength(JSON.stringify(response)) });

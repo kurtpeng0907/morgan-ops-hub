@@ -480,6 +480,62 @@ test("LINE webhook rejects unsigned requests before parsing or writing a recipie
   assert.equal(res.body.error, "invalid_signature");
 });
 
+test("LINE staff group binding returns the required bound-state replies", () => {
+  assert.equal(lineWebhook.staffGroupReply("bound"), "✅ 已加入 Morgan 小編營運提醒。");
+  assert.equal(lineWebhook.staffGroupReply("already_bound"), "✅ 已加入 Morgan 小編營運提醒。");
+  assert.equal(lineWebhook.staffGroupReply("different_group_bound"), "⚠️ 此系統已綁定其他小編群組。");
+  assert.equal(lineWebhook.staffGroupReply("invalid"), "");
+});
+
+test("LINE webhook ignores an incorrect staff link code after signature verification", async () => {
+  const originalSecret = process.env.LINE_CHANNEL_SECRET;
+  const originalCode = process.env.LINE_STAFF_LINK_CODE;
+  process.env.LINE_CHANNEL_SECRET = "line-test-secret";
+  process.env.LINE_STAFF_LINK_CODE = "CORRECT-CODE";
+  const payload = Buffer.from(JSON.stringify({ events: [{ source: { type: "group", groupId: "G-test" }, message: { type: "text", text: "WRONG-CODE" }, replyToken: "reply" }] }));
+  const signature = require("node:crypto").createHmac("sha256", process.env.LINE_CHANNEL_SECRET).update(payload).digest("base64");
+  const req = Readable.from([payload]);
+  req.method = "POST";
+  req.headers = { "x-line-signature": signature };
+  const res = responseMock();
+  try {
+    await lineWebhook(req, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.success, true);
+  } finally {
+    process.env.LINE_CHANNEL_SECRET = originalSecret;
+    process.env.LINE_STAFF_LINK_CODE = originalCode;
+  }
+});
+
+test("public booking staff alert uses a reserved Flex message and an Ops Hub deep link", () => {
+  const reminder = readFileSync(resolve(__dirname, "../api/_lib/line-staff-reminders.js"), "utf8");
+  const route = readFileSync(resolve(__dirname, "../api/_lib/routes/public-booking.js"), "utf8");
+  const migration = readFileSync(resolve(__dirname, "../drizzle/0003_public_booking_staff_alert.sql"), "utf8");
+  assert.match(reminder, /'public_booking_pending'/);
+  assert.match(reminder, /ON CONFLICT \(appointment_id, alert_kind, scheduled_at\) DO NOTHING/);
+  assert.match(reminder, /type: "flex", altText: "新的預約需求待處理"/);
+  assert.match(reminder, /selectionId/);
+  assert.match(reminder, /開啟 Ops Hub 處理/);
+  assert.match(route, /requestOpsHubUrl\(req\)/);
+  assert.match(route, /if \(result\.verified === true\)/);
+  assert.doesNotMatch(route, /response = \{[^\n]*internalReminder/);
+  assert.match(migration, /public_booking_pending/);
+  assert.match(migration, /DROP CONSTRAINT IF EXISTS line_staff_alerts_appointment_id_fkey/);
+  assert.match(migration, /CREATE UNIQUE INDEX line_staff_alerts_public_booking_once/);
+});
+
+test("Ops Hub deep link focuses but never confirms a pending public request", () => {
+  const source = readFileSync(resolve(__dirname, "../app.js"), "utf8");
+  assert.match(source, /const initialSelectionId = String\(initialUrlState\.get\("selectionId"\)/);
+  assert.match(source, /function focusSelectionDeepLink\(\)/);
+  assert.match(source, /selection\.status !== "pending"/);
+  assert.match(source, /這筆預約需求已處理或不存在/);
+  assert.match(source, /data-client-selection-id/);
+  const focusBody = source.slice(source.indexOf("function focusSelectionDeepLink"), source.indexOf("function restoreViewStateFromUrl"));
+  assert.doesNotMatch(focusBody, /quickConfirmClientSelection|addAppointment|data-quick-confirm/);
+});
+
 test("LINE manual reminder endpoint requires its independent cron secret", async () => {
   const originalSecret = process.env.LINE_CRON_SECRET;
   process.env.LINE_CRON_SECRET = "line-cron-test-secret";

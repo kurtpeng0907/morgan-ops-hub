@@ -110,6 +110,7 @@ const refreshIcons = () => {
 const todayKey = () => toDateKey(new Date());
 const initialUrlState = new URLSearchParams(window.location.search);
 const initialOpsDate = initialUrlState.get("date");
+const initialSelectionId = String(initialUrlState.get("selectionId") || "").trim();
 selectedOpsDate = /^\d{4}-\d{2}-\d{2}$/.test(initialOpsDate || "") ? initialOpsDate : todayKey();
 dispatchQueryState.date = selectedOpsDate;
 scheduleViewMode = ["week", "month", "custom"].includes(initialUrlState.get("scheduleMode")) ? initialUrlState.get("scheduleMode") : "week";
@@ -3819,7 +3820,7 @@ function renderAppointmentListPage(appts) {
         const availability = clientSelectionAvailability(selection);
         const profile = hasTherapist ? db.therapists[selection.selectedTherapistId] || {} : {};
         const displayName = hasTherapist ? therapistName(selection.selectedTherapistId) : "尚未媒合師傅";
-        return `<article class="rounded-xl border border-amber-100 bg-white p-4">
+        return `<article class="rounded-xl border border-amber-100 bg-white p-4" data-client-selection-id="${esc(selection.id)}">
           <div class="flex justify-between gap-4">
             <div class="flex min-w-0 gap-3">
               ${hasTherapist ? therapistPhotoHtml(profile, displayName) : `<div class="flex h-16 w-16 items-center justify-center rounded-xl bg-amber-50 text-xl font-black text-amber-700">?</div>`}
@@ -5682,13 +5683,39 @@ function writeViewStateToUrl(patch = {}) {
 }
 
 let urlStateRestored = false;
+let selectionDeepLinkHandled = false;
+function focusSelectionDeepLink() {
+  if (selectionDeepLinkHandled || !initialSelectionId || activeTab !== "dispatch") return;
+  selectionDeepLinkHandled = true;
+  const selection = db.clientSelections?.[initialSelectionId];
+  if (!selection || selection.status !== "pending" || !isOpenClientSelection(selection)) {
+    showSnackbar("這筆預約需求已處理或不存在");
+    return;
+  }
+  activeDispatchPanel = "tasks";
+  renderAppointmentDetail();
+  requestAnimationFrame(() => {
+    const target = document.querySelector(`[data-client-selection-id="${CSS.escape(initialSelectionId)}"]`);
+    if (!target) {
+      showSnackbar("這筆預約需求已處理或不存在");
+      return;
+    }
+    target.classList.add("selection-deep-link-highlight");
+    target.setAttribute("tabindex", "-1");
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    target.focus({ preventScroll: true });
+    setTimeout(() => target.classList.remove("selection-deep-link-highlight"), 3200);
+  });
+}
 function restoreViewStateFromUrl() {
   if (urlStateRestored || !currentUser) return;
   urlStateRestored = true;
   const params = new URLSearchParams(window.location.search);
   const requestedTab = params.get("tab");
   if (requestedTab && ADMIN_NAV_ITEMS.some((item) => item.tab === requestedTab) && requestedTab !== activeTab) {
-    requestAnimationFrame(() => switchTab(requestedTab));
+    requestAnimationFrame(async () => { await switchTab(requestedTab); focusSelectionDeepLink(); });
+  } else if (requestedTab === "dispatch") {
+    requestAnimationFrame(focusSelectionDeepLink);
   }
 }
 

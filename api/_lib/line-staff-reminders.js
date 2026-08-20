@@ -69,6 +69,10 @@ async function pushLine(groupId, text) {
   await lineApi(LINE_PUSH_ENDPOINT, { to: String(groupId), messages: [{ type: "text", text: String(text).slice(0, 5000) }] });
 }
 
+async function pushLineMessage(groupId, message) {
+  await lineApi(LINE_PUSH_ENDPOINT, { to: String(groupId), messages: [message] });
+}
+
 async function dailyBrief(now = new Date()) {
   const date = taipeiDate(now);
   const rows = await sqlClient()`
@@ -146,17 +150,53 @@ async function sendUpcomingAlerts(now = new Date()) {
 // A public request is an internal operational event, not a customer broadcast.
 // Failure is intentionally non-blocking: the verified pending request remains in
 // the admin queue even when LINE has not been configured.
-async function sendPublicBookingAlert(selection) {
+async function sendPublicBookingAlert(selection, options = {}) {
   const groupId = await boundGroupId();
   if (!groupId) return { sent: false, reason: "recipient_not_bound" };
   if (!String(process.env.LINE_CHANNEL_ACCESS_TOKEN || "").trim()) return { sent: false, reason: "line_not_configured" };
-  await pushLine(groupId, [
-    "🗓️ 公開預約需求待確認",
-    `${String(selection.date || "")} ${String(selection.time || "").slice(0, 5)}｜${String(selection.service || "")}`,
-    `偏好師傅：${String(selection.selectedTherapistName || selection.selectedTherapistId || "未指定")}`,
-    `顧客：${String(selection.customerName || "未留姓名")}｜${String(selection.customerContact || "")}`
-  ].join("\n"));
-  return { sent: true };
+  const scheduledAt = new Date(selection.createdAt || 0);
+  if (!Number.isFinite(scheduledAt.getTime())) throw Object.assign(new Error("invalid_selection_created_at"), { code: "invalid_selection" });
+  const reservation = await sqlClient()`
+    INSERT INTO line_staff_alerts (appointment_id, alert_kind, scheduled_at)
+    VALUES (${String(selection.id)}, 'public_booking_pending', ${scheduledAt.toISOString()}::timestamptz)
+    ON CONFLICT (appointment_id, alert_kind, scheduled_at) DO NOTHING
+    RETURNING appointment_id
+  `;
+  if (!reservation[0]) return { sent: false, reason: "duplicate" };
+  const opsUrl = new URL(String(options.opsHubUrl || process.env.MORGAN_OPS_HUB_URL || "https://morgan-ops-hub.vercel.app/"));
+  opsUrl.searchParams.set("tab", "dispatch");
+  opsUrl.searchParams.set("selectionId", String(selection.id));
+  opsUrl.searchParams.set("date", String(selection.date || ""));
+  const field = (label, value) => ({ type: "box", layout: "baseline", spacing: "sm", contents: [
+    { type: "text", text: label, color: "#708090", size: "sm", flex: 2 },
+    { type: "text", text: String(value || "—"), wrap: true, color: "#17212b", size: "sm", flex: 5, weight: "bold" }
+  ] });
+  const message = {
+    type: "flex", altText: "新的預約需求待處理",
+    contents: { type: "bubble",
+      header: { type: "box", layout: "vertical", backgroundColor: "#123B39", paddingAll: "20px", contents: [
+        { type: "text", text: "MODERN MORGAN", color: "#CBAF84", size: "xs", weight: "bold" },
+        { type: "text", text: "新的預約需求", color: "#FFFFFF", size: "xl", weight: "bold", margin: "md" },
+        { type: "text", text: "待確認", color: "#F3D6A3", size: "sm", weight: "bold", margin: "sm" }
+      ] },
+      body: { type: "box", layout: "vertical", spacing: "md", paddingAll: "20px", contents: [
+        field("日期", selection.date), field("時間", String(selection.time || "").slice(0, 5)),
+        field("服務", selection.serviceName || selection.service), field("偏好師傅", selection.selectedTherapistName || selection.selectedTherapistId || "未指定"),
+        field("顧客", selection.customerName || "未留姓名"), field("聯絡方式", selection.customerContact), field("狀態", "待確認")
+      ] },
+      footer: { type: "box", layout: "vertical", paddingAll: "16px", contents: [
+        { type: "button", style: "primary", color: "#147D73", action: { type: "uri", label: "開啟 Ops Hub 處理", uri: opsUrl.toString() } }
+      ] }
+    }
+  };
+  try {
+    await pushLineMessage(groupId, message);
+    await sqlClient()`UPDATE line_staff_alerts SET sent_at = now() WHERE appointment_id = ${String(selection.id)} AND alert_kind = 'public_booking_pending' AND scheduled_at = ${scheduledAt.toISOString()}::timestamptz`;
+    return { sent: true };
+  } catch (error) {
+    await sqlClient()`DELETE FROM line_staff_alerts WHERE appointment_id = ${String(selection.id)} AND alert_kind = 'public_booking_pending' AND scheduled_at = ${scheduledAt.toISOString()}::timestamptz AND sent_at IS NULL`;
+    throw error;
+  }
 }
 
 module.exports = { bindStaffGroup, replyLine, sendDailyBrief, sendUpcomingAlerts, sendPublicBookingAlert, taipeiDate, taipeiMinute };
