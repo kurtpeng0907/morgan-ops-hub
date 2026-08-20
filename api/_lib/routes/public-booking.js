@@ -47,7 +47,10 @@ module.exports = async function handler(req, res) {
     if (req.method === "GET") {
       const response = { success: true, data: publicSnapshot(data, input), requestId: id };
       logRequest({ id, route: "/api/public-booking", status: 200, startedAt, upstreamMs: source.upstreamMs || 0, bytes: Buffer.byteLength(JSON.stringify(response)) });
-      return sendJson(res, 200, response, { "Cache-Control": "public, max-age=15, stale-while-revalidate=30" });
+      // Availability is read again when the customer submits.  It must not be
+      // served from a browser/CDN cache in the meantime, otherwise the UI can
+      // display an older time/therapist combination that the POST rejects.
+      return sendJson(res, 200, response, { "Cache-Control": "no-store" });
     }
     // Retry must be resolved before checking live availability: the original
     // pending request intentionally removes its selected therapist from the

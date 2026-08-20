@@ -208,7 +208,11 @@ test("public booking validates a stable request id and reserves a pending confir
 
 test("public booking page is a fixed API-only confirmation-request flow", () => {
   const source = readFileSync(resolve(__dirname, "../customer-booking.html"), "utf8");
+  const route = readFileSync(resolve(__dirname, "../api/_lib/routes/public-booking.js"), "utf8");
   assert.match(source, /\/api\/public-booking/);
+  assert.match(source, /cache:'no-store'/);
+  assert.match(source, /refreshVersion/);
+  assert.match(route, /"Cache-Control": "no-store"/);
   assert.match(source, /已送出預約需求/);
   assert.match(source, /尚未成立正式預約/);
   assert.match(source, /正在確認可用性/);
