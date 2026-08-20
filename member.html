@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Morgan 會員中心</title>
-  <link rel="stylesheet" href="./tailwind.generated.css?v=line-member-v1">
+  <link rel="stylesheet" href="/tailwind.generated.css?v=line-member-v1">
   <style>
     body{margin:0;background:#f4f8f7;color:#18312d;font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif}.shell{max-width:720px;margin:auto;padding:22px 16px 56px}.card{background:#fff;border:1px solid #d7e5e1;border-radius:18px;padding:20px;margin-top:14px}.brand{font-size:12px;font-weight:900;letter-spacing:.12em;color:#157d75}.muted{color:#667d77}.hidden{display:none!important}.btn{border:0;border-radius:12px;padding:12px 15px;background:#157d75;color:#fff;font-weight:900}.input{width:100%;box-sizing:border-box;border:1px solid #bfd3ce;border-radius:10px;padding:11px;font:inherit}.row{display:flex;justify-content:space-between;gap:12px;border-top:1px solid #e6efed;padding:13px 0}.row:first-child{border-top:0}.badge{display:inline-block;border-radius:999px;background:#eaf5f2;color:#157d75;padding:4px 8px;font-size:12px;font-weight:900}.warning{background:#fff7ed;color:#9a5a00;border-color:#fed7aa}.error{background:#fff1f2;color:#be123c;border-color:#fecdd3}.avatar{width:52px;height:52px;border-radius:50%;object-fit:cover;background:#d9ebe6}.profile{display:flex;align-items:center;gap:14px}.loading{padding:42px 16px;text-align:center;font-weight:800;color:#667d77}
   </style>
@@ -15,7 +15,7 @@
     <section class="card"><div class="brand">MODERN MORGAN</div><h1 class="mt-2 text-2xl font-black">會員與預約進度</h1><p class="muted mb-0 font-bold">查看自己的預約安排與服務歷史。</p></section>
     <section id="loading" class="card loading">正在確認 LINE 會員身分…</section>
     <section id="app" class="hidden">
-      <section class="card"><div class="profile"><img id="avatar" class="avatar" alt=""><div><strong id="lineName" class="text-lg"></strong><p class="muted m-0 text-sm font-bold">LINE 會員</p></div></div><p class="mt-4 text-xs font-bold text-slate-500">此頁僅顯示您的預約資料與服務歷史；不包含店家內部紀錄。</p></section>
+      <section class="card"><div class="profile"><img id="avatar" class="avatar" alt=""><div><strong id="lineName" class="text-lg"></strong><p class="muted m-0 text-sm font-bold">LINE 會員</p></div></div><p class="mt-4 text-xs font-bold text-slate-500">此頁僅顯示您的預約資料與服務歷史；不包含店家內部紀錄。</p><a class="btn inline-block mt-3 no-underline" href="/member/booking">立即預約</a></section>
       <section class="card"><div class="flex items-center justify-between gap-3"><h2 class="m-0 text-lg font-black">聯絡資料</h2><span class="badge">可更新</span></div><form id="profileForm" class="mt-4 grid gap-3"><input id="contactName" class="input" maxlength="80" placeholder="預約聯絡姓名"><input id="contactPhone" class="input" maxlength="120" placeholder="電話或 LINE ID" required><button class="btn">儲存聯絡資料</button><p id="profileMessage" class="m-0 text-sm font-bold"></p></form></section>
       <section class="card"><h2 class="m-0 text-lg font-black">預約進度</h2><div id="progress" class="mt-3"></div></section>
       <section class="card"><h2 class="m-0 text-lg font-black">服務歷史</h2><div id="history" class="mt-3"></div></section>

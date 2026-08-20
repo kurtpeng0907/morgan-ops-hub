@@ -5,6 +5,9 @@
     { "path": "/api/cron/line-upcoming", "schedule": "0 2 * * *" }
   ],
   "rewrites": [
+    { "source": "/member", "destination": "/member.html" },
+    { "source": "/member/", "destination": "/member.html" },
+    { "source": "/member/booking", "destination": "/customer-booking.html" },
     { "source": "/api/session", "destination": "/api/ops?endpoint=session" },
     { "source": "/api/logout", "destination": "/api/ops?endpoint=logout" },
     { "source": "/api/bootstrap", "destination": "/api/ops?endpoint=bootstrap" },
