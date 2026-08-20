@@ -51,8 +51,6 @@ module.exports = async function handler(req, res) {
     let result;
     if (dataSourceMode() === "sql") {
       result = await sqlRepository.submitPublicBooking(selection);
-      try { result.internalReminder = await sendPublicBookingAlert(selection); }
-      catch (error) { result.internalReminder = { sent: false, reason: String(error.code || "unavailable").slice(0, 80) }; }
     }
     else {
       const write = await callAppsScript("submitClientSelection", selection, { timeoutMs: 15000, actor: { id: "customer_public", role: "customer_public" }, mutationId: selection.id });
@@ -61,6 +59,12 @@ module.exports = async function handler(req, res) {
       if (!stored?.notes || JSON.parse(stored.notes).id !== selection.id) throw Object.assign(new Error("read_back_mismatch"), { code: "read_back_mismatch" });
       result = { verified: write.payload?.verified !== false, selection };
     }
+
+    // The staff reminder is intentionally after the verified write and is non-blocking.
+    // A LINE outage must never roll back or hide a valid pending booking request.
+    try { result.internalReminder = await sendPublicBookingAlert(selection); }
+    catch (error) { result.internalReminder = { sent: false, reason: String(error.code || "unavailable").slice(0, 80) }; }
+
     const response = { success: true, verified: result.verified === true, selection: { id: selection.id, status: "pending" }, requestId: id };
     logRequest({ id, route: "/api/public-booking", status: 201, startedAt, upstreamMs: source.upstreamMs || 0, bytes: Buffer.byteLength(JSON.stringify(response)) });
     return sendJson(res, 201, response);
