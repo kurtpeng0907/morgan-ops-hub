@@ -58,6 +58,8 @@ const appointments = pgTable("appointments", {
   remittanceDue: numeric("remittance_due", { precision: 12, scale: 2 }),
   remittancePaid: boolean("remittance_paid").notNull().default(false),
   remittanceMethod: text("remittance_method").notNull().default(""),
+  remittanceNote: text("remittance_note").notNull().default(""),
+  remittanceAccountLast5: text("remittance_account_last5").notNull().default(""),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
 }, (table) => [
