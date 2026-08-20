@@ -3962,6 +3962,21 @@ function renderAppointmentDetailForm(appt, allAppts) {
   return renderAppointmentDetailView(appt, allAppts);
 }
 
+// Service reporting is intentionally modeled as two protected stages.  When a
+// single completion form is submitted from pre_notice, keep the one-click UX
+// while sending the two legal transitions in one SQL mutation transaction.
+function stagedAppointmentActions(previous, target) {
+  const previousStage = normalizeBookingStage(previous?.bookingStage, previous);
+  const targetStage = normalizeBookingStage(target?.bookingStage, target);
+  if (previousStage === "pre_notice" && targetStage === "completed") {
+    const serviceReport = { ...target, bookingStage: "service_report", isCompleted: false, expectedBookingStage: "pre_notice" };
+    const completed = { ...target, bookingStage: "completed", isCompleted: true, expectedBookingStage: "service_report" };
+    return { final: completed, actions: [{ action: "addAppointment", data: serviceReport }, { action: "addAppointment", data: completed }] };
+  }
+  const final = { ...target, expectedBookingStage: previousStage };
+  return { final, actions: [{ action: "addAppointment", data: final }] };
+}
+
 async function saveAppointmentDetailForm(form) {
   const old = db.appointments[activeAppointmentId];
   if (!old) return;
@@ -3984,7 +3999,6 @@ async function saveAppointmentDetailForm(form) {
     customerName: String(data.customerName || "").trim(),
     notes: String(data.notes || "").trim()
   };
-  next.expectedBookingStage = normalizeBookingStage(old.bookingStage, old);
   const err = form.querySelector("#appointmentDetailError");
   if (next.isCompleted) next.bookingStage = "completed";
   if (next.remittanceMethod === "轉帳" && !/^\d{5}$/.test(next.remittanceAccountLast5)) {
@@ -3997,6 +4011,8 @@ async function saveAppointmentDetailForm(form) {
     err.classList.remove("hidden");
     return;
   }
+  const staged = stagedAppointmentActions(old, next);
+  Object.assign(next, staged.final);
   const commit = async () => {
     const snapshot = snapshotDatabase();
     setFormBusy(form, true);
@@ -4017,7 +4033,7 @@ async function saveAppointmentDetailForm(form) {
     else customer.records.push(record);
     db.customers[next.phone] = customer;
     const actions = [
-      { action: "addAppointment", data: next },
+      ...staged.actions,
       { action: "saveCustomer", data: { phone: next.phone, ...customer } },
       syncAppointmentMeta(next)
     ].filter(Boolean);
@@ -5394,9 +5410,12 @@ function openTherapistReport(id) {
     const snapshot = snapshotDatabase();
     setFormBusy(event.currentTarget, true);
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const previous = { ...a, bookingStage: normalizeBookingStage(a.bookingStage, a) };
     a.collectedPrice = data.collectedPrice || "";
     a.isCompleted = data.isCompleted === "on";
     a.bookingStage = a.isCompleted ? "completed" : (a.bookingStage === "completed" ? "pre_notice" : normalizeBookingStage(a.bookingStage, a));
+    const staged = stagedAppointmentActions(previous, a);
+    Object.assign(a, staged.final);
     const customer = db.customers[a.phone] || { name: a.customerName || "", notes: "", records: [] };
     if (!customer.code) {
       db.customers[a.phone] = customer;
@@ -5409,7 +5428,7 @@ function openTherapistReport(id) {
     else customer.records.push(record);
     db.customers[a.phone] = customer;
     const saved = await saveCloudActions([
-      { action: "addAppointment", data: a },
+      ...staged.actions,
       { action: "saveCustomer", data: { phone: a.phone, ...customer } },
       syncAppointmentMeta(a)
     ].filter(Boolean), "服務紀錄已寫入雲端");

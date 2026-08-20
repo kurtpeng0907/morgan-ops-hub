@@ -162,6 +162,14 @@ test("booking commands reject skipped stages and preserve legacy omitted expecta
   }), /booking_transition_forbidden/);
 });
 
+test("completion from pre-notice is emitted as two legal booking transitions", () => {
+  const source = readFileSync(resolve(__dirname, "../app.js"), "utf8");
+  assert.match(source, /function stagedAppointmentActions\(previous, target\)/);
+  assert.match(source, /bookingStage: "service_report", isCompleted: false, expectedBookingStage: "pre_notice"/);
+  assert.match(source, /bookingStage: "completed", isCompleted: true, expectedBookingStage: "service_report"/);
+  assert.match(source, /\.\.\.staged\.actions/);
+});
+
 test("only admins may use a booking stage override and must provide a reason", () => {
   assert.throws(() => validateBookingCommands({ role: "therapist" }, "addAppointment", {
     expectedBookingStage: "confirmed", bookingStage: "completed", allowStageOverride: "true", stageOverrideReason: "補登"
