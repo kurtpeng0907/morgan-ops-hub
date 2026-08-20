@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Modern Morgan｜LINE × 預約流程試作</title>
+<style>
+:root{--bg:#f2f4ef;--paper:#fffdf8;--ink:#242922;--muted:#747a70;--sage:#71806a;--sage2:#dfe6da;--line:#d8ddd3;--linegreen:#06c755;--chat:#edf1e8;--shadow:0 14px 40px rgba(43,50,41,.12)}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC","PingFang TC",sans-serif}.app{max-width:430px;min-height:100vh;margin:auto;background:#fff;box-shadow:var(--shadow);position:relative;overflow:hidden}.top{height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid #e5e7e1;background:#fff}.top strong{font-size:16px}.prototype{font-size:11px;color:#65705f}.screen{display:none;min-height:calc(100vh - 54px)}.screen.active{display:block}.chat{background:var(--chat);padding:16px 12px 126px;min-height:calc(100vh - 54px)}.time{font-size:11px;text-align:center;color:#889084;margin:3px 0 15px}.bubbleRow{display:flex;gap:8px;align-items:flex-start;margin:9px 0}.avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(145deg,#66745f,#aab7a1);color:#fff;display:grid;place-items:center;font-family:Georgia,serif;font-weight:700;flex:0 0 auto}.bubble{max-width:82%;padding:12px 13px;border-radius:5px 16px 16px 16px;background:#fff;box-shadow:0 1px 0 rgba(0,0,0,.04);font-size:14px;line-height:1.55}.bubble b{display:block;margin-bottom:5px}.statusCard{background:#fff;border-radius:18px;overflow:hidden;margin:12px 42px;border:1px solid #dde2d9}.statusHead{padding:14px 15px;border-bottom:1px solid #ecefe9}.statusHead small{display:block;color:var(--sage);font-weight:800;letter-spacing:.08em}.statusHead strong{display:block;font-size:18px;margin-top:3px}.statusBody{padding:14px 15px;display:grid;gap:7px;font-size:13px}.statusBody span{display:flex;justify-content:space-between;gap:10px}.tag{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border-radius:999px;background:#f0f4ed;color:#5e6d57;font-size:11px;font-weight:800}.richMenu{position:absolute;left:0;right:0;bottom:0;background:#fff;border-top:1px solid #dfe4da;padding:9px 10px max(9px,env(safe-area-inset-bottom));display:grid;grid-template-columns:2fr 1fr 1fr;gap:7px}.menuBtn{border:1px solid #d9ded5;background:#fff;border-radius:12px;padding:14px 7px;font-weight:800;color:#354132}.menuBtn.primary{background:#65725e;color:#fff;border-color:#65725e}.liff{background:#f5f2ea;min-height:calc(100vh - 54px);padding:16px 14px 96px}.liffHeader{padding:5px 2px 14px}.liffHeader small{color:var(--sage);font-size:11px;font-weight:900;letter-spacing:.12em}.liffHeader h1{font-family:Georgia,"Times New Roman",serif;font-weight:500;font-size:32px;line-height:1.05;margin:7px 0 7px}.liffHeader p{margin:0;color:var(--muted);font-size:13px}.steps{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin:12px 0}.steps span{height:4px;border-radius:999px;background:#d8d6cd}.steps span.on{background:var(--sage)}.panel{background:rgba(255,253,248,.92);border:1px solid #dfddd4;border-radius:20px;padding:18px;margin:12px 0}.panel small.k{font-size:10px;color:var(--sage);font-weight:900;letter-spacing:.12em}.panel h2{font-family:Georgia,"Times New Roman",serif;font-weight:500;margin:4px 0 14px;font-size:24px}.choices{display:grid;gap:8px}.choice{border:1px solid #dddcd4;background:#fff;border-radius:15px;padding:13px 12px;text-align:left;color:var(--ink);font:inherit}.choice b{display:block;font-size:14px}.choice span{display:block;font-size:12px;color:var(--muted);margin-top:3px}.choice.selected{background:var(--sage);color:#fff;border-color:var(--sage)}.choice.selected span{color:#ecf0e9}.slotGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}.slot{border:1px solid #dddcd4;background:#fff;border-radius:12px;padding:11px 2px;font-weight:800}.slot.selected{background:var(--sage);color:#fff;border-color:var(--sage)}.input{width:100%;border:1px solid #dddcd4;border-radius:14px;background:#fff;padding:13px;font:inherit;margin-top:8px}.therapists{display:grid;gap:8px}.therapist{display:grid;grid-template-columns:48px 1fr auto;align-items:center;gap:10px;border:1px solid #dddcd4;border-radius:16px;background:#fff;padding:10px}.face{width:48px;height:48px;border-radius:13px;background:linear-gradient(145deg,#ccd3c5,#8f9b87);display:grid;place-items:center;color:#fff;font-family:Georgia,serif;font-size:20px}.therapist b{font-size:14px}.therapist small{display:block;color:var(--muted);font-size:11px;margin-top:2px}.therapist.selected{outline:2px solid var(--sage);outline-offset:-2px}.check{font-size:18px;color:var(--sage)}.summary{background:var(--sage2);border-radius:16px;padding:13px;display:grid;gap:4px;margin-top:12px;font-size:13px}.summary strong{font-size:15px}.bottomBar{position:absolute;left:0;right:0;bottom:0;padding:10px 14px max(10px,env(safe-area-inset-bottom));background:rgba(245,242,234,.94);backdrop-filter:blur(14px);border-top:1px solid #dedbd2}.mainBtn{width:100%;border:0;border-radius:14px;background:var(--sage);color:#fff;padding:14px;font-weight:900;font-size:15px}.mainBtn:disabled{opacity:.35}.done{padding:46px 22px;text-align:center}.doneMark{width:56px;height:56px;border-radius:50%;background:var(--sage2);display:grid;place-items:center;margin:auto;font-size:24px}.done h2{font-family:Georgia,serif;font-size:30px;font-weight:500;margin:14px 0 8px}.done p{color:var(--muted);font-size:13px;line-height:1.65}.outlineBtn{border:1px solid #cfd5ca;background:#fff;border-radius:14px;padding:13px 16px;font-weight:800;color:#46513f;width:100%;margin-top:8px}.dev{margin:18px 42px 0;padding:10px;border:1px dashed #9eaa98;border-radius:12px;background:rgba(255,255,255,.55);font-size:11px;color:#65705f}.dev button{width:100%;margin-top:8px;border:0;border-radius:10px;padding:10px;background:#727f6b;color:white;font-weight:800}.hidden{display:none!important}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top"><strong id="title">Morgan Man Spa Plus</strong><span class="prototype">互動試作 · 不連 LINE</span></header>
+
+  <section class="screen active" id="lineHome">
+    <div class="chat" id="chat">
+      <div class="time">今天 12:00</div>
+      <div class="bubbleRow"><div class="avatar">M</div><div class="bubble"><b>歡迎來到 Modern Morgan</b>需要休息、放鬆或重新整理身體時，可以從下方「立即預約」開始。</div></div>
+      <div class="statusCard">
+        <div class="statusHead"><small>MODERN MORGAN</small><strong>新的方式，熟悉的照顧。</strong></div>
+        <div class="statusBody"><span><em>預約方式</em><b>手機完成</b></span><span><em>確認方式</em><b>LINE 通知</b></span><span><em>目前狀態</em><b>Prototype</b></span></div>
+      </div>
+      <div class="dev"><b>測試模式</b><br>此頁只是模擬 LINE 聊天室與 LIFF，不會發送任何訊息。<button id="simulateConfirm" class="hidden">模擬店家確認預約</button></div>
+    </div>
+    <nav class="richMenu"><button class="menuBtn primary" id="bookNow">立即預約</button><button class="menuBtn">服務</button><button class="menuBtn">聯絡</button></nav>
+  </section>
+
+  <section class="screen" id="booking">
+    <div class="liff">
+      <div class="liffHeader"><small>MODERN MORGAN BOOKING</small><h1>今天，想怎麼照顧自己？</h1><p>此畫面模擬從 LINE Rich Menu 開啟 LIFF 預約。</p></div>
+      <div class="steps" id="steps"><span class="on"></span><span></span><span></span><span></span><span></span></div>
+
+      <div class="panel"><small class="k">01 · NEED</small><h2>今天你需要什麼？</h2><div class="choices" id="needList"></div></div>
+      <div class="panel"><small class="k">02 · SERVICE</small><h2>適合你的照護</h2><div class="choices" id="serviceList"></div></div>
+      <div class="panel"><small class="k">03 · TIME</small><h2>日期與時間</h2><input id="date" class="input" type="date"><div class="slotGrid" id="slotList" style="margin-top:9px"></div></div>
+      <div class="panel"><small class="k">04 · THERAPIST</small><h2>選擇師傅</h2><div class="therapists" id="therapistList"></div></div>
+      <div class="panel"><small class="k">05 · CONTACT</small><h2>確認資料</h2><input id="name" class="input" placeholder="姓名（選填）"><input id="contact" class="input" placeholder="手機"><textarea id="note" class="input" rows="3" placeholder="備註（選填）"></textarea><div class="summary" id="summary"><span>尚未完成選擇</span><strong>請完成預約資訊</strong></div></div>
+    </div>
+    <div class="bottomBar"><button class="mainBtn" id="submitBooking" disabled>送出預約需求</button></div>
+  </section>
+
+  <section class="screen" id="submitted">
+    <div class="done"><div class="doneMark">✓</div><h2>已收到預約需求</h2><p>Morgan 將確認師傅與現場安排。這個步驟還不代表正式預約成立；正式版本會在完成後關閉 LIFF，回到 LINE 等待通知。</p><button class="mainBtn" id="returnLine">回到 LINE</button><button class="outlineBtn" id="restart">重新開始試作</button></div>
+  </section>
+</div>
+<script>
+(()=>{
+const needs=[['relax','想放鬆一下','舒緩日常累積的緊繃'],['neck','肩頸很緊','久坐與工作後的疲勞'],['deep','需要深層處理','偏重力道與明確肌群處理'],['unsure','還不知道怎麼選','讓 Morgan 先幫你整理']];
+const services=[{id:'A60',name:'全身放鬆 60',desc:'柔和、適合第一次體驗',price:1800,for:['relax','unsure']},{id:'C90',name:'深層舒緩 90',desc:'肩背與全身深層處理',price:2500,for:['neck','deep']},{id:'R90',name:'Recovery 90',desc:'伸展與活動後恢復',price:2600,for:['deep','unsure']}];
+const therapists=[['N','Noah','深層 · 肩背 · 偏重'],['D','迪恩','放鬆 · 穩定節奏'],['M','Morgan 幫我安排','依需求與時段媒合']];
+const slots=['15:00','16:30','18:00','19:30','20:00','21:30'];
+const state={need:'',service:'',time:'',therapist:'',date:'',submitted:false,confirmed:false};
+const $=id=>document.getElementById(id); const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
+function show(id){document.querySelectorAll('.screen').forEach(x=>x.classList.remove('active'));$(id).classList.add('active');$('title').textContent=id==='booking'?'Modern Morgan Booking':'Morgan Man Spa Plus';window.scrollTo(0,0)}
+function render(){
+ $('needList').innerHTML=needs.map(n=>`<button class="choice ${state.need===n[0]?'selected':''}" data-need="${n[0]}"><b>${n[1]}</b><span>${n[2]}</span></button>`).join('');
+ const ordered=[...services].sort((a,b)=>Number(b.for.includes(state.need))-Number(a.for.includes(state.need)));
+ $('serviceList').innerHTML=ordered.map(s=>`<button class="choice ${state.service===s.id?'selected':''}" data-service="${s.id}"><b>${s.name}${state.need&&s.for.includes(state.need)?' · 為你推薦':''}</b><span>${s.desc} · NT$ ${s.price.toLocaleString()}</span></button>`).join('');
+ $('slotList').innerHTML=slots.map(t=>`<button class="slot ${state.time===t?'selected':''}" data-time="${t}">${t}</button>`).join('');
+ $('therapistList').innerHTML=therapists.map(t=>`<button class="therapist ${state.therapist===t[0]?'selected':''}" data-therapist="${t[0]}"><span class="face">${t[0]}</span><span><b>${t[1]}</b><small>${t[2]}</small></span><span class="check">${state.therapist===t[0]?'✓':''}</span></button>`).join('');
+ document.querySelectorAll('[data-need]').forEach(b=>b.onclick=()=>{state.need=b.dataset.need;state.service='';render()});document.querySelectorAll('[data-service]').forEach(b=>b.onclick=()=>{state.service=b.dataset.service;render()});document.querySelectorAll('[data-time]').forEach(b=>b.onclick=()=>{state.time=b.dataset.time;render()});document.querySelectorAll('[data-therapist]').forEach(b=>b.onclick=()=>{state.therapist=b.dataset.therapist;render()});
+ const s=services.find(x=>x.id===state.service),t=therapists.find(x=>x[0]===state.therapist);const complete=state.need&&s&&state.date&&state.time&&t&&$('contact').value.trim();
+ $('summary').innerHTML=complete?`<span>${state.date} · ${state.time}</span><strong>${s.name}｜${t[1]}</strong><span>NT$ ${s.price.toLocaleString()}</span>`:'<span>尚未完成選擇</span><strong>請完成需求、服務、時段、師傅與手機</strong>';$('submitBooking').disabled=!complete;
+ const count=[state.need,state.service,state.time,state.therapist,$('contact').value.trim()].filter(Boolean).length;document.querySelectorAll('#steps span').forEach((x,i)=>x.classList.toggle('on',i<Math.max(1,count)));
+}
+function appendPending(){if(document.getElementById('pendingCard'))return;const wrap=document.createElement('div');wrap.id='pendingCard';wrap.className='statusCard';wrap.innerHTML=`<div class="statusHead"><small>BOOKING REQUEST</small><strong>已收到你的預約需求</strong></div><div class="statusBody"><span><em>日期</em><b>${state.date}</b></span><span><em>時間</em><b>${state.time}</b></span><span><em>服務</em><b>${services.find(x=>x.id===state.service)?.name||''}</b></span><span><em>師傅</em><b>${therapists.find(x=>x[0]===state.therapist)?.[1]||''}</b></span><div><span class="tag">● 等待 Morgan 確認</span></div></div>`;$('chat').insertBefore(wrap,$('chat').querySelector('.dev'));$('simulateConfirm').classList.remove('hidden')}
+function appendConfirmed(){if(document.getElementById('confirmedCard'))return;const wrap=document.createElement('div');wrap.id='confirmedCard';wrap.className='statusCard';wrap.innerHTML=`<div class="statusHead"><small>CONFIRMED</small><strong>預約已確認 ✓</strong></div><div class="statusBody"><span><em>${state.date}</em><b>${state.time}</b></span><span><em>服務</em><b>${services.find(x=>x.id===state.service)?.name||''}</b></span><span><em>師傅</em><b>${therapists.find(x=>x[0]===state.therapist)?.[1]||''}</b></span><div><span class="tag">✓ 正式預約成立</span></div></div>`;$('chat').insertBefore(wrap,$('chat').querySelector('.dev'));$('simulateConfirm').classList.add('hidden')}
+$('bookNow').onclick=()=>show('booking');$('date').value=today();$('date').min=today();state.date=today();$('date').onchange=e=>{state.date=e.target.value;render()};$('contact').oninput=render;$('name').oninput=render;$('note').oninput=render;
+$('submitBooking').onclick=()=>{state.submitted=true;show('submitted')};$('returnLine').onclick=()=>{appendPending();show('lineHome')};$('simulateConfirm').onclick=()=>{state.confirmed=true;appendConfirmed()};$('restart').onclick=()=>{location.reload()};render();
+})();
+</script>
+</body>
+</html>
