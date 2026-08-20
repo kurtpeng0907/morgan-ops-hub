@@ -45,6 +45,30 @@ async function preserveTherapistPins(action, data) {
   return copy;
 }
 
+async function persistCanonicalRemittance(action, data) {
+  const appointmentActions = flattenActions(action, data)
+    .filter((item) => item.action === "addAppointment" && item.data);
+  if (!appointmentActions.length) return;
+  const sql = sqlClient();
+  for (const item of appointmentActions) {
+    const itemData = item.data || {};
+    const appointmentId = String(itemData.appId || itemData.id || "").trim();
+    if (!appointmentId) continue;
+    const hasNote = Object.prototype.hasOwnProperty.call(itemData, "remittanceNote");
+    const hasLast5 = Object.prototype.hasOwnProperty.call(itemData, "remittanceAccountLast5");
+    if (!hasNote && !hasLast5) continue;
+    const note = String(itemData.remittanceNote || "").trim();
+    const last5 = String(itemData.remittanceAccountLast5 || "").replace(/\D/g, "").slice(-5);
+    if (hasNote && hasLast5) {
+      await sql`UPDATE appointments SET remittance_note = ${note}, remittance_account_last5 = ${last5}, updated_at = now() WHERE id = ${appointmentId}`;
+    } else if (hasNote) {
+      await sql`UPDATE appointments SET remittance_note = ${note}, updated_at = now() WHERE id = ${appointmentId}`;
+    } else {
+      await sql`UPDATE appointments SET remittance_account_last5 = ${last5}, updated_at = now() WHERE id = ${appointmentId}`;
+    }
+  }
+}
+
 function therapistOwnsWrite(session, action, data) {
   const actorId = String(session.sub);
   const actions = flattenActions(action, data);
@@ -119,6 +143,7 @@ module.exports = async function handler(req, res) {
       const sqlStartedAt = Date.now();
       const mutationData = await preserveTherapistPins(action, body.data || {});
       const result = await sqlRepository.applyMutation(session, mutationId, action, mutationData);
+      await persistCanonicalRemittance(action, mutationData);
       const sqlMs = Date.now() - sqlStartedAt;
       const response = { ...result, requestId: id };
       const bytes = Buffer.byteLength(JSON.stringify(response));
@@ -152,3 +177,4 @@ module.exports = async function handler(req, res) {
 module.exports.therapistOwnsWrite = therapistOwnsWrite;
 module.exports.validateBookingCommands = validateBookingCommands;
 module.exports.preserveTherapistPins = preserveTherapistPins;
+module.exports.persistCanonicalRemittance = persistCanonicalRemittance;
