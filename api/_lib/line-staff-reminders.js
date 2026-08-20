@@ -65,8 +65,14 @@ async function replyLine(replyToken, text) {
   await lineApi(LINE_REPLY_ENDPOINT, { replyToken: String(replyToken), messages: [{ type: "text", text: String(text).slice(0, 5000) }] });
 }
 
+async function pushMessages(recipientId, messages) {
+  const list = Array.isArray(messages) ? messages.slice(0, 5) : [];
+  if (!list.length) return;
+  await lineApi(LINE_PUSH_ENDPOINT, { to: String(recipientId), messages: list });
+}
+
 async function pushLine(groupId, text) {
-  await lineApi(LINE_PUSH_ENDPOINT, { to: String(groupId), messages: [{ type: "text", text: String(text).slice(0, 5000) }] });
+  await pushMessages(groupId, [{ type: "text", text: String(text).slice(0, 5000) }]);
 }
 
 async function dailyBrief(now = new Date()) {
@@ -143,20 +149,109 @@ async function sendUpcomingAlerts(now = new Date()) {
   return { sent };
 }
 
+function bookingAdminUrl(selection) {
+  const base = String(process.env.OPS_HUB_PUBLIC_URL || "https://morgan-ops-hub.vercel.app").trim().replace(/\/$/, "");
+  const params = new URLSearchParams({
+    tab: "overview",
+    selection: String(selection.id || ""),
+    date: String(selection.date || "")
+  });
+  return `${base}/?${params.toString()}`;
+}
+
+function bookingAlertFlex(selection) {
+  const date = String(selection.date || "");
+  const time = String(selection.time || "").slice(0, 5);
+  const service = String(selection.serviceName || selection.service || "未填服務");
+  const therapist = String(selection.selectedTherapistName || selection.selectedTherapistId || "未指定");
+  const customer = String(selection.customerName || "未留姓名");
+  const contact = String(selection.customerContact || "未留聯絡方式");
+  return {
+    type: "flex",
+    altText: `新的預約需求待處理｜${date} ${time}`.slice(0, 400),
+    contents: {
+      type: "bubble",
+      size: "kilo",
+      header: {
+        type: "box",
+        layout: "vertical",
+        backgroundColor: "#65725E",
+        paddingAll: "16px",
+        contents: [
+          { type: "text", text: "MODERN MORGAN", color: "#E8EEE4", size: "xs", weight: "bold" },
+          { type: "text", text: "新的預約需求待處理", color: "#FFFFFF", size: "lg", weight: "bold", margin: "sm" }
+        ]
+      },
+      body: {
+        type: "box",
+        layout: "vertical",
+        spacing: "md",
+        paddingAll: "16px",
+        contents: [
+          { type: "text", text: `${date}  ${time}`, size: "lg", weight: "bold", color: "#242922" },
+          { type: "text", text: service, size: "sm", weight: "bold", color: "#46513F", wrap: true },
+          { type: "separator", margin: "sm" },
+          { type: "box", layout: "baseline", spacing: "sm", contents: [{ type: "text", text: "師傅", size: "xs", color: "#7A8276", flex: 2 }, { type: "text", text: therapist, size: "sm", color: "#242922", flex: 5, wrap: true }] },
+          { type: "box", layout: "baseline", spacing: "sm", contents: [{ type: "text", text: "顧客", size: "xs", color: "#7A8276", flex: 2 }, { type: "text", text: customer, size: "sm", color: "#242922", flex: 5, wrap: true }] },
+          { type: "box", layout: "baseline", spacing: "sm", contents: [{ type: "text", text: "聯絡", size: "xs", color: "#7A8276", flex: 2 }, { type: "text", text: contact, size: "sm", color: "#242922", flex: 5, wrap: true }] },
+          { type: "box", layout: "baseline", spacing: "sm", contents: [{ type: "text", text: "狀態", size: "xs", color: "#7A8276", flex: 2 }, { type: "text", text: "待確認", size: "sm", weight: "bold", color: "#8A641D", flex: 5 }] }
+        ]
+      },
+      footer: {
+        type: "box",
+        layout: "vertical",
+        paddingAll: "12px",
+        contents: [{
+          type: "button",
+          style: "primary",
+          color: "#65725E",
+          height: "sm",
+          action: { type: "uri", label: "開啟 Ops Hub 處理", uri: bookingAdminUrl(selection) }
+        }]
+      }
+    }
+  };
+}
+
 // A public request is an internal operational event, not a customer broadcast.
 // Failure is intentionally non-blocking: the verified pending request remains in
-// the admin queue even when LINE has not been configured.
+// the admin queue even when LINE is unavailable.
 async function sendPublicBookingAlert(selection) {
   const groupId = await boundGroupId();
   if (!groupId) return { sent: false, reason: "recipient_not_bound" };
   if (!String(process.env.LINE_CHANNEL_ACCESS_TOKEN || "").trim()) return { sent: false, reason: "line_not_configured" };
-  await pushLine(groupId, [
-    "🗓️ 公開預約需求待確認",
-    `${String(selection.date || "")} ${String(selection.time || "").slice(0, 5)}｜${String(selection.service || "")}`,
-    `偏好師傅：${String(selection.selectedTherapistName || selection.selectedTherapistId || "未指定")}`,
-    `顧客：${String(selection.customerName || "未留姓名")}｜${String(selection.customerContact || "")}`
-  ].join("\n"));
-  return { sent: true };
+
+  const selectionId = String(selection.id || "").trim();
+  if (!selectionId) return { sent: false, reason: "selection_id_missing" };
+  const scheduledAt = `${String(selection.date || taipeiDate())}T${String(selection.time || "00:00").slice(0, 5)}:00+08:00`;
+  const reservation = await sqlClient()`
+    INSERT INTO line_staff_alerts (appointment_id, alert_kind, scheduled_at)
+    VALUES (${selectionId}, 'public_booking', ${scheduledAt}::timestamptz)
+    ON CONFLICT (appointment_id, alert_kind, scheduled_at) DO NOTHING
+    RETURNING appointment_id
+  `;
+  if (!reservation[0]) return { sent: false, reason: "duplicate" };
+
+  try {
+    await pushMessages(groupId, [bookingAlertFlex(selection)]);
+    await sqlClient()`
+      UPDATE line_staff_alerts
+      SET sent_at = now()
+      WHERE appointment_id = ${selectionId}
+        AND alert_kind = 'public_booking'
+        AND scheduled_at = ${scheduledAt}::timestamptz
+    `;
+    return { sent: true };
+  } catch (error) {
+    await sqlClient()`
+      DELETE FROM line_staff_alerts
+      WHERE appointment_id = ${selectionId}
+        AND alert_kind = 'public_booking'
+        AND scheduled_at = ${scheduledAt}::timestamptz
+        AND sent_at IS NULL
+    `;
+    throw error;
+  }
 }
 
 module.exports = { bindStaffGroup, replyLine, sendDailyBrief, sendUpcomingAlerts, sendPublicBookingAlert, taipeiDate, taipeiMinute };
