@@ -9,10 +9,57 @@
     .map((method) => `<option value="${esc(method)}" ${selected === method ? "selected" : ""}>${method || "選擇回帳管道"}</option>`)
     .join("");
 
-  // Booking detail now owns scoped, in-card editors in app.js. Do not wrap its
-  // renderer here: this compatibility file only extends the therapist report
-  // flow below. Keeping the render path single-owner prevents legacy field
-  // replacement and submit handlers from leaking into any booking section.
+  const serviceRecordAction = (appt, record = {}) => {
+    const phone = String(appt?.phone || "").trim();
+    const id = String(appt?.id || appt?.appId || record?.id || "").trim();
+    if (!phone || !id) return null;
+    return {
+      action: "saveServiceRecord",
+      data: {
+        recordId: String(record?.record_id || record?.recordId || id),
+        appointmentId: id,
+        customer_key_legacy: phone,
+        customerName: String(appt?.customerName || ""),
+        date: String(record?.date || appt?.date || ""),
+        therapistId: String(record?.therapistId || appt?.therapistId || ""),
+        therapistName: String(record?.therapistName || therapistName(appt?.therapistId) || ""),
+        service: String(record?.service || appt?.service || ""),
+        collectedPrice: String(record?.collectedPrice ?? appt?.collectedPrice ?? ""),
+        notes: String(record?.notes || "")
+      }
+    };
+  };
+
+  if (typeof saveCloudActions === "function" && !saveCloudActions.__remittanceRecordPersistencePatched) {
+    const originalSaveCloudActions = saveCloudActions;
+    const patchedSaveCloudActions = async (actions, successMessage = "已儲存到雲端", options = {}) => {
+      const enriched = (actions || []).filter(Boolean).map((item) => ({ ...item, data: item?.data ? { ...item.data } : item?.data }));
+      const appointmentActions = enriched.filter((item) => item.action === "addAppointment" && item.data);
+
+      appointmentActions.forEach((item) => {
+        const appt = item.data;
+        const due = Math.max(0, Number(appt.remittanceDue || 0) || 0);
+        const collected = Math.max(0, Number(appt.collectedPrice || 0) || 0);
+        if (collected > 0) appt.remittancePaid = due > 0 ? collected >= due : true;
+        else if (!String(appt.remittanceMethod || "").trim()) appt.remittancePaid = false;
+
+        const id = String(appt.id || appt.appId || "");
+        const phone = String(appt.phone || "");
+        if (!id || !phone) return;
+        const customerAction = enriched.find((candidate) => candidate.action === "saveCustomer" && String(candidate.data?.phone || "") === phone);
+        const matchingRecord = Array.isArray(customerAction?.data?.records)
+          ? customerAction.data.records.find((record) => String(record?.id || record?.appointmentId || "") === id)
+          : null;
+        if (!matchingRecord) return;
+        const exists = enriched.some((candidate) => candidate.action === "saveServiceRecord" && String(candidate.data?.appointmentId || candidate.data?.appointment_id || candidate.data?.id || "") === id);
+        if (!exists) enriched.push(serviceRecordAction(appt, matchingRecord));
+      });
+
+      return originalSaveCloudActions(enriched.filter(Boolean), successMessage, options);
+    };
+    patchedSaveCloudActions.__remittanceRecordPersistencePatched = true;
+    saveCloudActions = patchedSaveCloudActions;
+  }
 
   openTherapistReport = function patchedOpenTherapistReport(id) {
     const appt = db.appointments[id];
