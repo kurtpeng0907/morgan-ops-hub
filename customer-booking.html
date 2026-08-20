@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>線上預約需求｜Morgan SPA</title>
   <link rel="stylesheet" href="./tailwind.generated.css?v=public-booking-v1">
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
     :root{--ink:#18312d;--muted:#687a76;--teal:#157d75;--soft:#eaf5f2;--line:#d7e5e1;--bg:#f5f8f7;}
@@ -17,7 +18,7 @@
   <main class="shell">
     <section class="card hero"><div class="brand">MORGAN SPA</div><h1>提出預約需求</h1><p>選擇方便的時段與偏好師傅；送出後由店家確認安排。</p></section>
     <div class="steps" aria-label="預約步驟"><span class="step active">1 日期與服務</span><span class="step">2 選時段</span><span class="step">3 選師傅</span><span class="step">4 留聯絡方式</span></div>
-    <section id="success" class="card panel state success hidden" aria-live="polite"><div><strong class="text-xl">已送出預約需求</strong><p class="mt-2">店家確認後會再與您聯絡；此刻尚未成立正式預約。</p></div></section>
+    <section id="success" class="card panel state success hidden" aria-live="polite"><div><strong class="text-xl">已送出預約需求</strong><p id="successText" class="mt-2">店家確認後會再與您聯絡；此刻尚未成立正式預約。</p></div></section>
     <section id="bookingWorkspace" class="workspace">
       <div class="grid gap-4">
         <section class="card panel"><div class="kicker">第一步</div><h2>日期與服務</h2><div class="choices"><label class="label">希望日期<input id="date" type="date" class="input" required></label><div><label class="label">服務課程</label><div id="courseList" class="choices mt-2"><div class="state">正在讀取可預約課程…</div></div></div></div></section>
@@ -29,7 +30,7 @@
   </main>
   <script>
   (() => {
-    const state = { date:'', service:'', time:'', therapist:null, courses:[], slots:[], therapists:[], requestId: newRequestId() };
+    const state = { date:'', service:'', time:'', therapist:null, courses:[], slots:[], therapists:[], requestId: newRequestId(), liffIdToken:'' };
     const $ = id => document.getElementById(id);
     const localDate = () => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
     const escape = value => String(value || '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -46,11 +47,12 @@
     function renderSlots(){ const list=$('slotList'); if(!state.date||!state.service){list.innerHTML='';return;} if(!state.slots.length){$('slotHint').textContent='這一天沒有符合條件的可選時段，請改選日期或服務。';list.innerHTML='';return;} $('slotHint').textContent='時段以 30 分鐘為間距，送出前會再次確認。'; list.innerHTML=state.slots.map(t=>`<button type="button" class="choice ${t===state.time?'selected':''}" data-time="${t}">${t}</button>`).join(''); document.querySelectorAll('[data-time]').forEach(el=>el.onclick=async()=>{if(state.time===el.dataset.time)return;state.time=el.dataset.time;state.therapist=null;resetRequest();await refresh();}); }
     function renderTherapists(){ const list=$('therapistList'); if(!state.time){$('therapistHint').textContent='選定時段後顯示可接師傅。';list.innerHTML='';return;} if(!state.therapists.length){$('therapistHint').textContent='此時段已無可接師傅，請選擇其他時段。';list.innerHTML='';return;} $('therapistHint').textContent='僅顯示此時段可接的師傅。';list.innerHTML=state.therapists.map(t=>`<button type="button" class="choice therapist ${state.therapist?.id===t.id?'selected':''}" data-therapist="${escape(t.id)}"><span class="avatar">${t.photoUrl?`<img src="${escape(t.photoUrl)}" alt="">`:escape(t.name.slice(0,1))}</span><span><b>${escape(t.name)}</b>${t.specialties?`<small>${escape(t.specialties)}</small>`:''}</span></button>`).join(''); document.querySelectorAll('[data-therapist]').forEach(el=>el.onclick=()=>{state.therapist=state.therapists.find(t=>t.id===el.dataset.therapist);resetRequest();renderTherapists();renderSummary();}); }
     function renderSummary(){const c=selectedCourse(), t=state.therapist; $('selectionSummary').innerHTML=c&&state.date&&state.time&&t?`<span>${escape(state.date)} · ${escape(state.time)}</span><b>${escape(c.name)}｜${escape(t.name)}</b>`:'<span>尚未完成選擇</span><b>請依序選擇日期、課程、時段與師傅</b>'; const button=$('submit');button.disabled=!(c&&state.date&&state.time&&t);button.textContent=button.disabled?'請先完成選擇':'送出預約需求';}
+    async function initLiffMember(){try{if(!window.liff)return;const response=await fetch('/api/member-config',{cache:'no-store'});const config=await response.json();if(!response.ok||!config.success||!config.liffId)return;await liff.init({liffId:config.liffId});if(!liff.isLoggedIn()){if(liff.isInClient())return;liff.login({redirectUri:location.href});return;}state.liffIdToken=liff.getIDToken()||'';if(state.liffIdToken)setMessage('已登入 LINE 會員；本次預約可在會員中心追蹤。');}catch{}}
     async function refresh(){ try { const data=await fetchSnapshot(); state.courses=data.courses||state.courses; state.slots=data.slots||[]; state.therapists=data.therapists||[]; if(state.time&&!state.slots.includes(state.time)){state.time='';state.therapist=null;} if(state.therapist&&!state.therapists.some(t=>t.id===state.therapist.id))state.therapist=null; renderCourses();renderSlots();renderTherapists();renderSummary();setMessage(); } catch(error){ setMessage('目前無法讀取可預約資料，請稍後重新整理。','error'); }}
     $('date').min=localDate(); $('date').max=(()=>{const d=new Date();d.setDate(d.getDate()+30);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`})(); $('date').value=localDate();state.date=$('date').value;
     $('date').onchange=async e=>{state.date=e.target.value;state.time='';state.therapist=null;resetRequest();await refresh();};
-    $('bookingForm').onsubmit=async e=>{e.preventDefault();if(!$('submit').disabled){const button=$('submit');button.disabled=true;button.textContent='正在確認可用性…';setMessage();try{const r=await fetch('/api/public-booking',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requestId:state.requestId,date:state.date,time:state.time,service:state.service,therapistId:state.therapist.id,customerName:$('customerName').value,customerContact:$('customerContact').value,customerNote:$('customerNote').value})});const p=await r.json();if(!r.ok||!p.success)throw Object.assign(new Error(p.error||'public_booking_unavailable'),{code:p.error});$('bookingWorkspace').classList.add('hidden');$('success').classList.remove('hidden');}catch(error){setMessage(error.code==='booking_conflict'?'這個時段剛剛有變動，請重新選擇時段或師傅。':'送出失敗，請確認網路後再試；已填資料會保留。','error');button.disabled=false;button.textContent='送出預約需求';if(error.code==='booking_conflict'){state.time='';state.therapist=null;await refresh();}}}};
-    refresh();
+    $('bookingForm').onsubmit=async e=>{e.preventDefault();if(!$('submit').disabled){const button=$('submit');button.disabled=true;button.textContent='正在確認可用性…';setMessage();try{const r=await fetch('/api/public-booking',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requestId:state.requestId,date:state.date,time:state.time,service:state.service,therapistId:state.therapist.id,customerName:$('customerName').value,customerContact:$('customerContact').value,customerNote:$('customerNote').value,liffIdToken:state.liffIdToken||undefined})});const p=await r.json();if(!r.ok||!p.success)throw Object.assign(new Error(p.error||'public_booking_unavailable'),{code:p.error});$('successText').textContent=state.liffIdToken?'已收到預約需求，等待 Morgan 確認。確認後可從 Morgan LINE 的會員中心查看進度。':'已收到預約需求，等待 Morgan 確認。';$('bookingWorkspace').classList.add('hidden');$('success').classList.remove('hidden');}catch(error){setMessage(error.code==='booking_conflict'?'這個時段剛剛有變動，請重新選擇時段或師傅。':'送出失敗，請確認網路後再試；已填資料會保留。','error');button.disabled=false;button.textContent='送出預約需求';if(error.code==='booking_conflict'){state.time='';state.therapist=null;await refresh();}}}};
+    initLiffMember();refresh();
   })();
   </script>
 </body>

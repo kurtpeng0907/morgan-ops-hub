@@ -199,4 +199,58 @@ async function sendPublicBookingAlert(selection, options = {}) {
   }
 }
 
-module.exports = { bindStaffGroup, replyLine, sendDailyBrief, sendUpcomingAlerts, sendPublicBookingAlert, taipeiDate, taipeiMinute };
+function customerMemberUrl() {
+  const liffId = String(process.env.LINE_LIFF_ID || "").trim();
+  if (liffId) return `https://liff.line.me/${encodeURIComponent(liffId)}`;
+  return String(process.env.MORGAN_MEMBER_URL || "https://morgan-ops-hub.vercel.app/member.html");
+}
+
+// Customer delivery is an after-commit side effect.  Its ledger is independent
+// from staff alerts so a failed Push can be retried on a later state save without
+// ever undoing an already confirmed/cancelled booking.
+async function sendMemberBookingAlert(selection) {
+  const memberId = String(selection?.memberId || "").trim();
+  const bookingId = String(selection?.id || "").trim();
+  const status = String(selection?.status || "");
+  const alertKind = status === "confirmed" ? "booking_confirmed" : (["rejected", "cancelled"].includes(status) ? "booking_cancelled" : "");
+  if (!memberId || !bookingId || !alertKind) return { sent: false, reason: "not_applicable" };
+  if (!String(process.env.LINE_CHANNEL_ACCESS_TOKEN || "").trim()) return { sent: false, reason: "line_not_configured" };
+  if (!String(process.env.LINE_LIFF_ID || "").trim()) return { sent: false, reason: "liff_not_configured" };
+  const sql = sqlClient();
+  const members = await sql`SELECT line_user_id FROM customer_members WHERE id = ${memberId}::uuid LIMIT 1`;
+  if (!members[0]?.line_user_id) return { sent: false, reason: "member_not_found" };
+  const reservation = await sql`
+    INSERT INTO line_customer_alerts (member_id, booking_id, alert_kind, updated_at)
+    VALUES (${memberId}::uuid, ${bookingId}, ${alertKind}, now())
+    ON CONFLICT (member_id, booking_id, alert_kind) DO UPDATE SET updated_at = now()
+      WHERE line_customer_alerts.sent_at IS NULL
+    RETURNING id
+  `;
+  if (!reservation[0]) return { sent: false, reason: "duplicate" };
+  const confirmed = alertKind === "booking_confirmed";
+  const message = {
+    type: "flex",
+    altText: confirmed ? "Morgan 預約已確認" : "Morgan 預約狀態已更新",
+    contents: { type: "bubble", body: { type: "box", layout: "vertical", spacing: "md", contents: [
+      { type: "text", text: "MODERN MORGAN", size: "xs", color: "#157D75", weight: "bold" },
+      { type: "text", text: confirmed ? "預約已確認" : "預約狀態已更新", size: "xl", weight: "bold", wrap: true },
+      { type: "text", text: confirmed ? "您的預約已由店家確認安排。" : "您的預約目前無法安排或已取消。", size: "sm", color: "#52606D", wrap: true },
+      { type: "separator", margin: "md" },
+      { type: "text", text: `${String(selection.date || "")} ${String(selection.time || "").slice(0, 5)}`, size: "sm", weight: "bold" },
+      { type: "text", text: String(selection.serviceName || selection.service || "預約服務"), size: "sm", wrap: true },
+      { type: "text", text: String(selection.selectedTherapistName || ""), size: "sm", color: "#52606D", wrap: true }
+    ] }, footer: { type: "box", layout: "vertical", contents: [
+      { type: "button", style: "primary", color: "#157D75", action: { type: "uri", label: "查看預約進度", uri: customerMemberUrl() } }
+    ] } }
+  };
+  try {
+    await pushLineMessage(String(members[0].line_user_id), message);
+    await sql`UPDATE line_customer_alerts SET sent_at = now(), failed_at = NULL, error_code = '', updated_at = now() WHERE id = ${reservation[0].id}`;
+    return { sent: true };
+  } catch (error) {
+    await sql`UPDATE line_customer_alerts SET failed_at = now(), error_code = ${String(error.code || "line_api_failed").slice(0, 80)}, updated_at = now() WHERE id = ${reservation[0].id}`;
+    return { sent: false, reason: String(error.code || "line_api_failed") };
+  }
+}
+
+module.exports = { bindStaffGroup, replyLine, sendDailyBrief, sendUpcomingAlerts, sendPublicBookingAlert, sendMemberBookingAlert, taipeiDate, taipeiMinute };

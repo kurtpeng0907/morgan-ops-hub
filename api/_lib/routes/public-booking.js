@@ -6,6 +6,7 @@ const { requestId, readJson, sendJson, logRequest, methodNotAllowed, errorPayloa
 const sqlRepository = require("../sql-repository");
 const { sendPublicBookingAlert } = require("../line-staff-reminders");
 const { publicSnapshot, validateSubmission, selectionRecord } = require("../public-booking");
+const { memberFromIdToken } = require("../line-members");
 
 function existingPublicSelection(data, requestIdValue) {
   const raw = data?.customers?.[`SYS_CLIENT_SELECTION_${String(requestIdValue || "")}`]?.notes;
@@ -57,7 +58,11 @@ module.exports = async function handler(req, res) {
       logRequest({ id, route: "/api/public-booking", status: 200, startedAt, upstreamMs: source.upstreamMs || 0, bytes: Buffer.byteLength(JSON.stringify(response)) });
       return sendJson(res, 200, response);
     }
-    const selection = validateSubmission(data, body);
+    const baseSelection = validateSubmission(data, body);
+    // Guest booking remains supported.  A supplied LIFF token is never ignored:
+    // it must validate before the booking may claim a member relationship.
+    const member = body.liffIdToken ? await memberFromIdToken(body.liffIdToken) : null;
+    const selection = member ? { ...baseSelection, memberId: member.id } : baseSelection;
     let result;
     if (dataSourceMode() === "sql") {
       result = await sqlRepository.submitPublicBooking(selection);

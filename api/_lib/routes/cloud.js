@@ -7,6 +7,7 @@ const { verifySession } = require("../session");
 const sqlRepository = require("../sql-repository");
 const { assertActionAllowed } = require("../policy");
 const { assertBookingTransition } = require("../domain-contracts");
+const { sendMemberBookingAlert } = require("../line-staff-reminders");
 
 const ALLOWED_ACTIONS = new Set([
   "batch", "saveSchedule", "addTherapist", "updatePin", "deleteTherapist",
@@ -76,6 +77,16 @@ function validateBookingCommands(session, action, data) {
   }
 }
 
+function memberSelectionsFromMutation(action, data) {
+  return flattenActions(action, data).flatMap((item) => {
+    if (item.action !== "saveCustomer" || !String(item.data?.phone || "").startsWith("SYS_CLIENT_SELECTION_")) return [];
+    try {
+      const selection = JSON.parse(String(item.data?.notes || "{}"));
+      return selection?.memberId && selection?.id ? [selection] : [];
+    } catch { return []; }
+  });
+}
+
 module.exports = async function handler(req, res) {
   if (req.method !== "POST") return methodNotAllowed(res, ["POST"]);
   const id = requestId(req);
@@ -97,6 +108,13 @@ module.exports = async function handler(req, res) {
     if (dataSourceMode() === "sql") {
       const sqlStartedAt = Date.now();
       const result = await sqlRepository.applyMutation(session, mutationId, action, body.data || {});
+      // Never permit a customer Push failure to change the mutation response or
+      // rollback the confirmed selection.  The notification module owns its
+      // own idempotency/failure ledger.
+      const selections = memberSelectionsFromMutation(action, body.data || {});
+      for (const selection of selections) {
+        try { await sendMemberBookingAlert(selection); } catch {}
+      }
       const sqlMs = Date.now() - sqlStartedAt;
       const response = { ...result, requestId: id };
       const bytes = Buffer.byteLength(JSON.stringify(response));
@@ -129,3 +147,4 @@ module.exports = async function handler(req, res) {
 
 module.exports.therapistOwnsWrite = therapistOwnsWrite;
 module.exports.validateBookingCommands = validateBookingCommands;
+module.exports.memberSelectionsFromMutation = memberSelectionsFromMutation;

@@ -4170,6 +4170,7 @@ function openCustomerModal(phone = "", recordsOpen = false) {
           <button id="addRecordBtn" type="button" class="btn-teal mt-3">儲存此筆入檔</button>
         </div>
         <div><h4 class="mb-3 font-black">消費與服務紀錄 <span id="recordCountBadge" class="badge bg-indigo-50 text-indigo-700">${historyCount}</span></h4><div id="recordList" class="space-y-3">${renderRecordList(phone)}</div></div>` : ""}
+        ${phone && currentUser?.role === "admin" ? `<section id="memberLinkPanel" class="rounded-xl border border-teal-200 bg-teal-50 p-4"><h4 class="font-black text-teal-900">LINE 會員歷史連結</h4><p class="mt-1 text-xs font-bold text-teal-800">請先核對姓名與聯絡方式，再連結既有服務歷史。</p><div id="memberLinkContent" class="mt-3 text-sm font-bold text-slate-600">正在讀取連結狀態…</div></section>` : ""}
         <p id="customerError" class="hidden text-sm font-black text-rose-600"></p>
         <div class="flex flex-wrap justify-between gap-3 border-t pt-4">${phone ? `<button id="deleteCustomerFromProfileBtn" type="button" class="rounded-xl bg-rose-50 px-4 py-2 font-black text-rose-700">刪除顧客檔案</button>` : `<span></span>`}<div class="flex gap-3"><button type="button" class="btn-light" data-close-modal>關閉</button><button class="btn-teal">儲存基本資料</button></div></div>
       </form>
@@ -4214,6 +4215,48 @@ function openCustomerModal(phone = "", recordsOpen = false) {
       if ($("recordCountBadge")) $("recordCountBadge").textContent = customerConsumptionHistory(phone).length;
     }).catch(() => showSnackbar("服務紀錄暫時無法載入"));
   }
+  if (phone && currentUser?.role === "admin") loadMemberLinkPanel(phone);
+}
+
+async function memberLinkRequest(url, options = {}) {
+  const response = await fetch(url, { credentials: "same-origin", ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } });
+  const payload = await response.json();
+  if (!response.ok || !payload.success) throw new Error(payload.error || "member_link_unavailable");
+  return payload;
+}
+
+function memberLinkSummary(member) {
+  return `${esc(member.contactName || member.lineDisplayName || "LINE 會員")} · ${esc(member.contactPhone || "未填聯絡方式")}`;
+}
+
+async function loadMemberLinkPanel(phone) {
+  const panel = $("memberLinkContent");
+  if (!panel) return;
+  try {
+    const payload = await memberLinkRequest(`/api/member-links?customerKey=${encodeURIComponent(phone)}`);
+    if (payload.link) {
+      panel.innerHTML = `<div class="rounded-lg bg-white p-3"><p class="m-0">目前已連結：${memberLinkSummary(payload.link)}</p><button id="unlinkMemberBtn" type="button" class="btn-light mt-3 px-3 py-1 text-xs">解除連結</button></div>`;
+      $("unlinkMemberBtn").onclick = () => confirmAction("解除 LINE 會員連結？", "解除後，該會員將不再看到這位既有顧客的歷史資料。原始顧客與預約資料不會刪除。", async () => {
+        await memberLinkRequest("/api/member-links", { method: "POST", body: JSON.stringify({ action: "unlink", customerKey: phone }) });
+        showSnackbar("LINE 會員連結已解除"); loadMemberLinkPanel(phone);
+      }, "解除連結");
+      return;
+    }
+    panel.innerHTML = `<div class="flex gap-2"><input id="memberSearchInput" class="input bg-white" placeholder="搜尋 LINE 顯示名稱、姓名或電話"><button id="memberSearchBtn" type="button" class="btn-teal shrink-0">搜尋</button></div><div id="memberSearchResults" class="mt-3 space-y-2"></div>`;
+    $("memberSearchBtn").onclick = async () => {
+      const query = $("memberSearchInput").value.trim(); const result = $("memberSearchResults");
+      if (query.length < 2) { result.textContent = "請至少輸入兩個字搜尋。"; return; }
+      result.textContent = "搜尋中…";
+      try {
+        const payload = await memberLinkRequest(`/api/member-links?query=${encodeURIComponent(query)}`);
+        result.innerHTML = payload.members.length ? payload.members.map((member) => `<div class="flex items-center justify-between gap-2 rounded-lg bg-white p-3"><span>${memberLinkSummary(member)}</span><button type="button" class="btn-light px-3 py-1 text-xs" data-link-member="${esc(member.id)}">連結</button></div>`).join("") : "查無 LINE 會員。";
+        result.querySelectorAll("[data-link-member]").forEach((button) => button.onclick = () => confirmAction("連結此 LINE 會員？", "確認後，這位會員可以查看此顧客既有的服務歷史。", async () => {
+          await memberLinkRequest("/api/member-links", { method: "POST", body: JSON.stringify({ action: "link", customerKey: phone, memberId: button.dataset.linkMember }) });
+          showSnackbar("LINE 會員歷史已連結"); loadMemberLinkPanel(phone);
+        }, "確認連結"));
+      } catch { result.textContent = "目前無法搜尋會員，請稍後再試。"; }
+    };
+  } catch { panel.textContent = "目前無法讀取 LINE 會員連結。"; }
 }
 
 function customerConsumptionHistory(phone) {

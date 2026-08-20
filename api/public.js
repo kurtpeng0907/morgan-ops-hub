@@ -3,7 +3,8 @@
 // Single Vercel Function entry point for unauthenticated booking lookups.
 const routes = Object.freeze({
   "public-booking": require("./_lib/routes/public-booking"),
-  "public-schedule": require("./_lib/routes/public-schedule")
+  "public-schedule": require("./_lib/routes/public-schedule"),
+  member: require("./_lib/routes/member")
 });
 
 async function handler(req, res) {

@@ -18,7 +18,8 @@ const systemHealthHandler = require("../api/_lib/routes/system-health");
 const publicBookingHandler = require("../api/_lib/routes/public-booking");
 const publicScheduleHandler = require("../api/_lib/routes/public-schedule");
 const { safeErrorCategory } = systemHealthHandler;
-const { therapistOwnsWrite, validateBookingCommands } = cloudHandler;
+const { therapistOwnsWrite, validateBookingCommands, memberSelectionsFromMutation } = cloudHandler;
+const { customerStatus } = require("../api/_lib/line-members");
 const { createSession, verifySession } = require("../api/_lib/session");
 const sqlRepository = require("../api/_lib/sql-repository");
 const { transform } = require("../scripts/_lib/transform-sheets");
@@ -884,4 +885,49 @@ test("Vercel schedules LINE daily digest at 09:00 Taiwan and checks upcoming rem
     { path: "/api/cron/line-daily", schedule: "0 1 * * *" },
     { path: "/api/cron/line-upcoming", schedule: "0 2 * * *" }
   ]);
+});
+
+test("LINE member status projection never exposes internal workflow labels", () => {
+  assert.deepEqual(customerStatus({ status: "pending" }), { code: "pending", label: "待確認" });
+  assert.deepEqual(customerStatus({ status: "confirmed" }, { id: "APT-1", booking_stage: "pre_notice", is_completed: false }), { code: "pre_notice", label: "行前處理" });
+  assert.deepEqual(customerStatus({ status: "confirmed" }, { id: "APT-1", booking_stage: "completed", is_completed: true }), { code: "completed", label: "服務完成" });
+  assert.deepEqual(customerStatus({ status: "confirmed" }, null), { code: "updated", label: "預約已更新，請聯絡店家" });
+  assert.deepEqual(customerStatus({ status: "rejected" }), { code: "cancelled", label: "未安排" });
+});
+
+test("member booking notifications are derived only from saved member selections", () => {
+  const selection = { id: "PUB-MEMBER-001", memberId: "f0e1d2c3-b4a5-4678-9012-3456789abcde", status: "confirmed" };
+  const actions = { actions: [
+    { action: "saveCustomer", data: { phone: "SYS_CLIENT_SELECTION_PUB-MEMBER-001", notes: JSON.stringify(selection) } },
+    { action: "saveCustomer", data: { phone: "0912", notes: "ordinary customer" } }
+  ] };
+  assert.deepEqual(memberSelectionsFromMutation("batch", actions), [selection]);
+  assert.deepEqual(memberSelectionsFromMutation("saveCustomer", { phone: "SYS_CLIENT_SELECTION_PUB-MEMBER-001", notes: "not-json" }), []);
+});
+
+test("LINE member surface keeps identity server-verified and guest booking optional", () => {
+  const memberRoute = readFileSync(resolve(__dirname, "../api/_lib/routes/member.js"), "utf8");
+  const members = readFileSync(resolve(__dirname, "../api/_lib/line-members.js"), "utf8");
+  const booking = readFileSync(resolve(__dirname, "../api/_lib/routes/public-booking.js"), "utf8");
+  const page = readFileSync(resolve(__dirname, "../member.html"), "utf8");
+  const bookingPage = readFileSync(resolve(__dirname, "../customer-booking.html"), "utf8");
+  assert.match(members, /oauth2\/v2\.1\/verify/);
+  assert.match(members, /LINE_LOGIN_CHANNEL_ID/);
+  assert.match(memberRoute, /memberFromIdToken\(body\.idToken\)/);
+  assert.match(booking, /body\.liffIdToken \? await memberFromIdToken/);
+  assert.match(page, /liff\.getIDToken\(\)/);
+  assert.match(bookingPage, /liffIdToken:state\.liffIdToken\|\|undefined/);
+});
+
+test("member migration and routes preserve legacy records while enforcing notification idempotency", () => {
+  const migration = readFileSync(resolve(__dirname, "../drizzle/0004_line_members.sql"), "utf8");
+  const config = JSON.parse(readFileSync(resolve(__dirname, "../vercel.json"), "utf8"));
+  const app = readFileSync(resolve(__dirname, "../app.js"), "utf8");
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS customer_members/);
+  assert.match(migration, /member_legacy_links/);
+  assert.match(migration, /UNIQUE \(member_id, booking_id, alert_kind\)/);
+  assert.equal(config.rewrites.find((item) => item.source === "/api/member-bootstrap").destination, "/api/public?endpoint=member&resource=bootstrap");
+  assert.equal(config.rewrites.find((item) => item.source === "/api/member-links").destination, "/api/ops?endpoint=member-links");
+  assert.match(app, /LINE 會員歷史連結/);
+  assert.match(app, /confirmAction\("連結此 LINE 會員？"/);
 });
