@@ -15,5 +15,8 @@ LINE_CHANNEL_ACCESS_TOKEN=replace-with-line-channel-access-token
 LINE_CHANNEL_SECRET=replace-with-rotated-line-channel-secret
 LINE_STAFF_LINK_CODE=replace-with-long-one-time-group-link-code
 LINE_CRON_SECRET=replace-with-long-random-cron-secret
+# Optional: defaults to the Production Ops Hub. Set to the Preview origin when
+# validating a Preview notification end to end.
+MORGAN_OPS_HUB_URL=https://morgan-ops-hub.vercel.app/
 # Optional: defaults to 60 and is constrained to 15-180 minutes.
 LINE_REMINDER_LEAD_MINUTES=60

@@ -39,6 +39,43 @@ const customers = pgTable("customers", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
 }, (table) => [uniqueIndex("customers_legacy_key_uidx").on(table.customerKeyLegacy)]);
 
+// A LINE identity is deliberately separate from the historical customer key.
+// Existing customer records are commonly keyed by phone or a legacy LINE ID and
+// are joined only after an administrator has verified the match.
+const customerMembers = pgTable("customer_members", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  lineUserId: text("line_user_id").notNull(),
+  lineDisplayName: text("line_display_name").notNull().default(""),
+  pictureUrl: text("picture_url").notNull().default(""),
+  contactName: text("contact_name").notNull().default(""),
+  contactPhone: text("contact_phone").notNull().default(""),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+}, (table) => [uniqueIndex("customer_members_line_user_uidx").on(table.lineUserId)]);
+
+const memberLegacyLinks = pgTable("member_legacy_links", {
+  memberId: uuid("member_id").notNull().references(() => customerMembers.id),
+  customerKeyLegacy: text("customer_key_legacy").notNull().references(() => customers.customerKeyLegacy),
+  linkedBy: text("linked_by").notNull().default(""),
+  linkedAt: timestamp("linked_at", { withTimezone: true }).notNull().defaultNow()
+}, (table) => [
+  primaryKey({ columns: [table.memberId, table.customerKeyLegacy] }),
+  uniqueIndex("member_legacy_links_customer_uidx").on(table.customerKeyLegacy),
+  index("member_legacy_links_member_idx").on(table.memberId)
+]);
+
+const lineCustomerAlerts = pgTable("line_customer_alerts", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  memberId: uuid("member_id").notNull().references(() => customerMembers.id),
+  bookingId: text("booking_id").notNull(),
+  alertKind: text("alert_kind").notNull(),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+  failedAt: timestamp("failed_at", { withTimezone: true }),
+  errorCode: text("error_code").notNull().default(""),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+}, (table) => [uniqueIndex("line_customer_alerts_once_uidx").on(table.memberId, table.bookingId, table.alertKind)]);
+
 const appointments = pgTable("appointments", {
   id: text("id").primaryKey(),
   date: date("date", { mode: "string" }).notNull(),
@@ -116,4 +153,4 @@ const auditLog = pgTable("audit_log", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
 }, (table) => [index("audit_log_created_at_idx").on(table.createdAt)]);
 
-module.exports = { users, therapists, schedules, customers, appointments, serviceRecords, mutations, systemRecords, auditLog };
+module.exports = { users, therapists, schedules, customers, customerMembers, memberLegacyLinks, lineCustomerAlerts, appointments, serviceRecords, mutations, systemRecords, auditLog };

@@ -87,7 +87,7 @@ function validateSubmission(data, body = {}) {
   const available = isAvailable(data, { date, time, service });
   if (!course || !available.some((item) => item.id === therapistId)) throw Object.assign(new Error("booking_time_unavailable"), { code: "booking_conflict" });
   const therapist = available.find((item) => item.id === therapistId);
-  return { id, status: "pending", source: "public-booking", actorType: "customer_public", internalReminderStatus: "not_configured", date, time, service, duration: course.duration, therapistIds: [therapistId], selectedTherapistId: therapistId, selectedTherapistName: therapist.name, customerName: String(body.customerName || "").trim().slice(0, 80), customerContact: contact, customerNote: String(body.customerNote || "").trim().slice(0, 1000), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  return { id, status: "pending", source: "public-booking", actorType: "customer_public", internalReminderStatus: "not_configured", date, time, service, serviceName: course.name, duration: course.duration, therapistIds: [therapistId], selectedTherapistId: therapistId, selectedTherapistName: therapist.name, customerName: String(body.customerName || "").trim().slice(0, 80), customerContact: contact, customerNote: String(body.customerNote || "").trim().slice(0, 1000), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
 }
 
 function selectionRecord(selection) { return { phone: `${CLIENT_SELECTION_PREFIX}${selection.id}`, name: `pending-${selection.customerName || selection.customerContact}-${selection.selectedTherapistName}`, notes: JSON.stringify(selection), records: [] }; }

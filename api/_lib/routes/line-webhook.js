@@ -25,6 +25,12 @@ async function readRawBody(req) {
   return Buffer.concat(chunks);
 }
 
+function staffGroupReply(status) {
+  if (status === "bound" || status === "already_bound") return "✅ 已加入 Morgan 小編營運提醒。";
+  if (status === "different_group_bound") return "⚠️ 此系統已綁定其他小編群組。";
+  return "";
+}
+
 module.exports = async function handler(req, res) {
   if (req.method !== "POST") return methodNotAllowed(res, ["POST"]);
   const id = requestId(req);
@@ -43,8 +49,8 @@ module.exports = async function handler(req, res) {
       const text = String(event?.message?.type === "text" ? event.message.text || "" : "").trim();
       if (!expectedCode || !groupId || text !== expectedCode) continue;
       const result = await bindStaffGroup(groupId);
-      if (result.status === "bound" || result.status === "already_bound") await replyLine(event.replyToken, "✅ 已加入 Morgan 小編營運提醒。");
-      if (result.status === "different_group_bound") await replyLine(event.replyToken, "⚠️ 此系統已綁定其他小編群組。");
+      const reply = staffGroupReply(result.status);
+      if (reply) await replyLine(event.replyToken, reply);
     }
     logRequest({ id, route: "/api/line/webhook", status: 200, startedAt });
     return sendJson(res, 200, { success: true });
@@ -56,3 +62,4 @@ module.exports = async function handler(req, res) {
 };
 
 module.exports.validSignature = validSignature;
+module.exports.staffGroupReply = staffGroupReply;

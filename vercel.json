@@ -5,12 +5,16 @@
     { "path": "/api/cron/line-upcoming", "schedule": "0 2 * * *" }
   ],
   "rewrites": [
+    { "source": "/member", "destination": "/member.html" },
+    { "source": "/member/", "destination": "/member.html" },
+    { "source": "/member/booking", "destination": "/customer-booking.html" },
     { "source": "/api/session", "destination": "/api/ops?endpoint=session" },
     { "source": "/api/logout", "destination": "/api/ops?endpoint=logout" },
     { "source": "/api/bootstrap", "destination": "/api/ops?endpoint=bootstrap" },
     { "source": "/api/full-data", "destination": "/api/ops?endpoint=full-data" },
     { "source": "/api/cloud", "destination": "/api/ops?endpoint=cloud" },
     { "source": "/api/customer-records", "destination": "/api/ops?endpoint=customer-records" },
+    { "source": "/api/member-links", "destination": "/api/ops?endpoint=member-links" },
     { "source": "/api/mutation-status", "destination": "/api/ops?endpoint=mutation-status" },
     { "source": "/api/service-records-audit", "destination": "/api/ops?endpoint=service-records-audit" },
     { "source": "/api/performance", "destination": "/api/ops?endpoint=performance" },
@@ -21,6 +25,9 @@
     { "source": "/api/reports", "destination": "/api/ops?endpoint=sql-read&route=reports" },
     { "source": "/api/public-booking", "destination": "/api/public?endpoint=public-booking" },
     { "source": "/api/public-schedule", "destination": "/api/public?endpoint=public-schedule" },
+    { "source": "/api/member-config", "destination": "/api/public?endpoint=member&resource=config" },
+    { "source": "/api/member-bootstrap", "destination": "/api/public?endpoint=member&resource=bootstrap" },
+    { "source": "/api/member-profile", "destination": "/api/public?endpoint=member&resource=profile" },
     { "source": "/api/line/webhook", "destination": "/api/line?endpoint=webhook" },
     { "source": "/api/cron/line-daily", "destination": "/api/line?endpoint=line-daily" },
     { "source": "/api/cron/line-upcoming", "destination": "/api/line?endpoint=line-upcoming" }

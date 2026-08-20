@@ -18,7 +18,8 @@ const systemHealthHandler = require("../api/_lib/routes/system-health");
 const publicBookingHandler = require("../api/_lib/routes/public-booking");
 const publicScheduleHandler = require("../api/_lib/routes/public-schedule");
 const { safeErrorCategory } = systemHealthHandler;
-const { therapistOwnsWrite, validateBookingCommands } = cloudHandler;
+const { therapistOwnsWrite, validateBookingCommands, memberSelectionsFromMutation } = cloudHandler;
+const { customerStatus } = require("../api/_lib/line-members");
 const { createSession, verifySession } = require("../api/_lib/session");
 const sqlRepository = require("../api/_lib/sql-repository");
 const { transform } = require("../scripts/_lib/transform-sheets");
@@ -244,6 +245,15 @@ test("public booking API writes a pending demand and verifies it by a server rea
     await publicBookingHandler({ method: "POST", headers: {}, body: { requestId: "PUB-98765432", date, time: "11:00", service: "A60", therapistId: "001", customerContact: "0900000000" }, query: {} }, retry);
     assert.equal(retry.statusCode, 200);
     assert.equal(retry.payload.duplicate, true);
+    const confirmed = JSON.parse(db.customers["SYS_CLIENT_SELECTION_PUB-98765432"].notes);
+    confirmed.status = "confirmed";
+    confirmed.appointmentId = "APT-verified";
+    db.customers["SYS_CLIENT_SELECTION_PUB-98765432"].notes = JSON.stringify(confirmed);
+    const retryAfterConfirmation = { setHeader() {}, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+    await publicBookingHandler({ method: "POST", headers: {}, body: { requestId: "PUB-98765432", date, time: "11:00", service: "A60", therapistId: "001", customerContact: "0900000000" }, query: {} }, retryAfterConfirmation);
+    assert.equal(retryAfterConfirmation.statusCode, 200);
+    assert.equal(retryAfterConfirmation.payload.duplicate, true);
+    assert.equal(retryAfterConfirmation.payload.selection.status, "confirmed");
   } finally { global.fetch = originalFetch; }
 });
 
@@ -478,6 +488,62 @@ test("LINE webhook rejects unsigned requests before parsing or writing a recipie
   await lineWebhook(req, res);
   assert.equal(res.statusCode, 401);
   assert.equal(res.body.error, "invalid_signature");
+});
+
+test("LINE staff group binding returns the required bound-state replies", () => {
+  assert.equal(lineWebhook.staffGroupReply("bound"), "✅ 已加入 Morgan 小編營運提醒。");
+  assert.equal(lineWebhook.staffGroupReply("already_bound"), "✅ 已加入 Morgan 小編營運提醒。");
+  assert.equal(lineWebhook.staffGroupReply("different_group_bound"), "⚠️ 此系統已綁定其他小編群組。");
+  assert.equal(lineWebhook.staffGroupReply("invalid"), "");
+});
+
+test("LINE webhook ignores an incorrect staff link code after signature verification", async () => {
+  const originalSecret = process.env.LINE_CHANNEL_SECRET;
+  const originalCode = process.env.LINE_STAFF_LINK_CODE;
+  process.env.LINE_CHANNEL_SECRET = "line-test-secret";
+  process.env.LINE_STAFF_LINK_CODE = "CORRECT-CODE";
+  const payload = Buffer.from(JSON.stringify({ events: [{ source: { type: "group", groupId: "G-test" }, message: { type: "text", text: "WRONG-CODE" }, replyToken: "reply" }] }));
+  const signature = require("node:crypto").createHmac("sha256", process.env.LINE_CHANNEL_SECRET).update(payload).digest("base64");
+  const req = Readable.from([payload]);
+  req.method = "POST";
+  req.headers = { "x-line-signature": signature };
+  const res = responseMock();
+  try {
+    await lineWebhook(req, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.success, true);
+  } finally {
+    process.env.LINE_CHANNEL_SECRET = originalSecret;
+    process.env.LINE_STAFF_LINK_CODE = originalCode;
+  }
+});
+
+test("public booking staff alert uses a reserved Flex message and an Ops Hub deep link", () => {
+  const reminder = readFileSync(resolve(__dirname, "../api/_lib/line-staff-reminders.js"), "utf8");
+  const route = readFileSync(resolve(__dirname, "../api/_lib/routes/public-booking.js"), "utf8");
+  const migration = readFileSync(resolve(__dirname, "../drizzle/0003_public_booking_staff_alert.sql"), "utf8");
+  assert.match(reminder, /'public_booking_pending'/);
+  assert.match(reminder, /ON CONFLICT \(appointment_id, alert_kind, scheduled_at\) DO NOTHING/);
+  assert.match(reminder, /type: "flex", altText: "新的預約需求待處理"/);
+  assert.match(reminder, /selectionId/);
+  assert.match(reminder, /開啟 Ops Hub 處理/);
+  assert.match(route, /requestOpsHubUrl\(req\)/);
+  assert.match(route, /if \(result\.verified === true\)/);
+  assert.doesNotMatch(route, /response = \{[^\n]*internalReminder/);
+  assert.match(migration, /public_booking_pending/);
+  assert.match(migration, /DROP CONSTRAINT IF EXISTS line_staff_alerts_appointment_id_fkey/);
+  assert.match(migration, /CREATE UNIQUE INDEX line_staff_alerts_public_booking_once/);
+});
+
+test("Ops Hub deep link focuses but never confirms a pending public request", () => {
+  const source = readFileSync(resolve(__dirname, "../app.js"), "utf8");
+  assert.match(source, /const initialSelectionId = String\(initialUrlState\.get\("selectionId"\)/);
+  assert.match(source, /function focusSelectionDeepLink\(\)/);
+  assert.match(source, /selection\.status !== "pending"/);
+  assert.match(source, /這筆預約需求已處理或不存在/);
+  assert.match(source, /data-client-selection-id/);
+  const focusBody = source.slice(source.indexOf("function focusSelectionDeepLink"), source.indexOf("function restoreViewStateFromUrl"));
+  assert.doesNotMatch(focusBody, /quickConfirmClientSelection|addAppointment|data-quick-confirm/);
 });
 
 test("LINE manual reminder endpoint requires its independent cron secret", async () => {
@@ -819,4 +885,63 @@ test("Vercel schedules LINE daily digest at 09:00 Taiwan and checks upcoming rem
     { path: "/api/cron/line-daily", schedule: "0 1 * * *" },
     { path: "/api/cron/line-upcoming", schedule: "0 2 * * *" }
   ]);
+});
+
+test("LINE member status projection never exposes internal workflow labels", () => {
+  assert.deepEqual(customerStatus({ status: "pending" }), { code: "pending", label: "待確認" });
+  assert.deepEqual(customerStatus({ status: "confirmed" }, { id: "APT-1", booking_stage: "pre_notice", is_completed: false }), { code: "pre_notice", label: "行前處理" });
+  assert.deepEqual(customerStatus({ status: "confirmed" }, { id: "APT-1", booking_stage: "completed", is_completed: true }), { code: "completed", label: "服務完成" });
+  assert.deepEqual(customerStatus({ status: "confirmed" }, null), { code: "updated", label: "預約已更新，請聯絡店家" });
+  assert.deepEqual(customerStatus({ status: "rejected" }), { code: "cancelled", label: "未安排" });
+});
+
+test("member booking notifications are derived only from saved member selections", () => {
+  const selection = { id: "PUB-MEMBER-001", memberId: "f0e1d2c3-b4a5-4678-9012-3456789abcde", status: "confirmed" };
+  const actions = { actions: [
+    { action: "saveCustomer", data: { phone: "SYS_CLIENT_SELECTION_PUB-MEMBER-001", notes: JSON.stringify(selection) } },
+    { action: "saveCustomer", data: { phone: "0912", notes: "ordinary customer" } }
+  ] };
+  assert.deepEqual(memberSelectionsFromMutation("batch", actions), [selection]);
+  assert.deepEqual(memberSelectionsFromMutation("saveCustomer", { phone: "SYS_CLIENT_SELECTION_PUB-MEMBER-001", notes: "not-json" }), []);
+});
+
+test("SQL mutations preserve remittance writes before non-blocking member notifications", () => {
+  const source = readFileSync(resolve(__dirname, "../api/_lib/routes/cloud.js"), "utf8");
+  const preserved = source.indexOf("const mutationData = await preserveTherapistPins");
+  const applied = source.indexOf("await sqlRepository.applyMutation(session, mutationId, action, mutationData)");
+  const remittance = source.indexOf("await persistCanonicalRemittance(action, mutationData)");
+  const selections = source.indexOf("const selections = memberSelectionsFromMutation(action, mutationData)");
+  const push = source.indexOf("await sendMemberBookingAlert(selection)");
+  assert.ok(preserved >= 0 && applied > preserved);
+  assert.ok(remittance > applied && selections > remittance && push > selections);
+  assert.match(source, /try \{ await sendMemberBookingAlert\(selection\); \} catch \{\}/);
+  assert.match(source, /module\.exports\.persistCanonicalRemittance = persistCanonicalRemittance/);
+  assert.match(source, /module\.exports\.memberSelectionsFromMutation = memberSelectionsFromMutation/);
+});
+
+test("LINE member surface keeps identity server-verified and guest booking optional", () => {
+  const memberRoute = readFileSync(resolve(__dirname, "../api/_lib/routes/member.js"), "utf8");
+  const members = readFileSync(resolve(__dirname, "../api/_lib/line-members.js"), "utf8");
+  const booking = readFileSync(resolve(__dirname, "../api/_lib/routes/public-booking.js"), "utf8");
+  const page = readFileSync(resolve(__dirname, "../member.html"), "utf8");
+  const bookingPage = readFileSync(resolve(__dirname, "../customer-booking.html"), "utf8");
+  assert.match(members, /oauth2\/v2\.1\/verify/);
+  assert.match(members, /LINE_LOGIN_CHANNEL_ID/);
+  assert.match(memberRoute, /memberFromIdToken\(body\.idToken\)/);
+  assert.match(booking, /body\.liffIdToken \? await memberFromIdToken/);
+  assert.match(page, /liff\.getIDToken\(\)/);
+  assert.match(bookingPage, /liffIdToken:state\.liffIdToken\|\|undefined/);
+});
+
+test("member migration and routes preserve legacy records while enforcing notification idempotency", () => {
+  const migration = readFileSync(resolve(__dirname, "../drizzle/0004_line_members.sql"), "utf8");
+  const config = JSON.parse(readFileSync(resolve(__dirname, "../vercel.json"), "utf8"));
+  const app = readFileSync(resolve(__dirname, "../app.js"), "utf8");
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS customer_members/);
+  assert.match(migration, /member_legacy_links/);
+  assert.match(migration, /UNIQUE \(member_id, booking_id, alert_kind\)/);
+  assert.equal(config.rewrites.find((item) => item.source === "/api/member-bootstrap").destination, "/api/public?endpoint=member&resource=bootstrap");
+  assert.equal(config.rewrites.find((item) => item.source === "/api/member-links").destination, "/api/ops?endpoint=member-links");
+  assert.match(app, /LINE 會員歷史連結/);
+  assert.match(app, /confirmAction\("連結此 LINE 會員？"/);
 });

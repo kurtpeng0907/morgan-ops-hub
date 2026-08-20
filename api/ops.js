@@ -9,6 +9,7 @@ const routes = Object.freeze({
   "full-data": require("./_lib/routes/full-data"),
   cloud: require("./_lib/routes/cloud"),
   "customer-records": require("./_lib/routes/customer-records"),
+  "member-links": require("./_lib/routes/member-links"),
   "mutation-status": require("./_lib/routes/mutation-status"),
   "service-records-audit": require("./_lib/routes/service-records-audit"),
   performance: require("./_lib/routes/performance"),

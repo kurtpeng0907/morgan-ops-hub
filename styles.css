@@ -3544,3 +3544,13 @@ tr:hover td { background:#f8fafc; }
   #view-dispatch .appointment-hero-todo { margin-top:12px; }
   #view-dispatch .appointment-detail-hero .appointment-workflow-rail { margin-top:16px; padding-top:16px; }
 }
+@keyframes selection-deep-link-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(20, 125, 115, .18); }
+  50% { box-shadow: 0 0 0 9px rgba(20, 125, 115, .08); }
+}
+.selection-deep-link-highlight {
+  border-color: #147d73 !important;
+  animation: selection-deep-link-pulse .8s ease-in-out 4;
+  outline: 3px solid rgba(20, 125, 115, .18);
+  outline-offset: 3px;
+}

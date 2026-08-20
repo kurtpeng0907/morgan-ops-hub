@@ -7,6 +7,7 @@ const { verifySession } = require("../session");
 const sqlRepository = require("../sql-repository");
 const { assertActionAllowed } = require("../policy");
 const { assertBookingTransition } = require("../domain-contracts");
+const { sendMemberBookingAlert } = require("../line-staff-reminders");
 
 const ALLOWED_ACTIONS = new Set([
   "batch", "saveSchedule", "addTherapist", "updatePin", "deleteTherapist",
@@ -26,14 +27,18 @@ function flattenActions(action, data) {
 
 async function preserveTherapistPins(action, data) {
   const copy = JSON.parse(JSON.stringify(data || {}));
-  const items = flattenActions(action, copy);
+  const items = flattenActions(action, copy).filter((item) => {
+    if (item.action !== "addTherapist") return false;
+    const itemData = item.data || {};
+    if (String(itemData.pin || "").trim() || itemData.pinHash) return false;
+    const therapistId = String(itemData.id || itemData.therapistId || "").trim();
+    return Boolean(therapistId);
+  });
+  if (!items.length) return copy;
   const sql = sqlClient();
   for (const item of items) {
-    if (item.action !== "addTherapist") continue;
     const itemData = item.data || {};
-    if (String(itemData.pin || "").trim() || itemData.pinHash) continue;
     const therapistId = String(itemData.id || itemData.therapistId || "").trim();
-    if (!therapistId) continue;
     const rows = await sql`
       SELECT pin_hash FROM users
       WHERE account_id = ${therapistId} AND role = 'therapist'
@@ -121,6 +126,16 @@ function validateBookingCommands(session, action, data) {
   }
 }
 
+function memberSelectionsFromMutation(action, data) {
+  return flattenActions(action, data).flatMap((item) => {
+    if (item.action !== "saveCustomer" || !String(item.data?.phone || "").startsWith("SYS_CLIENT_SELECTION_")) return [];
+    try {
+      const selection = JSON.parse(String(item.data?.notes || "{}"));
+      return selection?.memberId && selection?.id ? [selection] : [];
+    } catch { return []; }
+  });
+}
+
 module.exports = async function handler(req, res) {
   if (req.method !== "POST") return methodNotAllowed(res, ["POST"]);
   const id = requestId(req);
@@ -144,6 +159,13 @@ module.exports = async function handler(req, res) {
       const mutationData = await preserveTherapistPins(action, body.data || {});
       const result = await sqlRepository.applyMutation(session, mutationId, action, mutationData);
       await persistCanonicalRemittance(action, mutationData);
+      // Never permit a customer Push failure to change the mutation response or
+      // rollback the confirmed selection.  The notification module owns its
+      // own idempotency/failure ledger.
+      const selections = memberSelectionsFromMutation(action, mutationData);
+      for (const selection of selections) {
+        try { await sendMemberBookingAlert(selection); } catch {}
+      }
       const sqlMs = Date.now() - sqlStartedAt;
       const response = { ...result, requestId: id };
       const bytes = Buffer.byteLength(JSON.stringify(response));
@@ -178,3 +200,4 @@ module.exports.therapistOwnsWrite = therapistOwnsWrite;
 module.exports.validateBookingCommands = validateBookingCommands;
 module.exports.preserveTherapistPins = preserveTherapistPins;
 module.exports.persistCanonicalRemittance = persistCanonicalRemittance;
+module.exports.memberSelectionsFromMutation = memberSelectionsFromMutation;
