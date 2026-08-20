@@ -3,25 +3,24 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Modern Morgan｜LINE → 正式預約試作</title>
+<title>Modern Morgan｜LINE → 預約 → LINE 試作</title>
 <style>
-:root{--bg:#edf1e8;--paper:#fff;--ink:#242922;--muted:#747a70;--sage:#65725e;--soft:#e3e9de;--line:#dbe0d7;--linegreen:#06c755;--shadow:0 14px 40px rgba(43,50,41,.12)}*{box-sizing:border-box}body{margin:0;background:#f1f3ef;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC","PingFang TC",sans-serif}.app{max-width:430px;min-height:100vh;margin:auto;background:#fff;box-shadow:var(--shadow);position:relative;overflow:hidden}.top{height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid #e5e7e1;background:#fff}.top strong{font-size:16px}.prototype{font-size:11px;color:#65705f}.chat{background:var(--bg);padding:16px 12px 136px;min-height:calc(100vh - 54px)}.time{font-size:11px;text-align:center;color:#889084;margin:3px 0 15px}.row{display:flex;gap:8px;align-items:flex-start;margin:10px 0}.avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(145deg,#66745f,#aab7a1);color:#fff;display:grid;place-items:center;font-family:Georgia,serif;font-weight:700;flex:0 0 auto}.bubble{max-width:82%;padding:12px 13px;border-radius:5px 16px 16px 16px;background:#fff;font-size:14px;line-height:1.55}.bubble b{display:block;margin-bottom:5px}.card{background:#fff;border:1px solid var(--line);border-radius:18px;overflow:hidden;margin:14px 42px}.cardHead{padding:15px;border-bottom:1px solid #edf0eb}.cardHead small{display:block;color:var(--sage);font-size:10px;font-weight:900;letter-spacing:.12em}.cardHead strong{display:block;font-family:Georgia,"Times New Roman",serif;font-size:22px;font-weight:500;margin-top:5px}.cardBody{padding:14px 15px;font-size:13px;line-height:1.6;color:#596154}.flow{display:grid;gap:8px;margin-top:12px}.flow span{display:flex;align-items:center;gap:9px}.dot{width:22px;height:22px;border-radius:50%;background:var(--soft);display:grid;place-items:center;font-size:11px;font-weight:900;color:var(--sage);flex:0 0 auto}.notice{margin:16px 42px 0;padding:11px 12px;border:1px dashed #9eaa98;border-radius:12px;background:rgba(255,255,255,.55);font-size:11px;line-height:1.55;color:#65705f}.rich{position:absolute;left:0;right:0;bottom:0;background:#fff;border-top:1px solid #dfe4da;padding:9px 10px max(9px,env(safe-area-inset-bottom));display:grid;grid-template-columns:2fr 1fr 1fr;gap:7px}.btn{border:1px solid #d9ded5;background:#fff;border-radius:12px;padding:14px 7px;font-weight:800;color:#354132}.btn.primary{background:var(--sage);color:#fff;border-color:var(--sage)}.launch{display:none;position:fixed;inset:0;background:rgba(25,30,24,.42);backdrop-filter:blur(6px);z-index:30;align-items:flex-end;justify-content:center}.launch.show{display:flex}.sheet{width:min(430px,100%);background:#fff;border-radius:24px 24px 0 0;padding:22px 18px calc(22px + env(safe-area-inset-bottom));box-shadow:0 -14px 40px rgba(0,0,0,.12)}.sheet small{font-size:10px;color:var(--sage);font-weight:900;letter-spacing:.12em}.sheet h2{font-family:Georgia,"Times New Roman",serif;font-weight:500;font-size:28px;margin:6px 0 8px}.sheet p{font-size:13px;color:var(--muted);line-height:1.65;margin:0 0 14px}.go{display:block;width:100%;text-align:center;text-decoration:none;border:0;border-radius:14px;background:var(--sage);color:#fff;padding:15px;font-weight:900;font-size:15px}.cancel{width:100%;border:1px solid var(--line);border-radius:14px;background:#fff;color:#46513f;padding:13px;margin-top:8px;font-weight:800}.url{margin-top:12px;font-size:10px;color:#8a9086;word-break:break-all}.after{margin:10px 42px 0;display:none}.after.show{display:block}.after button{width:100%;border:0;border-radius:12px;padding:11px;background:#78846f;color:white;font-weight:800}
+:root{--bg:#edf1e8;--paper:#fff;--ink:#242922;--muted:#747a70;--sage:#65725e;--soft:#e3e9de;--line:#dbe0d7;--linegreen:#06c755;--shadow:0 14px 40px rgba(43,50,41,.12)}*{box-sizing:border-box}body{margin:0;background:#f1f3ef;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC","PingFang TC",sans-serif}.app{max-width:430px;min-height:100vh;margin:auto;background:#fff;box-shadow:var(--shadow);position:relative;overflow:hidden}.top{height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid #e5e7e1;background:#fff}.top strong{font-size:16px}.prototype{font-size:11px;color:#65705f}.chat{background:var(--bg);padding:16px 12px 136px;min-height:calc(100vh - 54px)}.time{font-size:11px;text-align:center;color:#889084;margin:3px 0 15px}.row{display:flex;gap:8px;align-items:flex-start;margin:10px 0}.avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(145deg,#66745f,#aab7a1);color:#fff;display:grid;place-items:center;font-family:Georgia,serif;font-weight:700;flex:0 0 auto}.bubble{max-width:82%;padding:12px 13px;border-radius:5px 16px 16px 16px;background:#fff;font-size:14px;line-height:1.55}.bubble b{display:block;margin-bottom:5px}.card{background:#fff;border:1px solid var(--line);border-radius:18px;overflow:hidden;margin:14px 42px}.cardHead{padding:15px;border-bottom:1px solid #edf0eb}.cardHead small{display:block;color:var(--sage);font-size:10px;font-weight:900;letter-spacing:.12em}.cardHead strong{display:block;font-family:Georgia,"Times New Roman",serif;font-size:22px;font-weight:500;margin-top:5px}.cardBody{padding:14px 15px;font-size:13px;line-height:1.6;color:#596154}.flow{display:grid;gap:8px;margin-top:12px}.flow span{display:flex;align-items:center;gap:9px}.dot{width:22px;height:22px;border-radius:50%;background:var(--soft);display:grid;place-items:center;font-size:11px;font-weight:900;color:var(--sage);flex:0 0 auto}.notice{margin:16px 42px 0;padding:11px 12px;border:1px dashed #9eaa98;border-radius:12px;background:rgba(255,255,255,.55);font-size:11px;line-height:1.55;color:#65705f}.rich{position:absolute;left:0;right:0;bottom:0;background:#fff;border-top:1px solid #dfe4da;padding:9px 10px max(9px,env(safe-area-inset-bottom));display:grid;grid-template-columns:2fr 1fr 1fr;gap:7px}.btn{border:1px solid #d9ded5;background:#fff;border-radius:12px;padding:14px 7px;font-weight:800;color:#354132}.btn.primary{background:var(--sage);color:#fff;border-color:var(--sage)}.launch{display:none;position:fixed;inset:0;background:rgba(25,30,24,.42);backdrop-filter:blur(6px);z-index:30;align-items:flex-end;justify-content:center}.launch.show{display:flex}.sheet{width:min(430px,100%);background:#fff;border-radius:24px 24px 0 0;padding:22px 18px calc(22px + env(safe-area-inset-bottom));box-shadow:0 -14px 40px rgba(0,0,0,.12)}.sheet small{font-size:10px;color:var(--sage);font-weight:900;letter-spacing:.12em}.sheet h2{font-family:Georgia,"Times New Roman",serif;font-weight:500;font-size:28px;margin:6px 0 8px}.sheet p{font-size:13px;color:var(--muted);line-height:1.65;margin:0 0 14px}.go{display:block;width:100%;text-align:center;text-decoration:none;border:0;border-radius:14px;background:var(--sage);color:#fff;padding:15px;font-weight:900;font-size:15px}.cancel{width:100%;border:1px solid var(--line);border-radius:14px;background:#fff;color:#46513f;padding:13px;margin-top:8px;font-weight:800}.tag{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border-radius:999px;background:#f0f4ed;color:#5e6d57;font-size:11px;font-weight:800}.confirmTest{width:100%;border:0;border-radius:12px;background:#78846f;color:#fff;padding:11px;font-weight:800;margin-top:10px}
 </style>
 </head>
 <body>
 <div class="app">
-<header class="top"><strong> Morgan Man Spa Plus</strong><span class="prototype">試作 · 真實預約入口</span></header>
-<div class="chat">
+<header class="top"><strong>Morgan Man Spa Plus</strong><span class="prototype">試作 · 不寫入正式資料</span></header>
+<div class="chat" id="chat">
   <div class="time">今天 12:00</div>
-  <div class="row"><div class="avatar">M</div><div class="bubble"><b>歡迎來到 Modern Morgan</b>需要預約時，直接從下方「立即預約」進入 Morgan 現在的正式預約系統。</div></div>
+  <div class="row"><div class="avatar">M</div><div class="bubble"><b>歡迎來到 Modern Morgan</b>需要預約時，直接從下方「立即預約」進入 Morgan 預約系統。</div></div>
   <div class="card">
     <div class="cardHead"><small>MODERN MORGAN</small><strong>LINE → Booking → LINE</strong></div>
-    <div class="cardBody">這一版先驗證真實入口是否順暢。預約頁本身直接使用目前正式上線的 Morgan Booking。
-      <div class="flow"><span><i class="dot">1</i>LINE 點「立即預約」</span><span><i class="dot">2</i>開啟正式預約系統</span><span><i class="dot">3</i>填寫並送出預約需求</span><span><i class="dot">4</i>關閉預約頁，回到 LINE</span><span><i class="dot">5</i>未來由 LINE 接續確認與通知</span></div>
+    <div class="cardBody">這一版會完整模擬一次往返，而且使用目前 customer-booking.html 的實際預約介面。
+      <div class="flow"><span><i class="dot">1</i>LINE 點「立即預約」</span><span><i class="dot">2</i>進入 Morgan 預約頁</span><span><i class="dot">3</i>完成預約需求</span><span><i class="dot">4</i>按「返回 LINE」</span><span><i class="dot">5</i>LINE 顯示等待店家確認</span></div>
     </div>
   </div>
-  <div class="notice"><b>目前安全範圍</b><br>這個 LINE 畫面是假的，但「立即預約」會進入正式的 customer-booking.html。現在尚未自動回 LINE，也尚未串 LINE 身分與訊息。</div>
-  <div class="after" id="after"><button id="simulateReturn">我已完成／返回 LINE</button></div>
+  <div class="notice"><b>Preview 安全模式</b><br>預約頁會讀取目前可用的服務／時段資料，但送出採試作模式，不會建立正式預約、不寫入資料庫，也不會發送 LINE。</div>
   <div id="returnMessage"></div>
 </div>
 <nav class="rich"><button class="btn primary" id="bookNow">立即預約</button><button class="btn">服務</button><button class="btn">聯絡</button></nav>
@@ -29,26 +28,29 @@
 
 <div class="launch" id="launch">
   <div class="sheet">
-    <small>LIVE BOOKING</small>
+    <small>BOOKING PREVIEW</small>
     <h2>前往 Morgan 預約</h2>
-    <p>接下來會開啟目前正式的 Morgan 預約頁。這不是假表單；若你真的送出，會依正式預約系統目前的邏輯建立「待店家確認」需求。</p>
-    <a class="go" id="goBooking" target="_blank" rel="noopener" href="https://morgan-ops-hub.vercel.app/customer-booking.html">開啟正式預約頁</a>
+    <p>接下來會使用 customer-booking.html 的實際介面，但本次 Preview 不會建立正式預約。填完後可以直接按「返回 LINE」回到這裡。</p>
+    <a class="go" id="goBooking" href="./customer-booking.html?from=line&prototype=1&return=%2Fmodern-morgan-line-live-booking-prototype.html%3Freturned%3D1">開始預約試作</a>
     <button class="cancel" id="cancel">先不要</button>
-    <div class="url">https://morgan-ops-hub.vercel.app/customer-booking.html</div>
   </div>
 </div>
 
 <script>
 (()=>{
 const $=id=>document.getElementById(id);
+function pendingCard(){
+  $('returnMessage').innerHTML='<div class="row"><div class="avatar">M</div><div class="bubble"><b>已收到你的預約需求</b>你已回到 Morgan LINE。<br><br><span class="tag">● 等待 Morgan 確認</span><br><br>店家確認師傅與現場安排後，正式版本會直接在這裡傳送預約確認與後續資訊。<button class="confirmTest" id="confirmTest">模擬店家確認</button></div></div>';
+  document.getElementById('confirmTest').onclick=confirmedCard;
+}
+function confirmedCard(){
+  const button=document.getElementById('confirmTest'); if(button)button.remove();
+  const wrap=document.createElement('div');wrap.className='row';wrap.innerHTML='<div class="avatar">M</div><div class="bubble"><b>預約已確認 ✓</b><span class="tag">✓ 正式預約成立</span><br><br>正式串聯後，這裡會帶入實際日期、時間、服務與師傅資訊，並接續行前提醒與異動通知。</div>';$('returnMessage').appendChild(wrap);
+}
 $('bookNow').onclick=()=>$('launch').classList.add('show');
 $('cancel').onclick=()=>$('launch').classList.remove('show');
 $('launch').onclick=e=>{if(e.target===$('launch'))$('launch').classList.remove('show')};
-$('goBooking').onclick=()=>{ $('launch').classList.remove('show'); $('after').classList.add('show'); };
-$('simulateReturn').onclick=()=>{
-  $('after').classList.remove('show');
-  $('returnMessage').innerHTML='<div class="row"><div class="avatar">M</div><div class="bubble"><b>已回到 Morgan LINE</b>這裡就是下一階段要接上的位置：系統收到預約需求後，LINE 自動顯示「已收到，等待店家確認」；店家確認後，再發正式預約資訊。</div></div>';
-};
+if(new URLSearchParams(location.search).get('returned')==='1') pendingCard();
 })();
 </script>
 </body>
