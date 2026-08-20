@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>My Morgan｜會員頁試作</title>
+<style>
+:root{--bg:#f1f2ed;--paper:#fffdf9;--ink:#232820;--muted:#73796e;--sage:#65725e;--sage2:#7d8975;--soft:#e8ece4;--line:#dfe3db;--sand:#e9dfcf;--stone:#d7d8d2;--night:#263129;--ok:#416d50;--shadow:0 16px 42px rgba(41,48,38,.11)}*{box-sizing:border-box}html{background:#e9ece7}body{margin:0;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC","PingFang TC",sans-serif;background:#eef1ec}.app{max-width:430px;min-height:100vh;margin:auto;background:var(--paper);box-shadow:var(--shadow);padding-bottom:92px}.top{position:sticky;top:0;z-index:20;height:58px;display:flex;align-items:center;justify-content:space-between;padding:0 18px;border-bottom:1px solid rgba(215,220,211,.85);background:rgba(255,253,249,.94);backdrop-filter:blur(12px)}.brand{display:flex;flex-direction:column;line-height:1}.brand small{font-size:9px;letter-spacing:.14em;color:var(--sage);font-weight:900}.brand strong{font-family:Georgia,"Times New Roman",serif;font-size:19px;font-weight:500;margin-top:4px}.prototype{font-size:10px;color:#7d8378}.hero{padding:24px 18px 16px;background:linear-gradient(155deg,#f9f5ed 0%,#edf1e8 100%)}.hello{font-size:12px;color:var(--muted);margin-bottom:5px}.hero h1{font-family:Georgia,"Times New Roman",serif;font-size:32px;font-weight:500;margin:0 0 8px}.lead{font-size:13px;line-height:1.6;color:#5f665b;margin:0}.memberCard{margin:16px 18px 0;border-radius:22px;padding:19px;background:linear-gradient(145deg,#ded0b9,#f2e9db);border:1px solid rgba(155,139,113,.18);position:relative;overflow:hidden}.memberCard:after{content:"M+";position:absolute;right:-8px;bottom:-28px;font-family:Georgia,serif;font-size:100px;color:rgba(67,72,62,.08)}.memberTop{display:flex;justify-content:space-between;align-items:flex-start}.memberTop small{font-size:9px;letter-spacing:.15em;font-weight:900;color:#746956}.tier{font-family:Georgia,"Times New Roman",serif;font-size:25px;margin:7px 0 3px}.memberNo{font-size:11px;color:#7a715f}.badge{font-size:10px;padding:6px 9px;border-radius:999px;background:rgba(255,255,255,.58);border:1px solid rgba(115,103,84,.15);font-weight:800}.memberStats{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:18px}.stat{background:rgba(255,255,255,.46);border-radius:12px;padding:9px}.stat b{font-family:Georgia,serif;font-size:20px;font-weight:500;display:block}.stat span{font-size:10px;color:#6e6759}.section{padding:21px 18px 0}.sectionTitle{display:flex;align-items:end;justify-content:space-between;margin-bottom:11px}.sectionTitle h2{font-family:Georgia,"Times New Roman",serif;font-weight:500;font-size:21px;margin:0}.sectionTitle button{border:0;background:none;color:var(--sage);font-size:11px;font-weight:800}.bookingCard{border:1px solid var(--line);border-radius:18px;background:#fff;padding:15px}.bookingStatus{display:flex;align-items:center;justify-content:space-between}.tag{display:inline-flex;align-items:center;gap:5px;padding:5px 8px;border-radius:999px;background:#edf4eb;color:var(--ok);font-size:10px;font-weight:900}.bookingDate{display:grid;grid-template-columns:62px 1fr;gap:13px;margin-top:14px}.dateBox{border-radius:14px;background:#eef1ea;text-align:center;padding:9px 4px}.dateBox strong{font-family:Georgia,serif;font-size:24px;font-weight:500;display:block}.dateBox span{font-size:10px;color:#6f776b}.bookingMain b{font-size:16px}.bookingMain p{font-size:12px;color:var(--muted);margin:5px 0 0;line-height:1.5}.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}.action{border:1px solid var(--line);border-radius:12px;padding:11px;background:#fff;color:#46513f;font-weight:800}.action.primary{background:var(--sage);color:#fff;border-color:var(--sage)}.quick{background:#f0f3ec;border-radius:18px;padding:15px}.quickTop{display:flex;align-items:center;justify-content:space-between;gap:12px}.quickCopy b{font-size:15px;display:block}.quickCopy span{font-size:11px;color:var(--muted);display:block;margin-top:4px}.quickBtn{white-space:nowrap;border:0;border-radius:12px;background:var(--sage);color:#fff;padding:11px 12px;font-weight:900}.prefs{display:grid;grid-template-columns:1fr 1fr;gap:9px}.pref{border:1px solid var(--line);border-radius:15px;padding:13px;background:#fff}.pref small{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}.pref b{display:block;font-size:14px;margin-top:6px}.menu{border:1px solid var(--line);border-radius:17px;overflow:hidden;background:#fff}.menuRow{width:100%;border:0;border-bottom:1px solid #edf0eb;background:#fff;padding:14px 15px;display:flex;align-items:center;justify-content:space-between;text-align:left;color:var(--ink)}.menuRow:last-child{border-bottom:0}.menuRow div b{font-size:14px;display:block}.menuRow div span{font-size:10px;color:var(--muted);display:block;margin-top:3px}.chev{color:#899084}.toggle{width:42px;height:24px;border-radius:999px;background:#d8ddd4;padding:3px;transition:.2s}.toggle i{display:block;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.18);transition:.2s}.toggle.on{background:var(--sage)}.toggle.on i{transform:translateX(18px)}.privacyNote{font-size:10px;color:#777e73;line-height:1.55;margin:9px 2px 0}.bottom{position:fixed;left:50%;bottom:0;transform:translateX(-50%);width:min(430px,100%);height:74px;background:rgba(255,253,249,.96);backdrop-filter:blur(12px);border-top:1px solid var(--line);display:grid;grid-template-columns:repeat(4,1fr);padding:8px 6px max(8px,env(safe-area-inset-bottom));z-index:25}.navBtn{border:0;background:none;color:#7a8175;font-size:10px;font-weight:700}.navBtn i{display:block;font-style:normal;font-size:19px;margin-bottom:2px}.navBtn.active{color:var(--sage)}.overlay{display:none;position:fixed;inset:0;background:rgba(29,34,27,.43);backdrop-filter:blur(5px);z-index:40;align-items:flex-end;justify-content:center}.overlay.show{display:flex}.sheet{width:min(430px,100%);background:var(--paper);border-radius:24px 24px 0 0;padding:22px 18px calc(22px + env(safe-area-inset-bottom));box-shadow:0 -16px 50px rgba(0,0,0,.16)}.sheet small{font-size:9px;letter-spacing:.13em;color:var(--sage);font-weight:900}.sheet h3{font-family:Georgia,serif;font-size:27px;font-weight:500;margin:6px 0 6px}.sheet p{font-size:12px;color:var(--muted);line-height:1.6}.review{background:#f0f3ec;border-radius:15px;padding:13px;margin:14px 0}.review div{display:flex;justify-content:space-between;gap:14px;font-size:12px;padding:5px 0}.review span{color:var(--muted)}.sheetActions{display:grid;gap:8px}.sheetBtn{border:1px solid var(--line);border-radius:13px;background:#fff;padding:13px;font-weight:900;color:#46513f}.sheetBtn.primary{background:var(--sage);color:#fff;border-color:var(--sage)}.toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%) translateY(20px);width:min(370px,calc(100% - 38px));background:#2f382d;color:#fff;padding:12px 14px;border-radius:13px;font-size:12px;opacity:0;pointer-events:none;transition:.2s;z-index:60}.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<main class="app">
+  <header class="top"><div class="brand"><small>MODERN MORGAN</small><strong>My Morgan</strong></div><span class="prototype">會員頁試作</span></header>
+
+  <section class="hero"><div class="hello">午安，Kurt</div><h1>歡迎回來。</h1><p class="lead">不用每次重新開始。常用的服務、熟悉的師傅與通知偏好，都留在這裡。</p></section>
+
+  <section class="memberCard">
+    <div class="memberTop"><div><small>MORGAN MEMBER</small><div class="tier">Light Sand</div><div class="memberNo">Member No. MM-0286</div></div><span class="badge">ACTIVE</span></div>
+    <div class="memberStats"><div class="stat"><b>8</b><span>今年服務</span></div><div class="stat"><b>3</b><span>常用師傅</span></div><div class="stat"><b>92%</b><span>回訪率</span></div></div>
+  </section>
+
+  <section class="section">
+    <div class="sectionTitle"><h2>下一次預約</h2><button type="button" data-toast="正式版會開啟『我的預約』">查看全部</button></div>
+    <div class="bookingCard">
+      <div class="bookingStatus"><span class="tag">✓ 已確認</span><small>BK-260825-020</small></div>
+      <div class="bookingDate"><div class="dateBox"><strong>25</strong><span>AUG · MON</span></div><div class="bookingMain"><b>20:00 · Noah</b><p>深層舒緩 90 min<br>預計 21:30 結束</p></div></div>
+      <div class="actions"><button class="action" data-toast="正式版會開啟預約詳情">查看詳情</button><button class="action primary" data-toast="正式版會直接開啟 Morgan LINE 聯絡">聯絡 Morgan</button></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="sectionTitle"><h2>快速再約</h2><button type="button" data-toast="正式版會顯示更多歷史服務">其他紀錄</button></div>
+    <div class="quick"><div class="quickTop"><div class="quickCopy"><b>深層舒緩 · Noah</b><span>上次服務 · 90 min · Medium–Deep</span></div><button class="quickBtn" id="quickBook">再次預約</button></div></div>
+  </section>
+
+  <section class="section">
+    <div class="sectionTitle"><h2>你的 Morgan</h2><button type="button" data-toast="正式版可編輯服務偏好">編輯</button></div>
+    <div class="prefs"><div class="pref"><small>Therapist</small><b>Noah</b></div><div class="pref"><small>Service</small><b>深層舒緩</b></div><div class="pref"><small>Pressure</small><b>Medium–Deep</b></div><div class="pref"><small>Interaction</small><b>安靜</b></div></div>
+  </section>
+
+  <section class="section">
+    <div class="sectionTitle"><h2>會員權益</h2><button type="button" data-toast="正式版會開啟完整會員制度頁">完整說明</button></div>
+    <div class="menu"><button class="menuRow" data-toast="Light Sand：基本會員，重點是 Quick Book、偏好與歷史延續"><div><b>Light Sand</b><span>目前會員等級 · 基本 Member</span></div><span class="chev">›</span></button><button class="menuRow" data-toast="進階權益會在試營運後依實際數據開放"><div><b>下一階段權益</b><span>優先預約 · 生日照護 · Service Upgrade</span></div><span class="chev">›</span></button></div>
+  </section>
+
+  <section class="section">
+    <div class="sectionTitle"><h2>通知與隱私</h2></div>
+    <div class="menu"><button class="menuRow toggleRow"><div><b>必要服務通知</b><span>預約確認、異動與行前提醒</span></div><span class="toggle on"><i></i></span></button><button class="menuRow toggleRow"><div><b>優惠與品牌消息</b><span>活動、優惠與 Modern Morgan 更新</span></div><span class="toggle"><i></i></span></button><button class="menuRow" data-toast="正式版會進入聯絡方式與資料管理"><div><b>聯絡資料</b><span>LINE · 手機 · 電子收據</span></div><span class="chev">›</span></button><button class="menuRow" data-toast="正式版會顯示資料使用說明與刪除／更正入口"><div><b>隱私設定</b><span>資料使用、聯絡意願與權限</span></div><span class="chev">›</span></button></div><p class="privacyNote">Preview 原則：留下電話不等於同意行銷。必要服務通知與行銷訊息分開管理。</p>
+  </section>
+</main>
+
+<nav class="bottom"><button class="navBtn active"><i>⌂</i>My Morgan</button><button class="navBtn" id="navBook"><i>＋</i>預約</button><button class="navBtn" data-toast="正式版會顯示預約歷史"><i>◷</i>紀錄</button><button class="navBtn" data-toast="正式版會開啟會員／隱私設定"><i>⚙</i>設定</button></nav>
+
+<div class="overlay" id="quickOverlay"><div class="sheet"><small>QUICK BOOK PREVIEW</small><h3>再次預約</h3><p>熟客不必重新選一次。這裡會帶入上次服務與常用師傅，只需要決定日期與時間。</p><div class="review"><div><span>服務</span><b>深層舒緩 90 min</b></div><div><span>師傅</span><b>Noah</b></div><div><span>力道</span><b>Medium–Deep</b></div><div><span>下一步</span><b>選日期與時段</b></div></div><div class="sheetActions"><button class="sheetBtn primary" id="continueBooking">前往預約試作</button><button class="sheetBtn" id="closeOverlay">取消</button></div></div></div>
+<div class="toast" id="toast"></div>
+<script>
+(()=>{
+const toast=document.getElementById('toast');let timer;
+function showToast(msg){clearTimeout(timer);toast.textContent=msg;toast.classList.add('show');timer=setTimeout(()=>toast.classList.remove('show'),2200)}
+document.querySelectorAll('[data-toast]').forEach(el=>el.addEventListener('click',()=>showToast(el.dataset.toast)));
+document.querySelectorAll('.toggleRow').forEach(row=>row.addEventListener('click',()=>{const t=row.querySelector('.toggle');t.classList.toggle('on');showToast(t.classList.contains('on')?'通知已開啟（Preview）':'通知已關閉（Preview）')}));
+const overlay=document.getElementById('quickOverlay');
+document.getElementById('quickBook').onclick=()=>overlay.classList.add('show');
+document.getElementById('closeOverlay').onclick=()=>overlay.classList.remove('show');
+overlay.onclick=e=>{if(e.target===overlay)overlay.classList.remove('show')};
+function goBooking(){location.href='./customer-booking.html?from=member&prototype=1'}
+document.getElementById('continueBooking').onclick=goBooking;
+document.getElementById('navBook').onclick=goBooking;
+})();
+</script>
+</body>
+</html>
