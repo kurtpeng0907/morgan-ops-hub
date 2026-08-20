@@ -11,7 +11,11 @@ function existingPublicSelection(data, requestIdValue) {
   const raw = data?.customers?.[`SYS_CLIENT_SELECTION_${String(requestIdValue || "")}`]?.notes;
   try {
     const selection = JSON.parse(raw || "{}");
-    return selection.id === String(requestIdValue) && selection.source === "public-booking" && selection.status === "pending" ? selection : null;
+    // A stable request ID is the public caller's idempotency key for its whole
+    // lifecycle.  A retry after staff confirmation/rejection must still return
+    // the original request rather than re-running availability and creating a
+    // false conflict (or a second administrative alert).
+    return selection.id === String(requestIdValue) && selection.source === "public-booking" ? selection : null;
   } catch { return null; }
 }
 
@@ -49,7 +53,7 @@ module.exports = async function handler(req, res) {
     // public candidate list.
     const replay = existingPublicSelection(data, body.requestId);
     if (replay) {
-      const response = { success: true, verified: true, selection: { id: replay.id, status: "pending" }, requestId: id, duplicate: true };
+      const response = { success: true, verified: true, selection: { id: replay.id, status: String(replay.status || "pending") }, requestId: id, duplicate: true };
       logRequest({ id, route: "/api/public-booking", status: 200, startedAt, upstreamMs: source.upstreamMs || 0, bytes: Buffer.byteLength(JSON.stringify(response)) });
       return sendJson(res, 200, response);
     }

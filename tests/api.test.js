@@ -244,6 +244,15 @@ test("public booking API writes a pending demand and verifies it by a server rea
     await publicBookingHandler({ method: "POST", headers: {}, body: { requestId: "PUB-98765432", date, time: "11:00", service: "A60", therapistId: "001", customerContact: "0900000000" }, query: {} }, retry);
     assert.equal(retry.statusCode, 200);
     assert.equal(retry.payload.duplicate, true);
+    const confirmed = JSON.parse(db.customers["SYS_CLIENT_SELECTION_PUB-98765432"].notes);
+    confirmed.status = "confirmed";
+    confirmed.appointmentId = "APT-verified";
+    db.customers["SYS_CLIENT_SELECTION_PUB-98765432"].notes = JSON.stringify(confirmed);
+    const retryAfterConfirmation = { setHeader() {}, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+    await publicBookingHandler({ method: "POST", headers: {}, body: { requestId: "PUB-98765432", date, time: "11:00", service: "A60", therapistId: "001", customerContact: "0900000000" }, query: {} }, retryAfterConfirmation);
+    assert.equal(retryAfterConfirmation.statusCode, 200);
+    assert.equal(retryAfterConfirmation.payload.duplicate, true);
+    assert.equal(retryAfterConfirmation.payload.selection.status, "confirmed");
   } finally { global.fetch = originalFetch; }
 });
 
